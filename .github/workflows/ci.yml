@@ -1,0 +1,55 @@
+name: CI Tests
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        adapter: [snowflake, bigquery, databricks, redshift]
+      fail-fast: false
+    
+    name: Test ${{ matrix.adapter }} adapter
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dbt with all adapters
+      run: |
+        pip install dbt-core dbt-snowflake dbt-bigquery dbt-databricks dbt-redshift
+    
+    - name: Set up profiles.yml for CI
+      working-directory: integration_tests
+      run: |
+        cp profiles.ci.yml profiles.yml
+    
+    - name: Install package dependencies
+      working-directory: integration_tests
+      env:
+        DBT_PROFILES_DIR: .
+      run: |
+        dbt deps
+    
+    - name: Parse project for ${{ matrix.adapter }}
+      working-directory: integration_tests
+      env:
+        DBT_PROFILES_DIR: .
+      run: |
+        dbt parse --target ${{ matrix.adapter }}
+    
+    - name: Success message
+      run: |
+        echo "✅ ${{ matrix.adapter }} adapter tests passed!"

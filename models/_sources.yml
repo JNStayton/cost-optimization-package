@@ -1,0 +1,114 @@
+version: 2
+
+sources:
+  - name: snowflake_usage
+    database: SNOWFLAKE
+    schema: ACCOUNT_USAGE
+    config:
+      enabled: "{{ target.type == 'snowflake' }}"
+    tables:
+      - name: columns
+      - name: query_history
+      - name: query_attribution_history
+      - name: access_history
+      - name: sessions
+      - name: tables
+      - name: table_storage_metrics
+      - name: views
+      - name: warehouse_metering_history
+
+  - name: redshift_usage
+    database: "{{ target.database }}" 
+    schema: pg_catalog
+    config:
+      enabled: "{{ target.type == 'redshift' }}"
+    tables:
+      - name: sys_query_history
+      - name: stl_connection_log
+      - name: sys_query_detail
+      - name: svv_table_info
+      - name: stl_query_metrics
+      - name: sys_serverless_usage
+
+  - name: bigquery_dataset_info
+    description: |
+      Dataset-level INFORMATION_SCHEMA views scoped to the target dataset.
+      These views show metadata for objects within a specific dataset (tables, columns, partitions).
+    database: "{% if target.type == 'bigquery' %}{{ target.project }}{% else %}dummy{% endif %}"
+    schema: "{% if target.type == 'bigquery' %}{{ target.dataset }}{% else %}dummy{% endif %}"
+    config:
+      enabled: "{{ target.type == 'bigquery' }}"
+    tables:
+      - name: INFORMATION_SCHEMA_TABLES
+        identifier: "INFORMATION_SCHEMA.TABLES"
+      - name: INFORMATION_SCHEMA_COLUMNS
+        identifier: "INFORMATION_SCHEMA.COLUMNS"
+      - name: INFORMATION_SCHEMA_PARTITIONS
+        identifier: "INFORMATION_SCHEMA.PARTITIONS"
+  
+  - name: bigquery_region_info
+    description: |
+      Region-level INFORMATION_SCHEMA views that aggregate data across all datasets in a region.
+      These views provide project-wide information (jobs, storage) and require region prefix.
+    database: "{% if target.type == 'bigquery' %}region-{{ target.location | lower }}{% else %}dummy{% endif %}"
+    schema: INFORMATION_SCHEMA
+    config:
+      enabled: "{{ target.type == 'bigquery' }}"
+    tables:
+      - name: JOBS_BY_PROJECT
+      - name: TABLE_STORAGE
+      - name: TABLE_STORAGE_TIMELINE_BY_PROJECT
+
+  - name: databricks_query
+    description: Databricks query history and performance data
+    database: system
+    schema: query
+    config:
+      enabled: "{{ target.type == 'databricks' }}"
+    tables:
+      - name: history
+
+  - name: databricks_compute
+    description: Databricks compute resources metadata
+    database: system
+    schema: compute
+    config:
+      enabled: "{{ target.type == 'databricks' }}"
+    tables:
+      - name: warehouses
+
+  - name: databricks_access
+    description: Databricks audit and access logs
+    database: system
+    schema: access
+    config:
+      enabled: "{{ target.type == 'databricks' }}"
+    tables:
+      - name: audit
+
+  - name: databricks_information_schema
+    description: Databricks table metadata
+    database: system
+    schema: information_schema
+    config:
+      enabled: "{{ target.type == 'databricks' }}"
+    tables:
+      - name: tables
+
+  - name: databricks_billing
+    description: Databricks usage and billing data
+    database: system
+    schema: billing
+    config:
+      enabled: "{{ target.type == 'databricks' }}"
+    tables:
+      - name: usage
+
+  - name: databricks_storage
+    description: Databricks storage and table size information
+    database: system
+    schema: storage
+    config:
+      enabled: "{{ target.type == 'databricks' }}"
+    tables:
+      - name: table_info

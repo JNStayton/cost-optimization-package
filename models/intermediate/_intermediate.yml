@@ -1,0 +1,194 @@
+version: 2
+
+models:
+
+  # ===========================================================================
+  # int_query_history
+  # ===========================================================================
+  - name: int_query_history
+    description: >
+      Unified query execution history across all supported data platforms.
+      Provides a consistent schema for analyzing query performance, spillage,
+      scan efficiency, and compute utilization. Used by downstream fact models
+      for cost optimization recommendations.
+    config:
+      materialized: ephemeral
+    columns:
+      - name: query_id
+        description: Unique identifier for a query execution
+        tests:
+          - not_null
+      - name: query_start_time
+        description: Timestamp when query execution started
+        tests:
+          - not_null
+      - name: query_hash
+        description: Hash of normalized query text, used for grouping similar queries
+      - name: warehouse_name
+        description: Name of the compute resource (warehouse, queue, or reservation) used
+      - name: warehouse_size
+        description: Size or tier of the compute resource (e.g. XS, S, M, L)
+      - name: total_elapsed_time_ms
+        description: End-to-end query runtime in milliseconds (includes waiting + execution)
+      - name: bytes_spilled_local
+        description: Bytes spilled to local disk due to memory pressure
+      - name: bytes_spilled_remote
+        description: Bytes spilled to remote storage
+      - name: query_text
+        description: Full SQL text submitted by the user
+      - name: session_id
+        description: Session or connection identifier
+      - name: execution_status
+        description: "Query outcome, normalized to: SUCCESS, FAILED, CANCELLED"
+      - name: bytes_scanned
+        description: Total bytes scanned or read by the query
+      - name: query_load_percent
+        description: Percentage of the compute resource's total capacity consumed by this query
+      - name: queued_overload_time_ms
+        description: Milliseconds the query spent waiting because the compute resource was overloaded
+      - name: statement_type
+        description: Type of SQL statement (SELECT, INSERT, MERGE, CREATE TABLE, etc.)
+      - name: execution_time_ms
+        description: Pure execution time in milliseconds (excludes queueing)
+      - name: partitions_scanned
+        description: Number of partitions, blocks, or files actually read after pruning (Snowflake/Databricks-native concept)
+      - name: partitions_total
+        description: Total number of partitions, blocks, or files available for the queried tables
+      - name: platform
+        description: "Source data platform: snowflake, bigquery, redshift, or databricks"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+
+  # ===========================================================================
+  # int_tables
+  # ===========================================================================
+  - name: int_tables
+    description: >
+      Unified table metadata across all supported data platforms.
+      Provides a consistent view of table properties including type, row count,
+      clustering configuration, and lifecycle state. Used for clustering and
+      partitioning key recommendations.
+    config:
+      materialized: ephemeral
+    columns:
+      - name: database_name
+        description: Database, project, or catalog name containing the table
+        tests:
+          - not_null
+      - name: schema_name
+        description: Schema or dataset name containing the table
+        tests:
+          - not_null
+      - name: table_name
+        description: Name of the table
+        tests:
+          - not_null
+      - name: table_id
+        description: Internal platform-specific identifier for the table
+      - name: table_type
+        description: "Table type classification: BASE TABLE, VIEW, EXTERNAL TABLE, MATERIALIZED VIEW, etc."
+      - name: row_count
+        description: Approximate number of rows in the table
+      - name: clustering_key
+        description: Defined clustering or sort key (comma-separated column names)
+      - name: is_transient
+        description: Whether the table is transient or temporary (lacks full durability guarantees)
+      - name: is_deleted
+        description: Whether the table has been soft-deleted
+      - name: platform
+        description: "Source data platform: snowflake, bigquery, redshift, or databricks"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+
+
+  # ===========================================================================
+  # int_table_storage
+  # ===========================================================================
+  - name: int_table_storage
+    description: >
+      Unified table storage metrics across all supported data platforms.
+      All storage values are normalized to bytes. Used for storage optimization
+      recommendations and understanding data lifecycle costs.
+    config:
+      materialized: ephemeral
+    columns:
+      - name: database_name
+        description: Database, project, or catalog name
+        tests:
+          - not_null
+      - name: schema_name
+        description: Schema or dataset name
+        tests:
+          - not_null
+      - name: table_name
+        description: Table name
+        tests:
+          - not_null
+      - name: active_bytes
+        description: Current/active storage in bytes
+      - name: time_travel_bytes
+        description: Time travel storage in bytes (Snowflake, BigQuery only)
+      - name: failsafe_bytes
+        description: Failsafe storage in bytes (Snowflake-only concept)
+      - name: is_deleted
+        description: Whether the table has been soft-deleted
+      - name: platform
+        description: "Source data platform: snowflake, bigquery, redshift, or databricks"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+
+  # ===========================================================================
+  # int_columns
+  # ===========================================================================
+  - name: int_columns
+    description: >
+      Unified column metadata across all supported data platforms.
+      Provides column-level information including data types, nullability,
+      and partitioning/clustering membership. Essential for clustering and
+      partitioning key recommendations.
+      NOTE: Redshift does not yet have a staging model for columns; this
+      intermediate model will be empty for Redshift until stg_redshift__columns
+      is created.
+    config:
+      materialized: ephemeral
+    columns:
+      - name: database_name
+        description: Database, project, or catalog name
+        tests:
+          - not_null
+      - name: schema_name
+        description: Schema or dataset name
+        tests:
+          - not_null
+      - name: table_name
+        description: Table name
+        tests:
+          - not_null
+      - name: column_name
+        description: Column name
+        tests:
+          - not_null
+      - name: ordinal_position
+        description: Ordinal position of the column within the table (1-based)
+      - name: data_type
+        description: Column data type in platform-native type names
+      - name: is_nullable
+        description: Whether the column allows NULL values
+      - name: is_partitioning_column
+        description: Whether the column is used as a partitioning key (BigQuery-specific)
+      - name: clustering_ordinal_position
+        description: Position of the column in the clustering key (NULL if not a clustering column, BigQuery-specific)
+      - name: is_deleted
+        description: Whether the column metadata has been soft-deleted
+      - name: platform
+        description: "Source data platform: snowflake, bigquery, redshift, or databricks"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
