@@ -1,7 +1,6 @@
 {{ config(
     materialized='incremental',
-    unique_key='query_id',
-    enabled=(target.type == 'snowflake')
+    unique_key='query_id'
 ) }}
 
 select

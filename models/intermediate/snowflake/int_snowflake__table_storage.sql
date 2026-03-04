@@ -1,9 +1,3 @@
-{#
-  Maps Snowflake table storage metrics from staging to unified intermediate schema.
-  Normalizes storage byte columns and adds is_deleted flag and platform identifier.
-#}
-{{ config(materialized='ephemeral') }}
-
 select
     table_catalog as database_name,
     table_schema as schema_name,

@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# dbt
+target/
+dbt_packages/
+logs/
+*.log
+package-lock.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# Integration tests
+# Allow users to add their own database credentials for testing
+# Use profiles.ci.yml for CI/CD (with dummy credentials)
+# Copy profiles.example.yml to profiles.yml for local testing
+integration_tests/profiles.yml
+integration_tests/.user.yml
+

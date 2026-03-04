@@ -1,9 +1,3 @@
-{#
-  Maps Snowflake query history from staging to unified intermediate schema.
-  Normalizes column names and adds platform identifier for downstream consumption.
-#}
-{{ config(materialized='ephemeral') }}
-
 select
     query_id,
     start_time as query_start_time,

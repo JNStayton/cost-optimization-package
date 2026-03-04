@@ -1,9 +1,3 @@
-{#
-  Maps Snowflake tables metadata from staging to unified intermediate schema.
-  Normalizes database/schema naming and boolean flags for is_transient and is_deleted.
-#}
-{{ config(materialized='ephemeral') }}
-
 select
     table_catalog as database_name,
     table_schema as schema_name,
