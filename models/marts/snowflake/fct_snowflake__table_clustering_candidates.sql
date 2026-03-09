@@ -20,8 +20,8 @@
 with
 large_tables as (
     select
-        ti.database_name as table_database,
-        ti.schema_name as table_schema,
+        ti.database_name,
+        ti.schema_name,
         ti.table_name,
         ti.active_bytes as size_bytes,
         ti.size_gb,
@@ -29,7 +29,7 @@ large_tables as (
         ti.is_already_clustered,
         ti.approx_micropartitions,
         ti.normalized_table_type as table_type
-    from {{ ref('int_snowflake__table_inventory') }} as ti
+    from {{ ref('int_table_inventory') }} as ti
     where ti.size_gb >= {{ min_size_gb }}
         {% if target_databases and target_databases | length > 0 %}
             and upper(ti.database_name) in (
@@ -51,8 +51,8 @@ large_tables as (
 
 table_query_stats as (
     select
-        lt.table_database,
-        lt.table_schema,
+        lt.database_name,
+        lt.schema_name,
         lt.table_name,
         coalesce(sum(tqs.select_count), 0) as select_count,
         coalesce(sum(tqs.dml_count), 0) as dml_count,
@@ -72,9 +72,9 @@ table_query_stats as (
             0
         ) as avg_partitions_total
     from large_tables as lt
-    left join {{ ref('int_snowflake__table_query_stats_daily') }} as tqs
-        on upper(lt.table_database) = upper(tqs.table_database)
-        and upper(lt.table_schema) = upper(tqs.table_schema)
+    left join {{ ref('int_table_query_stats_daily') }} as tqs
+        on upper(lt.database_name) = upper(tqs.table_database)
+        and upper(lt.schema_name) = upper(tqs.table_schema)
         and upper(lt.table_name) = upper(tqs.table_name)
         and tqs.stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by 1, 2, 3
@@ -83,7 +83,10 @@ table_query_stats as (
 scored as (
     select
         current_timestamp() as analyzed_at,
-        upper(lt.table_database) || '.' || upper(lt.table_schema) || '.' || upper(lt.table_name) as table_fqn,
+        lt.database_name,
+        lt.schema_name,
+        lt.table_name,
+        upper(lt.database_name) || '.' || upper(lt.schema_name) || '.' || upper(lt.table_name) as table_fqn,
         dm.dbt_model,
         lt.table_type,
         coalesce(tqs.select_count, 0) as select_count,
@@ -99,13 +102,13 @@ scored as (
         ) as micropartitions
     from large_tables as lt
     left join table_query_stats as tqs
-        on upper(lt.table_database) = upper(tqs.table_database)
-        and upper(lt.table_schema) = upper(tqs.table_schema)
+        on upper(lt.database_name) = upper(tqs.database_name)
+        and upper(lt.schema_name) = upper(tqs.schema_name)
         and upper(lt.table_name) = upper(tqs.table_name)
     left join {{ ref('int_dbt__relations') }} as dm
-        on upper(lt.table_database) = dm.table_database
-        and upper(lt.table_schema) = dm.table_schema
-        and upper(lt.table_name) = dm.table_name
+        on upper(lt.database_name) = upper(dm.database_name)
+        and upper(lt.schema_name) = upper(dm.schema_name)
+        and upper(lt.table_name) = upper(dm.table_name)
 ),
 
 final as (
@@ -115,6 +118,9 @@ final as (
         md5(
             to_varchar(current_date()) || '|' || coalesce(table_fqn, '')
         ) as clustering_candidates_snapshot_key,
+        database_name,
+        schema_name,
+        table_name,
         table_fqn,
         dbt_model,
         table_type,
@@ -166,6 +172,9 @@ select
     analyzed_at,
     snapshot_date,
     clustering_candidates_snapshot_key,
+    database_name,
+    schema_name,
+    table_name,
     table_fqn,
     dbt_model,
     table_type,

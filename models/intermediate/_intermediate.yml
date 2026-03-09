@@ -144,6 +144,28 @@ models:
               values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
   # ===========================================================================
+  # int_table_inventory
+  # ===========================================================================
+  - name: int_table_inventory
+    description: >
+      Platform-agnostic router to table inventory (tables + storage joined).
+      Routes to int_snowflake__table_inventory, int_bigquery__table_inventory, etc.
+      Marts should ref this model, not platform-specific table inventory models.
+    config:
+      materialized: ephemeral
+
+  # ===========================================================================
+  # int_table_query_stats_daily
+  # ===========================================================================
+  - name: int_table_query_stats_daily
+    description: >
+      Platform-agnostic router to daily table query statistics.
+      Routes to int_snowflake__table_query_stats_daily, etc.
+      Marts should ref this model, not platform-specific query stats models.
+    config:
+      materialized: ephemeral
+
+  # ===========================================================================
   # int_dbt__relations
   # ===========================================================================
   - name: int_dbt__relations
