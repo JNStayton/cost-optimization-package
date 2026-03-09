@@ -1,3 +1,8 @@
+{#--
+  Daily query stats per table. Attribution uses either access_history (Enterprise+)
+  or query_text ILIKE (Standard). Set vars.use_access_history_attribution = false
+  in dbt_project.yml for Standard edition (no ACCESS_HISTORY view).
+--#}
 {{
   config(
     materialized='incremental',
@@ -28,7 +33,8 @@ query_history as (
         partitions_total,
         bytes_scanned,
         bytes_spilled_local,
-        bytes_spilled_remote
+        bytes_spilled_remote,
+        query_text
     from {{ ref('int_snowflake__query_history') }}
     where execution_status = 'SUCCESS'
     {% if is_incremental() %}
@@ -43,6 +49,7 @@ query_history as (
     {% endif %}
 ),
 
+{% if var('use_access_history_attribution', true) %}
 query_table_access as (
     select
         query_id,
@@ -76,6 +83,26 @@ matched_queries as (
         and upper(qta.table_schema) = upper(ct.table_schema)
         and upper(qta.table_name) = upper(ct.table_name)
 )
+{% else %}
+matched_queries as (
+    select
+        ct.platform,
+        qh.stats_date,
+        ct.table_database,
+        ct.table_schema,
+        ct.table_name,
+        qh.statement_type,
+        qh.execution_time_ms,
+        qh.partitions_scanned,
+        qh.partitions_total,
+        qh.bytes_scanned,
+        qh.bytes_spilled_local,
+        qh.bytes_spilled_remote
+    from query_history as qh
+    inner join candidate_tables as ct
+        on qh.query_text ilike '%' || ct.table_name || '%'
+)
+{% endif %}
 
 select
     md5(

@@ -6,7 +6,7 @@
 {{
   config(
     materialized='view',
-    enabled=(target.type == 'snowflake')
+    enabled=(target.type == 'snowflake' and var('use_access_history_attribution', true))
   )
 }}
 
