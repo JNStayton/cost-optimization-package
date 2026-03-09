@@ -144,56 +144,6 @@ models:
               values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
   # ===========================================================================
-  # int_columns
-  # ===========================================================================
-  - name: int_columns
-    description: >
-      Unified column metadata across all supported data platforms.
-      Provides column-level information including data types, nullability,
-      and partitioning/clustering membership. Essential for clustering and
-      partitioning key recommendations.
-      NOTE: Redshift does not yet have a staging model for columns; this
-      intermediate model will be empty for Redshift until stg_redshift__columns
-      is created.
-    config:
-      materialized: ephemeral
-    columns:
-      - name: database_name
-        description: Database, project, or catalog name
-        tests:
-          - not_null
-      - name: schema_name
-        description: Schema or dataset name
-        tests:
-          - not_null
-      - name: table_name
-        description: Table name
-        tests:
-          - not_null
-      - name: column_name
-        description: Column name
-        tests:
-          - not_null
-      - name: ordinal_position
-        description: Ordinal position of the column within the table (1-based)
-      - name: data_type
-        description: Column data type in platform-native type names
-      - name: is_nullable
-        description: Whether the column allows NULL values
-      - name: is_partitioning_column
-        description: Whether the column is used as a partitioning key (BigQuery-specific)
-      - name: clustering_ordinal_position
-        description: Position of the column in the clustering key (NULL if not a clustering column, BigQuery-specific)
-      - name: is_deleted
-        description: Whether the column metadata has been soft-deleted
-      - name: platform
-        description: "Source data platform: snowflake, bigquery, redshift, or databricks"
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
-
-  # ===========================================================================
   # int_dbt__relations
   # ===========================================================================
   - name: int_dbt__relations

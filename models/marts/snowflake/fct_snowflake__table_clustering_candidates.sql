@@ -83,7 +83,7 @@ table_query_stats as (
 scored as (
     select
         current_timestamp() as analyzed_at,
-        upper(lt.table_database) || '.' || upper(lt.table_schema) || '.' || upper(lt.table_name) as table,
+        upper(lt.table_database) || '.' || upper(lt.table_schema) || '.' || upper(lt.table_name) as table_fqn,
         dm.dbt_model,
         lt.table_type,
         coalesce(tqs.select_count, 0) as select_count,
@@ -113,9 +113,9 @@ final as (
         current_timestamp() as analyzed_at,
         current_date() as snapshot_date,
         md5(
-            to_varchar(current_date()) || '|' || coalesce(table, '')
+            to_varchar(current_date()) || '|' || coalesce(table_fqn, '')
         ) as clustering_candidates_snapshot_key,
-        table,
+        table_fqn,
         dbt_model,
         table_type,
         (
@@ -166,7 +166,7 @@ select
     analyzed_at,
     snapshot_date,
     clustering_candidates_snapshot_key,
-    table,
+    table_fqn,
     dbt_model,
     table_type,
     score,
