@@ -261,13 +261,33 @@ models:
         description: Approximate micropartition count derived from active bytes
 
   # ===========================================================================
+  # int_snowflake__query_table_access
+  # ===========================================================================
+  - name: int_snowflake__query_table_access
+    description: >
+      One row per (query_id, table) from Snowflake access_history. Flattens
+      base_objects_accessed and objects_modified for exact object-level attribution
+      without query_text scan. Used by table_query_stats_daily and recommendation marts.
+    columns:
+      - name: query_id
+        description: Snowflake query identifier (joins to query_history)
+      - name: query_start_time
+        description: Query start time from access_history
+      - name: table_database
+        description: Database from parsed objectName
+      - name: table_schema
+        description: Schema from parsed objectName
+      - name: table_name
+        description: Table from parsed objectName
+
+  # ===========================================================================
   # int_snowflake__table_query_stats_daily
   # ===========================================================================
   - name: int_snowflake__table_query_stats_daily
     description: >
-      Incremental daily query statistics by Snowflake table. Derived from query
-      history and matched table references, intended as a shared intermediate
-      input for clustering, spillage, compute efficiency, and join-pattern marts.
+      Incremental daily query statistics by Snowflake table. Uses access_history
+      (query_table_access) for attribution instead of query_text. Shared intermediate
+      for clustering, spillage, compute efficiency, and join-pattern marts.
     columns:
       - name: table_query_stats_daily_key
         description: Surrogate key for stats_date + table relation

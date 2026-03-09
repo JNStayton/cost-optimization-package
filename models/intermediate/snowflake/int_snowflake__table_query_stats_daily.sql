@@ -19,15 +19,16 @@ with candidate_tables as (
 
 query_history as (
     select
+        query_id,
         cast(query_start_time as date) as stats_date,
+        query_start_time,
         statement_type,
         execution_time_ms,
         partitions_scanned,
         partitions_total,
         bytes_scanned,
         bytes_spilled_local,
-        bytes_spilled_remote,
-        query_text
+        bytes_spilled_remote
     from {{ ref('int_snowflake__query_history') }}
     where execution_status = 'SUCCESS'
     {% if is_incremental() %}
@@ -40,6 +41,16 @@ query_history as (
             )
         )
     {% endif %}
+),
+
+query_table_access as (
+    select
+        query_id,
+        query_start_time,
+        table_database,
+        table_schema,
+        table_name
+    from {{ ref('int_snowflake__query_table_access') }}
 ),
 
 matched_queries as (
@@ -57,8 +68,13 @@ matched_queries as (
         qh.bytes_spilled_local,
         qh.bytes_spilled_remote
     from query_history as qh
+    inner join query_table_access as qta
+        on qh.query_id = qta.query_id
+        and cast(qh.query_start_time as date) = cast(qta.query_start_time as date)
     inner join candidate_tables as ct
-        on qh.query_text ilike '%' || ct.table_name || '%'
+        on upper(qta.table_database) = upper(ct.table_database)
+        and upper(qta.table_schema) = upper(ct.table_schema)
+        and upper(qta.table_name) = upper(ct.table_name)
 )
 
 select
