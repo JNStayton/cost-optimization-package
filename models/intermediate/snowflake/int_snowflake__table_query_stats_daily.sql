@@ -2,6 +2,15 @@
   Daily query stats per table. Attribution uses either access_history (Enterprise+)
   or query_text ILIKE (Standard). Set vars.use_access_history_attribution = false
   in dbt_project.yml for Standard edition (no ACCESS_HISTORY view).
+
+  Scope:
+    - Default: only tables that are dbt models in the current project.
+    - Set vars.table_query_stats_full_account = true to scan all tables in the account.
+
+  Initial lookback:
+    - Enterprise (access_history): 30 days
+    - Standard (query_text): 7 days
+    - Override with vars.table_query_stats_initial_lookback_days
 --#}
 {{
   config(
@@ -13,13 +22,31 @@
   )
 }}
 
+{% set use_access_history = var('use_access_history_attribution', true) %}
+{% set full_account = var('table_query_stats_full_account', false) %}
+{% set default_lookback = 30 if use_access_history else 7 %}
+{% set initial_lookback_days = var('table_query_stats_initial_lookback_days', default_lookback) %}
+
 with candidate_tables as (
+    {% if full_account %}
     select distinct
         platform,
         database_name as table_database,
         schema_name as table_schema,
         table_name
     from {{ ref('int_snowflake__table_inventory') }}
+    {% else %}
+    select distinct
+        ti.platform,
+        ti.database_name as table_database,
+        ti.schema_name as table_schema,
+        ti.table_name
+    from {{ ref('int_snowflake__table_inventory') }} as ti
+    inner join {{ ref('int_dbt__relations') }} as dm
+        on upper(ti.database_name) = upper(dm.database_name)
+        and upper(ti.schema_name) = upper(dm.schema_name)
+        and upper(ti.table_name) = upper(dm.table_name)
+    {% endif %}
 ),
 
 query_history as (
@@ -46,10 +73,12 @@ query_history as (
                 from {{ this }}
             )
         )
+    {% else %}
+        and query_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
     {% endif %}
 ),
 
-{% if var('use_access_history_attribution', true) %}
+{% if use_access_history %}
 query_table_access as (
     select
         query_id,
