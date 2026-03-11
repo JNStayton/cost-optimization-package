@@ -1,0 +1,38 @@
+name: 'dbt_cost_optimization_package'
+version: '3.0.0'
+config-version: 2
+
+model-paths: ["models"]
+docs-paths: ["docs"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+require-dbt-version: [">=1.0.0"]
+
+# Model configurations
+models:
+  dbt_cost_optimization:
+    # Staging models - platform-specific data extraction
+    staging:
+      +materialized: view
+      snowflake:
+        +enabled: "{{ target.type == 'snowflake' }}"
+      bigquery:
+        +enabled: "{{ target.type == 'bigquery' }}"
+      databricks:
+        +enabled: "{{ target.type == 'databricks' }}"
+      redshift:
+        +enabled: "{{ target.type == 'redshift' }}"
+    intermediate:
+      +materialized: view
+      snowflake:
+        +enabled: "{{ target.type == 'snowflake' }}"
+      bigquery:
+        +enabled: "{{ target.type == 'bigquery' }}"
+      databricks:
+        +enabled: "{{ target.type == 'databricks' }}"
+      redshift:
+        +enabled: "{{ target.type == 'redshift' }}"

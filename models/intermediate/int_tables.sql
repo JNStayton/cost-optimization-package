@@ -1,9 +1,3 @@
-{{
-  config(
-    materialized = 'ephemeral'
-  )
-}}
-
 {#-- Routes to the platform-specific tables metadata intermediate model --#}
 
 {% if target.type == 'snowflake' %}

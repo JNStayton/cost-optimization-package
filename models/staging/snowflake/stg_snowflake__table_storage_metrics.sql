@@ -1,6 +1,5 @@
 {{ config(
-    materialized='view',
-    enabled=(target.type == 'snowflake')
+    materialized='view'
 ) }}
 
 select
