@@ -11,11 +11,10 @@
 }}
 
 {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
-{% set ignore_table_size = var('clustering_candidates_ignore_table_size', false) %}
+{% set min_size_gb = var('clustering_candidates_min_size_gb', 1000) %}
 {% set dbt_project_only = var('clustering_candidates_dbt_project_only', true) %}
 {% set target_databases = var('clustering_candidates_target_databases', []) %}
 {% set target_schemas = var('clustering_candidates_target_schemas', []) %}
-{% set min_size_gb = 1 if ignore_table_size else 1000 %}
 
 with
 large_tables as (

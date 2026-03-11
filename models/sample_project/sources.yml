@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: unclustered
+    database: co_package
+    schema: raw  
+    tables:
+      - name: raw_customer
+      - name: raw_orders
+
+  - name: tpch_100
+    database: snowflake_sample_data
+    schema: tpch_sf100
+    tables:
+      - name: lineitem
+      - name: nation 
+      - name: region

@@ -59,7 +59,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+              arguments:
+                values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
   # ===========================================================================
   # int_tables
@@ -102,7 +103,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+              arguments:
+                values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
 
   # ===========================================================================
@@ -141,7 +143,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+              arguments:
+                values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
   # ===========================================================================
   # int_table_inventory
@@ -240,6 +243,8 @@ models:
       One row per (query_id, table) from Snowflake access_history. Flattens
       base_objects_accessed and objects_modified for exact object-level attribution
       without query_text scan. Used by table_query_stats_daily and recommendation marts.
+    config:
+      enabled: "{{ target.type == 'snowflake' and var('use_access_history_attribution', true) }}"
     columns:
       - name: query_id
         description: Snowflake query identifier (joins to query_history)
