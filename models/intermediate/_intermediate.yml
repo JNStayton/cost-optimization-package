@@ -59,7 +59,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+              arguments:
+                values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
   # ===========================================================================
   # int_tables
@@ -102,7 +103,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+              arguments:
+                values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
 
   # ===========================================================================
@@ -141,54 +143,156 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+              arguments:
+                values: ['snowflake', 'bigquery', 'redshift', 'databricks']
 
   # ===========================================================================
-  # int_columns
+  # int_table_inventory
   # ===========================================================================
-  - name: int_columns
+  - name: int_table_inventory
     description: >
-      Unified column metadata across all supported data platforms.
-      Provides column-level information including data types, nullability,
-      and partitioning/clustering membership. Essential for clustering and
-      partitioning key recommendations.
-      NOTE: Redshift does not yet have a staging model for columns; this
-      intermediate model will be empty for Redshift until stg_redshift__columns
-      is created.
+      Platform-agnostic router to table inventory (tables + storage joined).
+      Routes to int_snowflake__table_inventory, int_bigquery__table_inventory, etc.
+      Marts should ref this model, not platform-specific table inventory models.
     config:
       materialized: ephemeral
+
+  # ===========================================================================
+  # int_table_query_stats_daily
+  # ===========================================================================
+  - name: int_table_query_stats_daily
+    description: >
+      Platform-agnostic router to daily table query statistics.
+      Routes to int_snowflake__table_query_stats_daily, etc.
+      Marts should ref this model, not platform-specific query stats models.
+    config:
+      materialized: ephemeral
+
+  # ===========================================================================
+  # int_dbt__relations
+  # ===========================================================================
+  - name: int_dbt__relations
+    description: >
+      Compile-time mapping between dbt model metadata and physical relation names.
+      Used by recommendation marts to attribute findings back to dbt model unique IDs.
     columns:
-      - name: database_name
-        description: Database, project, or catalog name
-        tests:
-          - not_null
-      - name: schema_name
-        description: Schema or dataset name
-        tests:
-          - not_null
-      - name: table_name
-        description: Table name
-        tests:
-          - not_null
-      - name: column_name
-        description: Column name
-        tests:
-          - not_null
-      - name: ordinal_position
-        description: Ordinal position of the column within the table (1-based)
-      - name: data_type
-        description: Column data type in platform-native type names
-      - name: is_nullable
-        description: Whether the column allows NULL values
-      - name: is_partitioning_column
-        description: Whether the column is used as a partitioning key (BigQuery-specific)
-      - name: clustering_ordinal_position
-        description: Position of the column in the clustering key (NULL if not a clustering column, BigQuery-specific)
-      - name: is_deleted
-        description: Whether the column metadata has been soft-deleted
       - name: platform
-        description: "Source data platform: snowflake, bigquery, redshift, or databricks"
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['snowflake', 'bigquery', 'redshift', 'databricks']
+        description: Active adapter platform (snowflake, bigquery, redshift, databricks)
+      - name: database_name
+        description: Database/catalog name for the model relation
+      - name: schema_name
+        description: Schema/dataset name for the model relation
+      - name: table_name
+        description: Relation identifier (alias if present, otherwise model name)
+      - name: dbt_model
+        description: dbt unique_id for the model
+      - name: model_name
+        description: dbt model file name
+      - name: alias
+        description: Configured dbt alias used for the relation name
+      - name: package_name
+        description: dbt package where the model is defined
+      - name: materialized
+        description: dbt materialization configured for the model
+      - name: relation_fqn
+        description: Fully-qualified relation name (database.schema.table)
+
+  # ===========================================================================
+  # int_snowflake__table_inventory
+  # ===========================================================================
+  - name: int_snowflake__table_inventory
+    description: >
+      Snowflake table inventory combining table metadata and storage metrics.
+      Contains active table-level size, row count, and clustering metadata used
+      by multiple optimization marts.
+    columns:
+      - name: platform
+        description: Source data platform identifier (snowflake)
+      - name: database_name
+        description: Snowflake database name
+      - name: schema_name
+        description: Snowflake schema name
+      - name: table_name
+        description: Snowflake table name
+      - name: table_fqn
+        description: Fully-qualified table name (database.schema.table)
+      - name: table_type
+        description: Snowflake native table type
+      - name: normalized_table_type
+        description: Human-readable table classification
+      - name: row_count
+        description: Approximate row count
+      - name: clustering_key
+        description: Clustering key definition, if configured
+      - name: is_already_clustered
+        description: Whether clustering key is configured
+      - name: is_transient
+        description: Whether table is transient
+      - name: active_bytes
+        description: Active storage bytes
+      - name: size_gb
+        description: Active storage converted to GB
+      - name: approx_micropartitions
+        description: Approximate micropartition count derived from active bytes
+
+  # ===========================================================================
+  # int_snowflake__query_table_access
+  # ===========================================================================
+  - name: int_snowflake__query_table_access
+    description: >
+      One row per (query_id, table) from Snowflake access_history. Flattens
+      base_objects_accessed and objects_modified for exact object-level attribution
+      without query_text scan. Used by table_query_stats_daily and recommendation marts.
+    config:
+      enabled: "{{ target.type == 'snowflake' and var('use_access_history_attribution', true) }}"
+    columns:
+      - name: query_id
+        description: Snowflake query identifier (joins to query_history)
+      - name: query_start_time
+        description: Query start time from access_history
+      - name: table_database
+        description: Database from parsed objectName
+      - name: table_schema
+        description: Schema from parsed objectName
+      - name: table_name
+        description: Table from parsed objectName
+
+  # ===========================================================================
+  # int_snowflake__table_query_stats_daily
+  # ===========================================================================
+  - name: int_snowflake__table_query_stats_daily
+    description: >
+      Incremental daily query statistics by Snowflake table. Uses access_history
+      (query_table_access) for attribution instead of query_text. Shared intermediate
+      for clustering, spillage, compute efficiency, and join-pattern marts.
+    columns:
+      - name: table_query_stats_daily_key
+        description: Surrogate key for stats_date + table relation
+      - name: platform
+        description: Source data platform identifier (snowflake)
+      - name: stats_date
+        description: Date grain of aggregated query statistics
+      - name: table_database
+        description: Snowflake database name
+      - name: table_schema
+        description: Snowflake schema name
+      - name: table_name
+        description: Snowflake table name
+      - name: total_query_count
+        description: Total count of successful queries matched to the table
+      - name: select_count
+        description: Count of SELECT queries
+      - name: dml_count
+        description: Count of INSERT/UPDATE/DELETE/MERGE queries
+      - name: select_execution_time_ms_sum
+        description: Sum of execution_time_ms for matched SELECT queries
+      - name: select_partitions_scanned_sum
+        description: Sum of partitions_scanned for matched SELECT queries
+      - name: select_partitions_total_sum
+        description: Sum of partitions_total for matched SELECT queries
+      - name: bytes_scanned_sum
+        description: Sum of bytes scanned across matched queries
+      - name: bytes_spilled_local_sum
+        description: Sum of local spill bytes across matched queries
+      - name: bytes_spilled_remote_sum
+        description: Sum of remote spill bytes across matched queries

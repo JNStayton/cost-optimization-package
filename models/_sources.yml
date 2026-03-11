@@ -9,7 +9,6 @@ sources:
     tables:
       - name: columns
       - name: query_history
-      - name: query_attribution_history
       - name: access_history
       - name: sessions
       - name: tables

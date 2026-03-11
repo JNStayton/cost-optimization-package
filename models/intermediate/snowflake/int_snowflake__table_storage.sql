@@ -5,6 +5,6 @@ select
     active_bytes,
     time_travel_bytes,
     failsafe_bytes,
-    case when deleted is not null then true else false end as is_deleted,
+    coalesce(deleted, false) as is_deleted,
     'snowflake' as platform
 from {{ ref('stg_snowflake__table_storage_metrics') }}
