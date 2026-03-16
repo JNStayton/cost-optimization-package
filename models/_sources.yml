@@ -22,12 +22,379 @@ sources:
     config:
       enabled: "{{ target.type == 'redshift' }}"
     tables:
-      - name: sys_query_history
-      - name: stl_connection_log
-      - name: sys_query_detail
-      - name: svv_table_info
-      - name: stl_query_metrics
-      - name: sys_serverless_usage
+      - name: query_history
+        identifier: sys_query_history
+        description: '{{ doc("redshift_query_history") }}'
+      - name: users
+        identifier: svv_user_info
+        description: '{{ doc("redshift_users") }}'
+      - name: serverless_usage
+        identifier: sys_serverless_usage
+        description: '{{ doc("redshift_serverless_usage") }}'
+      - name: query_detail
+        identifier: sys_query_detail
+        description: '{{ doc("redshift_query_detail") }}'
+        columns:
+          - name: user_id
+            description: The identifier of the user who submitted the query.
+          - name: query_id
+            description: The query identifier.
+          - name: child_query_sequence
+            description: The sequence of the rewritten user query, starting with 1.
+          - name: stream_id
+            description: The stream identifier of the query stream.
+          - name: segment_id
+            description: The segment identifier of the query running segment.
+          - name: step_id
+            description: The step identifier in a segment.
+          - name: step_name
+            description: >
+              The step name in a segment. Possible values are aggregate, broadcast, delete, 
+              distribute, hash, hashjoin, insert, limit, merge, nestloop, parse, return, 
+              save, scan, sort, sortlimit, unique, and window.
+          - name: table_id
+            description: The table identifier for permanent table scans.
+          - name: table_name
+            description: The table name of the step that is being operated.
+          - name: is_rrscan
+            description: >
+              A value that indicates whether a step is a scan step. 
+              True (t) indicates that a range-restricted scan was used.
+          - name: start_time
+            description: >
+              The time when the query step began. This field is recorded at the segment level, 
+              regardless of the value in the metrics_level column.
+          - name: end_time
+            description: >
+              The time when the query step completed. This field is recorded at the segment level, 
+              regardless of the value in the metrics_level column.
+          - name: duration
+            description: >
+              The amount of time (microseconds) spent on the step. This field is recorded at the 
+              segment level, regardless of the value in the metrics_level column.
+          - name: alert
+            description: The description of the alert event.
+          - name: input_bytes
+            description: The input bytes for the current step.
+          - name: input_rows
+            description: The input rows for the current step.
+          - name: output_bytes
+            description: The output bytes for the current step.
+          - name: output_rows
+            description: The output rows for the current step.
+          - name: blocks_read
+            description: The number of blocks the step read.
+          - name: blocks_write
+            description: The number of blocks the step wrote.
+          - name: local_read_io
+            description: The number of blocks read from local disk cache.
+          - name: remote_read_io
+            description: The number of blocks read from remote.
+          - name: source
+            description: >
+              The type of database object that was scanned. This column only has a value 
+              when the row's step_name value is scan.
+          - name: data_skewness
+            description: >
+              The skewness of output rows distribution among all steps. It is a number in the 
+              range of 0% to 100%. The larger the number, the more unbalanced is the distribution.
+          - name: time_skewness
+            description: >
+              The skewness of execution time distribution among all steps. It is a number in the 
+              range of 0% to 100%. The larger the number, the more unbalanced is the distribution.
+          - name: is_active
+            description: >
+              The state of the query at the step level. Possible values are 't' that shows the 
+              step is actively running or 'f' that indicates the step completes running.
+          - name: spilled_block_local_disk
+            description: The number of blocks spilled to local disk.
+          - name: spilled_block_remote_disk
+            description: The number of blocks spilled to Amazon Simple Storage Service.
+          - name: step_attribute
+            description: >
+              Contains information about the associated step. 
+              Possible values for scan steps: multi-dimensional.
+          - name: metrics_level
+            description: >
+              The metric level of the query. Possible values are as follows: 
+              Child query, Stream, Segment, Step.
+          - name: plan_parent_id
+            description: >
+              The identifier of the plan node's parent node. A parent node can have multiple 
+              child nodes. For example, a merge join is the parent node of the scans on the joined tables.
+          - name: plan_node_id
+            description: The identifier of a plan node that maps to one or more steps in the query.
+      - name: diskusage
+        identifier: svv_diskusage
+        description: '{{ doc("redshift_diskusage") }}'
+        columns:
+          - name: db_id
+            description: Database ID.
+          - name: name
+            description: Table name.
+          - name: slice
+            description: Data slice allocated to the table.
+          - name: col
+            description: >
+              Zero-based index for the column. Every table you create has three hidden columns 
+              appended to it: INSERT_XID, DELETE_XID, and ROW_ID (OID). A table with 3 user-defined 
+              columns contains 6 actual columns, and the user-defined columns are internally numbered 
+              as 0, 1, and 2. The INSERT_XID, DELETE_XID, and ROW_ID columns are numbered 3, 4, and 5, 
+              respectively, in this example.
+          - name: tbl
+            description: Table ID.
+          - name: blocknum
+            description: ID for the data block.
+          - name: num_values
+            description: Number of values contained on the block.
+          - name: minvalue
+            description: Minimum value contained on the block.
+          - name: maxvalue
+            description: Maximum value contained on the block.
+          - name: sb_pos
+            description: Internal identifier for the position of the super block on disk.
+          - name: pinned
+            description: >
+              Whether or not the block is pinned into memory as part of pre-load. 
+              0 = false; 1 = true. Default is false.
+          - name: on_disk
+            description: >
+              Whether or not the block is automatically stored on disk. 
+              0 = false; 1 = true. Default is false.
+          - name: modified
+            description: >
+              Whether or not the block has been modified. 
+              0 = false; 1 = true. Default is false.
+          - name: hdr_modified
+            description: >
+              Whether or not the block header has been modified. 
+              0 = false; 1 = true. Default is false.
+          - name: unsorted
+            description: >
+              Whether or not a block is unsorted. 
+              0 = false; 1 = true. Default is true.
+          - name: tombstone
+            description: For internal use.
+          - name: preferred_diskno
+            description: >
+              Disk number that the block should be on, unless the disk has failed. 
+              Once the disk has been fixed, the block will move back to this disk.
+          - name: temporary
+            description: >
+              Whether or not the block contains temporary data, such as from a temporary table 
+              or intermediate query results. 0 = false; 1 = true. Default is false.
+          - name: newblock
+            description: >
+              Indicates whether or not a block is new (true) or was never committed to disk (false). 
+              0 = false; 1 = true.
+      - name: connection_log
+        identifier: sys_connection_log
+        description: '{{ doc("redshift_connection_log") }}'
+        columns:
+          - name: event
+            description: Connection or authentication event.
+          - name: record_time
+            description: Time the event occurred.
+          - name: remote_host
+            description: Name or IP address of remote host.
+          - name: remote_port
+            description: Port number for remote host.
+          - name: session_id
+            description: Process ID associated with the statement.
+          - name: database_name
+            description: Database name.
+          - name: user_name
+            description: Username.
+          - name: auth_method
+            description: Authentication method.
+          - name: duration
+            description: Duration of connection in microseconds.
+          - name: ssl_version
+            description: Secure Sockets Layer (SSL) version. This column is empty when SSL is disabled.
+          - name: ssl_cipher
+            description: SSL cipher.
+          - name: mtu
+            description: Maximum transmission unit (MTU).
+          - name: ssl_compression
+            description: SSL compression type.
+          - name: ssl_expansion
+            description: SSL expansion type.
+          - name: iam_auth_guid
+            description: The IAM authentication ID for the CloudTrail request.
+          - name: application_name
+            description: The initial or updated name of the application for a session.
+          - name: driver_version
+            description: >
+              The version of ODBC or JDBC driver that connects to your Amazon Redshift cluster 
+              from your third-party SQL client tools.
+          - name: os_version
+            description: >
+              The version of the operating system that is on the client machine that connects 
+              to your Amazon Redshift cluster.
+          - name: plugin_name
+            description: The name of the plugin used to connect to your Amazon Redshift cluster.
+          - name: protocol_version
+            description: >
+              The internal protocol version that the Amazon Redshift driver uses when establishing 
+              its connection with the server. The protocol versions are negotiated between the driver 
+              and server. The version describes the features available. Valid values include: 
+              0 (BASE_SERVER_PROTOCOL_VERSION), 
+              1 (EXTENDED_RESULT_METADATA_SERVER_PROTOCOL_VERSION), 
+              2 (BINARY_PROTOCOL_VERSION), 
+              3 (EXTENDED2_RESULT_METADATA_SERVER_PROTOCOL_VERSION).
+          - name: global_session_id
+            description: >
+              The globally unique identifier for the current session. 
+              The session ID persists through node failure restarts.
+      - name: table_info
+        identifier: svv_table_info
+        description: '{{ doc("redshift_table_info") }}'
+        columns:
+          - name: database
+            description: Database name.
+          - name: schema
+            description: Schema name.
+          - name: table_id
+            description: Table ID.
+          - name: table
+            description: Table name.
+          - name: encoded
+            description: Value that indicates whether any column has compression encoding defined.
+          - name: diststyle
+            description: >
+              Distribution style or distribution key column, if key distribution is defined. 
+              Possible values include EVEN, KEY(column), ALL, AUTO(ALL), AUTO(EVEN), and AUTO(KEY(column)).
+          - name: sortkey1
+            description: >
+              First column in the sort key, if a sort key is defined. 
+              Possible values include column, AUTO(SORTKEY), and AUTO(SORTKEY(column)).
+          - name: max_varchar
+            description: Size of the largest column that uses a VARCHAR data type.
+          - name: sortkey1_enc
+            description: Compression encoding of the first column in the sort key, if a sort key is defined.
+          - name: sortkey_num
+            description: Number of columns defined as sort keys.
+          - name: size
+            description: Size of the table, in 1-MB data blocks.
+          - name: pct_used
+            description: Percent of available space that is used by the table.
+          - name: empty
+            description: For internal use. This column is no longer used and will be removed in a future release.
+          - name: unsorted
+            description: Percent of unsorted rows in the table.
+          - name: stats_off
+            description: >
+              Number that indicates how stale the table's statistics are; 
+              0 is current, 100 is out of date.
+          - name: tbl_rows
+            description: >
+              Total number of rows in the table. 
+              This value includes rows marked for deletion, but not yet vacuumed.
+          - name: skew_sortkey1
+            description: >
+              Ratio of the size of the largest non-sort key column to the size of the first column 
+              of the sort key, if a sort key is defined. Use this value to evaluate the effectiveness 
+              of the sort key.
+          - name: skew_rows
+            description: >
+              Ratio of the number of rows in the slice with the most rows to the number of rows 
+              in the slice with the fewest rows.
+          - name: estimated_visible_rows
+            description: The estimated rows in the table. This value does not include rows marked for deletion.
+          - name: risk_event
+            description: >
+              Risk information about a table. The field is separated into parts: risk_type|xid|timestamp. 
+              The risk_type, where 1 indicates that a COPY command with the EXPLICIT_IDS option ran. 
+              Amazon Redshift no longer checks the uniqueness of IDENTITY columns in the table. 
+              The transaction ID, xid, that introduced the risk. The timestamp when the COPY command ran.
+          - name: vacuum_sort_benefit
+            description: >
+              The estimated maximum percentage improvement of scan query performance 
+              when you run vacuum sort.
+          - name: create_time
+            description: The timestamp for when the table was created.
+      - name: query_metrics
+        identifier: stv_query_metrics
+        description: '{{ doc("redshift_query_metrics") }}'
+        columns:
+          - name: userid
+            description: ID of the user that ran the query that generated the entry.
+          - name: service_class
+            description: >
+              ID for the WLM query queue (service class). Query queues are defined in the WLM configuration. 
+              Metrics are reported only for user-defined queues.
+          - name: query
+            description: Query ID. The query column can be used to join other system tables and views.
+          - name: starttime
+            description: >
+              Time in UTC that the query started executing, with 6 digits of precision for fractional seconds.
+          - name: slices
+            description: Number of slices for the cluster.
+          - name: segment
+            description: >
+              Segment number. A query consists of multiple segments, and each segment consists of one or more steps. 
+              Query segments can run in parallel. Each segment runs in a single process. 
+              If the segment value is -1, metrics segment values are rolled up to the query level.
+          - name: step_type
+            description: >
+              Type of step that ran. Possible values include: 1 (Scan table), 2 (Insert rows), 3 (Aggregate rows), 
+              6 (Sort step), 7 (Merge step), 8 (Distribution step), 9 (Broadcast distribution step), 
+              10 (Hash join), 11 (Merge join), 12 (Save step), 14 (Hash), 15 (Nested loop join), 
+              16 (Project fields and expressions), 17 (Limit), 18 (Unique), 20 (Delete rows), 
+              26 (Limit sorted rows), 29 (Window function), 32 (UDF), 33 (Unique), 
+              37 (Return rows from leader to client), 38 (Return rows from compute to leader), 40 (Spectrum scan).
+          - name: rows
+            description: Number of rows processed by a step.
+          - name: max_rows
+            description: Maximum number of rows output for a step, aggregated across all slices.
+          - name: cpu_time
+            description: >
+              CPU time used, in microseconds. At the segment level, the total CPU time for the segment across all slices. 
+              At the query level, the sum of CPU time for the query across all slices and segments.
+          - name: max_cpu_time
+            description: >
+              Maximum CPU time used, in microseconds. At the segment level, the maximum CPU time used by the segment 
+              across all slices. At the query level, the maximum CPU time used by any query segment.
+          - name: blocks_read
+            description: Number of 1 MB blocks read by the query or segment.
+          - name: max_blocks_read
+            description: >
+              Maximum number of 1 MB blocks read by the segment, aggregated across all slices. 
+              At the segment level, the maximum number of 1 MB blocks read for the segment across all slices. 
+              At the query level, the maximum number of 1 MB blocks read by any query segment.
+          - name: run_time
+            description: >
+              Total run time, summed across slices. Run time doesn't include wait time. 
+              At the segment level, the run time for the segment, summed across all slices. 
+              At the query level, the run time for the query summed across all slices and segments.
+          - name: max_run_time
+            description: >
+              The maximum elapsed time for a segment, in microseconds. At the segment level, 
+              the maximum run time for the segment across all slices. At the query level, 
+              the maximum run time for any query segment.
+          - name: max_blocks_to_disk
+            description: >
+              The maximum amount of disk space used to write intermediate results, in 1 MB blocks. 
+              At the segment level, the maximum amount of disk space used by the segment across all slices. 
+              At the query level, the maximum amount of disk space used by any query segment.
+          - name: blocks_to_disk
+            description: >
+              The amount of disk space used by a query or segment to write intermediate results, in 1 MB blocks.
+          - name: step
+            description: Query step that ran.
+          - name: max_query_scan_size
+            description: >
+              The maximum size of data scanned by a query, in MB. At the segment level, 
+              the maximum size of data scanned by the segment across all slices. 
+              At the query level, the maximum size of data scanned by any query segment.
+          - name: query_scan_size
+            description: The size of data scanned by a query, in MB.
+          - name: query_priority
+            description: >
+              The priority of the query. Possible values are -1, 0, 1, 2, 3, and 4, 
+              where -1 means that query priority isn't supported.
+          - name: query_queue_time
+            description: The amount of time in microseconds that the query was queued.
 
   - name: bigquery_dataset_info
     description: |
