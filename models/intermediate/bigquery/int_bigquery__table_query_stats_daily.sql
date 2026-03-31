@@ -52,7 +52,6 @@ with candidate_tables as (
 
 query_history as (
     select
-        query_id,
         cast(query_start_time as date) as stats_date,
         query_start_time,
         statement_type,
@@ -94,7 +93,8 @@ matched_queries as (
         qh.bytes_scanned
     from query_history as qh
     inner join candidate_tables as ct
-        on qh.query_text like '%' || ct.table_name || '%'
+        -- case-insensitive match: BigQuery LIKE is case-sensitive, unlike Snowflake ILIKE
+        on lower(qh.query_text) like '%' || lower(ct.table_name) || '%'
 )
 
 select
@@ -132,4 +132,9 @@ select
     0 as bytes_spilled_local_sum,
     0 as bytes_spilled_remote_sum
 from matched_queries
-group by 1, 2, 3, 4, 5, 6
+group by
+    platform,
+    stats_date,
+    table_database,
+    table_schema,
+    table_name
