@@ -29,8 +29,8 @@ select
     t.clustering_key,
     t.clustering_key is not null as is_already_clustered,
     false as is_transient,
-    s.active_bytes,
-    s.active_bytes / pow(1024, 3) as size_gb,
+    coalesce(s.active_bytes, 0) as active_bytes,
+    coalesce(s.active_bytes, 0) / power(1024, 3) as size_gb,
     -- approx_micropartitions: BigQuery uses actual partition count as the data-density proxy.
     -- Snowflake equivalent is active_bytes / (16 * 1024 * 1024).
     coalesce(s.total_partitions, 0) as approx_micropartitions
