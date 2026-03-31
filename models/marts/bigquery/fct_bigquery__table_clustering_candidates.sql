@@ -24,7 +24,11 @@
 {% set target_databases = var('clustering_candidates_target_databases', []) %}
 {% set target_schemas = var('clustering_candidates_target_schemas', []) %}
 
-with large_tables as (
+with
+-- No row limit applied here. Unlike the Snowflake sibling (limit 100), BigQuery's
+-- distributed execution handles large scans efficiently. Override clustering_candidates_min_size_gb
+-- to narrow the candidate set if needed.
+large_tables as (
     select
         ti.database_name,
         ti.schema_name,
@@ -160,6 +164,9 @@ final as (
         round(cast(select_count as float64) / (dml_count + 1), 1) as query_to_dml_ratio,
         round(avg_slot_ms / 1000, 2) as avg_slot_seconds
     from scored
+    -- dbt_project_only filter is deferred to this final CTE (consistent with Snowflake sibling).
+    -- Tables without a dbt_model join still flow through table_query_stats aggregation; they
+    -- are filtered out here rather than in large_tables.
     where
         {% if dbt_project_only %}
             dbt_model is not null
