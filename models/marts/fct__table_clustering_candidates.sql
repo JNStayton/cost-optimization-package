@@ -6,6 +6,16 @@
     1. SQL syntax differences (md5, date functions)
     2. Platform-specific scoring (BQ uses bytes billed; others use execution time + partitions)
 
+  Column notes:
+    - avg_query_duration_s: on Snowflake/others = wall-clock avg execution seconds.
+                            On BigQuery = avg_slot_ms / 1000 (parallel CPU time, not wall clock).
+                            See int_bigquery__table_query_stats_daily column notes.
+    - avg_bytes_billed (internal): BigQuery-only column projected by the BQ branch of the
+      table_query_stats and scored CTEs. It flows through int_table_query_stats_daily's
+      select * from int_bigquery__table_query_stats_daily (which emits select_bytes_billed_sum).
+      The {% if target.type == 'bigquery' %} guards ensure this column is never referenced
+      on non-BQ platforms.
+
   For a BigQuery-native version with more granular BQ metrics, see:
     models/marts/bigquery/fct_bigquery__table_clustering_candidates.sql
 --#}
@@ -157,6 +167,7 @@ final as (
                     {% if target.type == 'bigquery' %}
                     -- BigQuery: score on avg GB billed per query (primary cost signal)
                     -- Higher bytes billed = more data scanned = more benefit from clustering
+                    -- avg_bytes_billed: only projected by scored CTE on BigQuery (guarded above)
                     (select_count * (avg_bytes_billed / power(1024, 3)))
                     {% else %}
                     -- Snowflake/others: score on execution time (avg seconds per query × volume)
@@ -195,6 +206,8 @@ final as (
         select_count,
         dml_count,
         round(select_count / (dml_count + 1), 1) as query_to_dml_ratio,
+        -- avg_query_duration_s: on Snowflake/others = wall-clock seconds.
+        -- On BigQuery = avg_slot_ms / 1000 (parallel CPU time, not wall clock).
         round(avg_execution_time_ms / 1000, 2) as avg_query_duration_s
     from scored
     where
