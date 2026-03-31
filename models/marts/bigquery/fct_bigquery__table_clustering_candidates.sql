@@ -51,8 +51,6 @@ with large_tables as (
                 {% endfor %}
             )
         {% endif %}
-    order by size_gb desc
-    limit 100
 ),
 
 table_query_stats as (
@@ -113,7 +111,7 @@ scored as (
 
 final as (
     select
-        current_timestamp() as analyzed_at,
+        analyzed_at,
         current_date() as snapshot_date,
         to_hex(md5(
             cast(current_date() as string) || '|' || coalesce(table_fqn, '')
@@ -132,7 +130,7 @@ final as (
                     -- avg GB billed per query (primary BigQuery cost signal)
                     (select_count * (avg_bytes_billed / power(1024, 3)))
                     -- read-heavy bonus: tables queried far more than written benefit most
-                    + ((select_count / if(dml_count = 0, 1, dml_count)) * 10)
+                    + ((cast(select_count as float64) / (dml_count + 1)) * 10)
                 else 0
             end
         )
@@ -148,7 +146,7 @@ final as (
         case
             when
                 select_count > 0
-                and (select_count / if(dml_count = 0, 1, dml_count)) > 1
+                and (cast(select_count as float64) / (dml_count + 1)) > 1
                 and size_gb >= {{ min_size_gb }}
             then true
             else false
