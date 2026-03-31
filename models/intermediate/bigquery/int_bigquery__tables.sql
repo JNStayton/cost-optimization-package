@@ -14,7 +14,7 @@ select
     -- total_rows from TABLE_STORAGE; INFORMATION_SCHEMA.TABLES does not expose row count
     s.total_rows as row_count,
     -- Extract clustering columns from DDL, e.g. "CLUSTER BY col1, col2\n"
-    regexp_extract(t.ddl, r'(?i)CLUSTER BY (.+?)(?:\n|;|$)') as clustering_key,
+    trim(regexp_extract(t.ddl, r'(?i)CLUSTER BY (.+?)(?:\n|;|$)')) as clustering_key,
     -- BigQuery has no transient table concept
     false as is_transient,
     -- deleted flag from TABLE_STORAGE (true while table is in time-travel window after deletion)
