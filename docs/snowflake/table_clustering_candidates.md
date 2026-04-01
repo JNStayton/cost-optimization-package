@@ -68,7 +68,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `clustering_candidates_min_size_gb` | `1000` | Minimum table size in GB to evaluate. Only tables at or above this threshold appear in results. Set to a lower value (e.g. `1`) for dev/sandbox environments. |
+| `clustering_candidates_min_size_gb` | `100` | Minimum table size in GB to evaluate. Only tables at or above this threshold appear in results. Set to a lower value (e.g. `1`) for dev/sandbox environments. |
 | `clustering_candidates_lookback_days` | `7` | Number of days of daily query stats to aggregate when computing scores and metrics. |
 | `clustering_candidates_dbt_project_only` | `true` | When `true`, only tables that match a dbt model in the current project are included in the output. Set to `false` to include all tables that meet the size threshold. |
 | `clustering_candidates_target_databases` | `[]` | Optional list of database names to restrict evaluation to. Empty = no restriction. |
@@ -125,7 +125,7 @@ A table is flagged as `is_candidate = true` only when **all three** conditions a
 
 2. **Reads outnumber writes.** `query_to_dml_ratio > 1` — the table receives more SELECT queries than DML operations (INSERT, UPDATE, DELETE, MERGE). Clustering reorganizes data on disk to improve read performance, but every write operation can disrupt that organization. Tables with heavy write activity will see clustering benefits eroded quickly, increasing automatic reclustering costs.
 
-3. **The table meets the minimum size threshold.** `table_size_gb >= clustering_candidates_min_size_gb` — clustering overhead (compute cost for automatic reclustering, metadata management) is typically not justified for small tables. The default threshold is 1 TB (1000 GB).
+3. **The table meets the minimum size threshold.** `table_size_gb >= clustering_candidates_min_size_gb` — clustering overhead (compute cost for automatic reclustering, metadata management) is typically not justified for small tables. The default threshold is 100 GB.
 
 ### When `is_candidate` is `false` but the data is still useful
 
