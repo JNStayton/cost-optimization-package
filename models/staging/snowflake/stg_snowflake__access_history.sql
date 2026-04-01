@@ -1,7 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='query_id',
-    enabled=(target.type == 'snowflake' and var('use_access_history_attribution', true))
+    enabled=var('use_access_history_attribution', true)
 ) }}
 
 select 
