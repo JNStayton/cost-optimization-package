@@ -2,6 +2,8 @@ name: 'dbt_cost_optimization_package'
 version: '3.0.0'
 config-version: 2
 
+profile: 'dbt_cost_optimization_package'
+
 model-paths: ["models"]
 docs-paths: ["docs"]
 
@@ -14,7 +16,7 @@ require-dbt-version: [">=1.0.0"]
 
 # Model configurations
 models:
-  dbt_cost_optimization:
+  dbt_cost_optimization_package:
     # Staging models - platform-specific data extraction
     staging:
       +materialized: view
@@ -36,3 +38,4 @@ models:
         +enabled: "{{ target.type == 'databricks' }}"
       redshift:
         +enabled: "{{ target.type == 'redshift' }}"
+    marts:
