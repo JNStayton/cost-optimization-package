@@ -6,7 +6,8 @@
   config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key='clustering_candidates_snapshot_key'
+    unique_key='clustering_candidates_snapshot_key',
+    post_hook="{{ refresh_column_cardinality() }}"
   )
 }}
 
@@ -75,12 +76,11 @@ table_query_stats as (
         and upper(lt.schema_name) = upper(tqs.table_schema)
         and upper(lt.table_name) = upper(tqs.table_name)
         and tqs.stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by 1, 2, 3
+    group by lt.database_name, lt.schema_name, lt.table_name
 ),
 
 scored as (
     select
-        current_timestamp() as analyzed_at,
         lt.database_name,
         lt.schema_name,
         lt.table_name,
