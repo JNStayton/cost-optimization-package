@@ -477,4 +477,4 @@ sources:
     config:
       enabled: "{{ target.type == 'databricks' }}"
     tables:
-      - name: table_info
+      - name: table_metrics_history

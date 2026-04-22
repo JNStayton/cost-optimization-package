@@ -39,3 +39,11 @@ models:
       redshift:
         +enabled: "{{ target.type == 'redshift' }}"
     marts:
+      snowflake:
+        +enabled: "{{ target.type == 'snowflake' }}"
+      bigquery:
+        +enabled: "{{ target.type == 'bigquery' }}"
+      databricks:
+        +enabled: "{{ target.type == 'databricks' }}"
+      redshift:
+        +enabled: "{{ target.type == 'redshift' }}"
