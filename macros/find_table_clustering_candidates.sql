@@ -22,7 +22,7 @@
     {% if ignore_table_size %} 
         {% set min_size_gb = 1 %}
     {% else %} 
-        {% set min_size_gb = 1000 %}
+        {% set min_size_gb = 100 %}
     {% endif %}
 
     {% if execute %}

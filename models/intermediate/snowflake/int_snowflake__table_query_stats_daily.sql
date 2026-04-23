@@ -156,4 +156,4 @@ select
     sum(coalesce(bytes_spilled_local, 0)) as bytes_spilled_local_sum,
     sum(coalesce(bytes_spilled_remote, 0)) as bytes_spilled_remote_sum
 from matched_queries
-group by 1, 2, 3, 4, 5, 6
+group by table_query_stats_daily_key, platform, stats_date, table_database, table_schema, table_name

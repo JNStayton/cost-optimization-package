@@ -1,0 +1,293 @@
+version: 2
+
+models:
+  - name: fct_snowflake__table_clustering_candidates
+    description: >
+      Daily snapshot of Snowflake tables evaluated as candidates for clustering.
+      Each row represents one table assessed on a given day, scored by observed
+      scan inefficiency and query activity over a configurable lookback window.
+
+      Scoring uses the partition pruning ratio (partitions scanned / partitions total)
+      as the primary signal — a ratio close to 1.0 means Snowflake is scanning nearly
+      every micropartition, indicating that clustering would reduce scan overhead.
+      When no query history is available for a table within the lookback window,
+      the score falls back to a neutral multiplier of 0.5 rather than using structural
+      fragmentation, which is not comparable to the pruning ratio on the same scale.
+      Use avg_rows_per_micropartition as a supplementary structural signal in that case.
+
+      Controlled by the following dbt variables:
+        - clustering_candidates_min_size_gb (default 100)
+        - clustering_candidates_lookback_days (default 7)
+        - clustering_candidates_dbt_project_only (default true)
+        - clustering_candidates_target_databases (default [])
+        - clustering_candidates_target_schemas (default [])
+    config:
+      materialized: incremental
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: clustering_candidates_snapshot_key
+        description: >
+          Surrogate key for the snapshot. Derived from md5(snapshot_date || table_fqn).
+          Used as the merge key for incremental runs — one record per table per day.
+
+      - name: snapshot_date
+        description: Calendar date of the snapshot. Combined with table_fqn to form the unique key.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      # ---------------------------------------------------------------------------
+      # Table identity
+      # ---------------------------------------------------------------------------
+      - name: database_name
+        description: Snowflake database containing the table.
+
+      - name: schema_name
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: dbt_model
+        description: >
+          dbt unique_id of the model that produced this table, if the table is a known
+          dbt relation in the current project. Null when clustering_candidates_dbt_project_only
+          is false and the table is not part of the project.
+
+      - name: table_type
+        description: >
+          Normalized table classification. One of: Permanent Table, Transient Table,
+          Materialized View.
+
+      # ---------------------------------------------------------------------------
+      # Recommendation
+      # ---------------------------------------------------------------------------
+      - name: is_candidate
+        description: >
+          Boolean flag indicating whether this table meets all criteria for a clustering
+          recommendation. True when all of the following are satisfied:
+            - At least one SELECT query was executed in the lookback window
+            - Read/write query ratio > 1 (more reads than writes)
+            - Table size meets or exceeds clustering_candidates_min_size_gb
+            - Partition pruning ratio > 0.5 (Snowflake scanned more than half of all
+              micropartitions on average, indicating limited pruning effectiveness)
+
+      - name: score
+        description: >
+          Composite priority score for clustering candidacy. Higher values indicate
+          tables where clustering is more likely to improve query performance.
+
+          Formula: (query activity factor) * (scan inefficiency multiplier)
+
+          Query activity factor: (select_count * avg_query_duration_s) + (read/write ratio * 10)
+          Scan inefficiency multiplier: avg_partitions_scanned / avg_partitions_total when
+          query history is available; 0.5 (neutral) when no query history exists in the
+          lookback window.
+
+          Scores are not normalized and should be used for relative ranking within a
+          single snapshot_date, not compared across snapshots.
+
+      # ---------------------------------------------------------------------------
+      # Clustering state
+      # ---------------------------------------------------------------------------
+      - name: is_already_clustered
+        description: >
+          Whether the table already has a clustering key defined. When true, a recommendation
+          indicates the existing clustering configuration may need to be reviewed or
+          reconfigured rather than added for the first time. Use alongside clustering_key
+          to understand the current state before taking action.
+
+      - name: clustering_key
+        description: >
+          The existing clustering key definition, if one is configured (e.g. "LINEAR(date_col, region)").
+          Null when is_already_clustered is false. Useful for evaluating whether the current
+          key aligns with actual query filter patterns before deciding whether to reconfigure.
+
+      # ---------------------------------------------------------------------------
+      # Size & structure
+      # ---------------------------------------------------------------------------
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: total_rows
+        description: Approximate row count of the table.
+
+      - name: current_micropartitions
+        description: >
+          Estimated total micropartition count. When query history is available, derived
+          from the observed avg_partitions_total; otherwise approximated from active
+          storage bytes using a 16MB-per-micropartition estimate.
+
+      - name: avg_rows_per_micropartition
+        description: >
+          Average number of rows stored per micropartition (total_rows / current_micropartitions).
+
+          This is a structural fragmentation signal. A higher value means rows are densely
+          packed — each micropartition holds more data, and Snowflake can skip more of them
+          during pruning. A lower value means the table is fragmented: many micropartitions
+          each contain few rows, forcing Snowflake to open more of them per query regardless
+          of filter selectivity.
+
+          Why a low value is worth investigating: Snowflake targets roughly 16MB of compressed
+          data per micropartition. If avg_rows_per_micropartition is very low relative to
+          similar tables, the table may have accumulated micropartition fragmentation over
+          time — often from incremental loads that insert small batches. This structural
+          condition reduces the effectiveness of partition pruning even on well-clustered
+          tables. When no query history is available in the lookback window (and the pruning
+          ratio cannot be computed), this column is the best available indicator that a table
+          may benefit from clustering or from a full recluster operation.
+
+      - name: avg_partitions_scanned
+        description: >
+          Average number of micropartitions scanned per SELECT query over the lookback window.
+          Derived from Snowflake query execution metadata. A high value relative to
+          current_micropartitions indicates poor pruning effectiveness.
+
+      # ---------------------------------------------------------------------------
+      # Query activity
+      # ---------------------------------------------------------------------------
+      - name: select_count
+        description: Total number of SELECT queries against this table in the lookback window.
+
+      - name: dml_count
+        description: >
+          Total number of INSERT, UPDATE, DELETE, and MERGE queries against this table
+          in the lookback window.
+
+      - name: query_to_dml_ratio
+        description: >
+          Ratio of SELECT queries to DML operations (select_count / (dml_count + 1)).
+          Higher values indicate read-heavy tables where clustering is more likely to
+          deliver a return on the compute cost of maintaining cluster order.
+
+      - name: avg_query_duration_s
+        description: >
+          Average execution time in seconds for SELECT queries against this table in the
+          lookback window. High values alongside a high avg_partitions_scanned suggest
+          that reduced scanning from clustering would meaningfully improve query latency.
+
+  # ===========================================================================
+  # fct_snowflake__clustering_key_candidates
+  # ===========================================================================
+  - name: fct_snowflake__clustering_key_candidates
+    description: >
+      Daily snapshot of column-level clustering key recommendations for tables
+      identified as candidates by fct_snowflake__table_clustering_candidates.
+      One row per (snapshot_date, table_fqn, column_name).
+
+      Scoped to the top N candidate tables by score (clustering_key_cardinality_table_limit,
+      default 10). Only tables with is_candidate = true from today's snapshot are evaluated.
+
+      Scoring uses real cardinality (distinct_values / total_rows) from
+      int_snowflake__column_cardinality, populated by the refresh_column_cardinality macro
+      post-hook. Because this model refs fct_snowflake__table_clustering_candidates, dbt
+      guarantees the post-hook completes before this model runs — cardinality is always
+      populated. Cardinality is combined with column query usage count (Enterprise+ only).
+
+      Use is_recommended = true or recommended_key_position <= 3 to surface the top
+      clustering key suggestions per table.
+
+      Controlled by the following dbt variables:
+        - clustering_key_cardinality_table_limit (default 10)
+        - clustering_candidates_lookback_days    (default 7)
+        - use_access_history_attribution         (default true)
+    config:
+      materialized: incremental
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: clustering_key_candidate_snapshot_key
+        description: >
+          Surrogate key for the snapshot. Derived from md5(snapshot_date || table_fqn || column_name).
+          Used as the merge key for incremental runs — one record per column per table per day.
+
+      - name: snapshot_date
+        description: Calendar date of the snapshot.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      # ---------------------------------------------------------------------------
+      # Table identity
+      # ---------------------------------------------------------------------------
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the table.
+
+      - name: schema_name
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table.
+
+      # ---------------------------------------------------------------------------
+      # Column
+      # ---------------------------------------------------------------------------
+      - name: column_name
+        description: Name of the evaluated column.
+
+      - name: ordinal_position
+        description: Column position in the table definition (1-based).
+
+      - name: data_type
+        description: Snowflake data type of the column.
+
+      # ---------------------------------------------------------------------------
+      # Recommendation
+      # ---------------------------------------------------------------------------
+      - name: recommended_key_position
+        description: >
+          Rank of this column as a clustering key for its table, ordered by column_score
+          descending. Position 1 is the top recommendation. Positions 1–3 are flagged
+          as is_recommended = true.
+
+      - name: is_recommended
+        description: True when recommended_key_position <= 3.
+
+      - name: column_score
+        description: >
+          Composite column-level score combining cardinality and query usage signals.
+          Formula: cardinality_signal + (usage_count * 20)
+          Cardinality signal: cardinality_pct (real, from macro) when available;
+          cardinality_tier_weight (heuristic) otherwise.
+          Scores are relative within a table — use recommended_key_position for ranking.
+
+      # ---------------------------------------------------------------------------
+      # Cardinality
+      # ---------------------------------------------------------------------------
+      - name: distinct_values
+        description: >
+          Approximate distinct value count from APPROX_COUNT_DISTINCT, populated by the
+          refresh_column_cardinality macro. Null on first run or if the column was not
+          included in the macro's pre-filtered column set for this table.
+
+      - name: cardinality_pct
+        description: >
+          Cardinality as a percentage of total rows (distinct_values / total_rows * 100).
+          Null when distinct_values is null. Medium cardinality (roughly 0.1%–10%) is
+          generally ideal for clustering keys — selective enough to prune micropartitions
+          effectively, but not so unique that each value occupies its own micropartition.
+
+      - name: cardinality_calculated_at
+        description: Timestamp when the refresh_column_cardinality macro last populated this column's cardinality.
+
+      # ---------------------------------------------------------------------------
+      # Usage
+      # ---------------------------------------------------------------------------
+      - name: usage_count
+        description: >
+          Number of distinct queries that accessed this column over the lookback window,
+          from ACCESS_HISTORY column-level attribution (Enterprise+ only). Zero for
+          Standard edition users. Heavily weighted in the score — columns that are
+          actually filtered on in real queries are strongly preferred as clustering keys.
