@@ -3,7 +3,8 @@
   by fct_snowflake__table_clustering_candidates.
 
   Scoped to the top N candidates by score (clustering_key_cardinality_table_limit).
-  One row per (snapshot_date, table_fqn, column_name).
+  One row per (snapshot_date, table_fqn, column_name) for the top 3 recommended
+  columns per table only.
 
   Build order guarantees correctness: since this model refs
   fct_snowflake__table_clustering_candidates, dbt builds that model first — including
@@ -11,10 +12,20 @@
   int_snowflake__column_cardinality before this model starts. Real cardinality is
   always available by the time this model runs.
 
-  Scoring: (distinct_values / total_rows * 100) + (usage_count * 20)
-  Columns with null cardinality (not included in macro pre-filter) score on
-  usage_count only. recommended_key_position ranks columns within each table —
-  positions 1–3 are flagged as is_recommended.
+  Scoring: (avg_rows_per_value / total_rows * 100) + ((where_query_count + join_query_count) * 20)
+  avg_rows_per_value = total_rows / distinct_values. Higher values mean fewer distinct
+  values relative to rows — lower cardinality — which is better for micropartition
+  co-location. Columns with null cardinality score on usage only.
+
+  Cardinality guardrails (applied when cardinality data is available):
+    - distinct_values > 10:            excludes near-boolean columns
+    - distinct_values < total_rows:    excludes unique/near-unique keys
+
+  Usage signal (Enterprise+ only): where_query_count and join_query_count from
+  int_snowflake__column_query_stats, matched against query_text WHERE and JOIN...ON
+  patterns. Standard edition scores on cardinality only (usage = 0).
+
+  Known limitation: column aliasing in query_text is not detected.
 --#}
 {{
   config(
@@ -61,8 +72,11 @@ table_columns as (
     left join {{ ref('int_snowflake__column_cardinality') }} as cc
         on tc.table_fqn = cc.table_fqn
         and tc.column_name = cc.column_name
-    -- exclude data types not supported as Snowflake clustering keys
     where tc.data_type not in ('VARIANT', 'ARRAY', 'OBJECT', 'GEOGRAPHY', 'GEOMETRY')
+        and (
+            cc.distinct_values is null
+            or (cc.distinct_values > 10 and cc.distinct_values < cc.total_rows)
+        )
 ),
 
 {% if use_access_history %}
@@ -70,7 +84,8 @@ column_usage as (
     select
         table_fqn,
         column_name,
-        sum(query_count) as usage_count
+        sum(where_query_count) as where_query_count,
+        sum(join_query_count)  as join_query_count
     from {{ ref('int_snowflake__column_query_stats') }}
     where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by table_fqn, column_name
@@ -87,15 +102,17 @@ scored as (
         tc.cardinality_total_rows,
         tc.cardinality_calculated_at,
         {% if use_access_history %}
-        coalesce(cu.usage_count, 0) as usage_count,
+        coalesce(cu.where_query_count, 0) as where_query_count,
+        coalesce(cu.join_query_count, 0)  as join_query_count,
         {% else %}
-        0 as usage_count,
+        0 as where_query_count,
+        0 as join_query_count,
         {% endif %}
         case
-            when tc.distinct_values is not null and tc.cardinality_total_rows > 0
-                then (tc.distinct_values::float / tc.cardinality_total_rows) * 100
+            when tc.distinct_values is not null and tc.distinct_values > 0
+                then tc.cardinality_total_rows::float / tc.distinct_values
             else null
-        end as cardinality_pct,
+        end as avg_rows_per_value,
         c.table_score,
         c.dbt_model
     from table_columns as tc
@@ -111,7 +128,9 @@ scored as (
 column_scored as (
     select
         *,
-        coalesce(cardinality_pct, 0) + (usage_count * 20) as column_score
+        where_query_count + join_query_count as usage_count,
+        coalesce(avg_rows_per_value / nullif(cardinality_total_rows, 0) * 100, 0)
+            + (where_query_count + join_query_count) * 20 as column_score
     from scored
 ),
 
@@ -142,9 +161,11 @@ final as (
         column_score,
         -- cardinality
         distinct_values,
-        cardinality_pct,
+        avg_rows_per_value,
         cardinality_calculated_at,
         -- usage
+        where_query_count,
+        join_query_count,
         usage_count
     from column_scored
 )
@@ -166,18 +187,21 @@ select
     data_type,
     -- recommendation
     recommended_key_position,
-    recommended_key_position <= 3 as is_recommended,
+    -- scoring
     column_score,
     -- cardinality
     distinct_values,
-    cardinality_pct,
+    avg_rows_per_value,
     cardinality_calculated_at,
     -- usage
+    where_query_count,
+    join_query_count,
     usage_count
 from final
+where recommended_key_position <= 3
 {% if is_incremental() %}
-where snapshot_date >= (
-    select coalesce(max(snapshot_date), '1970-01-01'::date)
-    from {{ this }}
-)
+    and snapshot_date >= (
+        select coalesce(max(snapshot_date), '1970-01-01'::date)
+        from {{ this }}
+    )
 {% endif %}

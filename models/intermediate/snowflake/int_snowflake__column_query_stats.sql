@@ -9,34 +9,45 @@
 }}
 
 {#--
-  Daily column-level query access counts per table, derived from ACCESS_HISTORY.
+  Daily column-level query access counts per table, derived from ACCESS_HISTORY
+  joined with QUERY_HISTORY for query text classification.
   One row per (access_date, table_fqn, column_name).
 
-  Used by fct_snowflake__clustering_key_candidates and the refresh_column_cardinality
-  macro to pre-filter which columns are worth running APPROX_COUNT_DISTINCT against —
-  only columns that have actually appeared in query access are candidates for
-  cardinality scanning, keeping the macro compute cost contained.
+  query_count:       total queries that accessed the column (any context).
+  where_query_count: queries where the column appeared in a WHERE clause.
+  join_query_count:  queries where the column appeared in a JOIN...ON clause.
+
+  where_query_count and join_query_count are the primary signals used by
+  fct_snowflake__clustering_key_candidates — only filter and join usage
+  drives micropartition pruning benefit in Snowflake.
+
+  Known limitation: column aliasing (SELECT col AS alias ... WHERE alias = x)
+  will not be detected; the base column name is matched against query_text.
+
+  Also used by refresh_column_cardinality to pre-filter which columns are
+  worth running APPROX_COUNT_DISTINCT against (query_count, any access).
 
   Enterprise+ only. Disabled when use_access_history_attribution = false.
-  Standard edition users receive cardinality scoring only (no usage signal).
-
-  Initial lookback: 30 days. Override with vars.column_query_stats_initial_lookback_days.
+  Initial lookback: 30 days. Override with clustering_query_stats_initial_lookback_days.
 --#}
 
 {% set initial_lookback_days = var('column_query_stats_initial_lookback_days', 30) %}
 
 with column_access as (
     select
-        table_fqn,
-        table_database,
-        table_schema,
-        table_name,
-        column_name,
-        query_id,
-        cast(query_start_time as date) as access_date
-    from {{ ref('int_snowflake__column_query_access') }}
+        ca.table_fqn,
+        ca.table_database,
+        ca.table_schema,
+        ca.table_name,
+        ca.column_name,
+        ca.query_id,
+        cast(ca.query_start_time as date) as access_date,
+        qh.query_text
+    from {{ ref('int_snowflake__column_query_access') }} as ca
+    left join {{ ref('int_snowflake__query_history') }} as qh
+        on ca.query_id = qh.query_id
     {% if is_incremental() %}
-        where query_start_time >= dateadd(
+        where ca.query_start_time >= dateadd(
             day,
             -1,
             (
@@ -45,7 +56,7 @@ with column_access as (
             )
         )
     {% else %}
-        where query_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
+        where ca.query_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
     {% endif %}
 )
 
@@ -61,6 +72,22 @@ select
     table_name,
     column_name,
     access_date,
-    count(distinct query_id) as query_count
+    count(distinct query_id) as query_count,
+    count(distinct case
+        when query_text ilike '%WHERE%' || column_name || '%'
+            then query_id
+    end) as where_query_count,
+    count(distinct case
+        when query_text ilike '%JOIN%'
+            and query_text ilike '%ON%' || column_name || '%'
+            then query_id
+    end) as join_query_count
 from column_access
-group by column_query_stats_daily_key, table_fqn, table_database, table_schema, table_name, column_name, access_date
+group by
+    column_query_stats_daily_key,
+    table_fqn,
+    table_database,
+    table_schema,
+    table_name,
+    column_name,
+    access_date
