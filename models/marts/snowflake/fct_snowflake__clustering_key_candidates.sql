@@ -1,31 +1,8 @@
 {#--
-  Column-level clustering key recommendations for tables identified as candidates
-  by fct_snowflake__table_clustering_candidates.
-
-  Scoped to the top N candidates by score (clustering_key_cardinality_table_limit).
-  One row per (snapshot_date, table_fqn, column_name) for the top 3 recommended
-  columns per table only.
-
-  Build order guarantees correctness: since this model refs
-  fct_snowflake__table_clustering_candidates, dbt builds that model first — including
-  its post-hook, which runs refresh_column_cardinality and populates
-  int_snowflake__column_cardinality before this model starts. Real cardinality is
-  always available by the time this model runs.
-
-  Scoring: (avg_rows_per_value / total_rows * 100) + ((where_query_count + join_query_count) * 20)
-  avg_rows_per_value = total_rows / distinct_values. Higher values mean fewer distinct
-  values relative to rows — lower cardinality — which is better for micropartition
-  co-location. Columns with null cardinality score on usage only.
-
-  Cardinality guardrails (applied when cardinality data is available):
-    - distinct_values > 10:            excludes near-boolean columns
-    - distinct_values < total_rows:    excludes unique/near-unique keys
-
-  Usage signal (Enterprise+ only): where_query_count and join_query_count from
-  int_snowflake__column_query_stats, matched against query_text WHERE and JOIN...ON
-  patterns. Standard edition scores on cardinality only (usage = 0).
-
-  Known limitation: column aliasing in query_text is not detected.
+  Top 3 clustering key recommendations per candidate table, scored on WHERE/JOIN
+  query usage and cardinality. Requires fct_snowflake__table_clustering_candidates
+  to build first — its post-hook populates int_snowflake__column_cardinality before
+  this model runs. Known limitation: column aliasing in query_text is not detected.
 --#}
 {{
   config(
@@ -75,12 +52,14 @@ table_columns as (
     where tc.data_type not in ('VARIANT', 'ARRAY', 'OBJECT', 'GEOGRAPHY', 'GEOMETRY')
         and (
             cc.distinct_values is null
-            or (cc.distinct_values > 10 and cc.distinct_values < cc.total_rows)
+            or cc.distinct_values < cc.total_rows * 0.5
         )
 ),
 
 {% if use_access_history %}
 column_usage as (
+    -- Enterprise+: ACCESS_HISTORY provides precise column→query attribution;
+    -- query_text matching is scoped to only queries that actually accessed the column.
     select
         table_fqn,
         column_name,
@@ -89,6 +68,28 @@ column_usage as (
     from {{ ref('int_snowflake__column_query_stats') }}
     where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by table_fqn, column_name
+),
+{% else %}
+column_usage as (
+    -- Standard: no ACCESS_HISTORY, so scope relevant queries by table name in
+    -- query_text, then apply WHERE/JOIN column matching against that subset.
+    select
+        tc.table_fqn,
+        tc.column_name,
+        count(distinct case
+            when qh.query_text ilike '%WHERE%' || tc.column_name || '%'
+                then qh.query_id
+        end) as where_query_count,
+        count(distinct case
+            when qh.query_text ilike '%JOIN%'
+                and qh.query_text ilike '%ON%' || tc.column_name || '%'
+                then qh.query_id
+        end) as join_query_count
+    from table_columns as tc
+    inner join {{ ref('int_snowflake__query_history') }} as qh
+        on qh.query_text ilike '%' || split_part(tc.table_fqn, '.', 3) || '%'
+    where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by tc.table_fqn, tc.column_name
 ),
 {% endif %}
 
@@ -101,13 +102,8 @@ scored as (
         tc.distinct_values,
         tc.cardinality_total_rows,
         tc.cardinality_calculated_at,
-        {% if use_access_history %}
         coalesce(cu.where_query_count, 0) as where_query_count,
         coalesce(cu.join_query_count, 0)  as join_query_count,
-        {% else %}
-        0 as where_query_count,
-        0 as join_query_count,
-        {% endif %}
         case
             when tc.distinct_values is not null and tc.distinct_values > 0
                 then tc.cardinality_total_rows::float / tc.distinct_values
@@ -118,11 +114,9 @@ scored as (
     from table_columns as tc
     inner join candidates as c
         on tc.table_fqn = c.table_fqn
-    {% if use_access_history %}
     left join column_usage as cu
         on tc.table_fqn = cu.table_fqn
         and tc.column_name = cu.column_name
-    {% endif %}
 ),
 
 column_scored as (
@@ -132,6 +126,7 @@ column_scored as (
         coalesce(avg_rows_per_value / nullif(cardinality_total_rows, 0) * 100, 0)
             + (where_query_count + join_query_count) * 20 as column_score
     from scored
+    where where_query_count + join_query_count > 0
 ),
 
 final as (

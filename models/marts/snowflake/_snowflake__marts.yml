@@ -178,19 +178,17 @@ models:
     description: >
       Daily snapshot of column-level clustering key recommendations for tables
       identified as candidates by fct_snowflake__table_clustering_candidates.
-      One row per (snapshot_date, table_fqn, column_name).
+      One row per (snapshot_date, table_fqn, column_name) — only the top 3
+      recommended columns per table are emitted.
 
       Scoped to the top N candidate tables by score (clustering_key_cardinality_table_limit,
       default 10). Only tables with is_candidate = true from today's snapshot are evaluated.
 
-      Scoring uses real cardinality (distinct_values / total_rows) from
-      int_snowflake__column_cardinality, populated by the refresh_column_cardinality macro
-      post-hook. Because this model refs fct_snowflake__table_clustering_candidates, dbt
-      guarantees the post-hook completes before this model runs — cardinality is always
-      populated. Cardinality is combined with column query usage count (Enterprise+ only).
-
-      Use is_recommended = true or recommended_key_position <= 3 to surface the top
-      clustering key suggestions per table.
+      Scoring combines avg_rows_per_value (total_rows / distinct_values) with confirmed
+      WHERE and JOIN usage from query history. Only columns with at least one WHERE or
+      JOIN usage in the lookback window are recommended. Cardinality data is populated by
+      the refresh_column_cardinality macro post-hook on fct_snowflake__table_clustering_candidates,
+      guaranteeing it is available before this model runs.
 
       Controlled by the following dbt variables:
         - clustering_key_cardinality_table_limit (default 10)
@@ -249,18 +247,12 @@ models:
       - name: recommended_key_position
         description: >
           Rank of this column as a clustering key for its table, ordered by column_score
-          descending. Position 1 is the top recommendation. Positions 1–3 are flagged
-          as is_recommended = true.
-
-      - name: is_recommended
-        description: True when recommended_key_position <= 3.
+          descending. Position 1 is the top recommendation. Only positions 1–3 are emitted.
 
       - name: column_score
         description: >
-          Composite column-level score combining cardinality and query usage signals.
-          Formula: cardinality_signal + (usage_count * 20)
-          Cardinality signal: cardinality_pct (real, from macro) when available;
-          cardinality_tier_weight (heuristic) otherwise.
+          Composite column-level score combining cardinality and WHERE/JOIN usage signals.
+          Formula: (avg_rows_per_value / total_rows * 100) + (usage_count * 20)
           Scores are relative within a table — use recommended_key_position for ranking.
 
       # ---------------------------------------------------------------------------
@@ -272,12 +264,12 @@ models:
           refresh_column_cardinality macro. Null on first run or if the column was not
           included in the macro's pre-filtered column set for this table.
 
-      - name: cardinality_pct
+      - name: avg_rows_per_value
         description: >
-          Cardinality as a percentage of total rows (distinct_values / total_rows * 100).
-          Null when distinct_values is null. Medium cardinality (roughly 0.1%–10%) is
-          generally ideal for clustering keys — selective enough to prune micropartitions
-          effectively, but not so unique that each value occupies its own micropartition.
+          Average number of rows per distinct value (total_rows / distinct_values).
+          Higher values indicate lower cardinality — more rows share each distinct value,
+          which means Snowflake micropartitions cover fewer distinct values and pruning
+          is more effective. Null when distinct_values is null.
 
       - name: cardinality_calculated_at
         description: Timestamp when the refresh_column_cardinality macro last populated this column's cardinality.
@@ -285,9 +277,21 @@ models:
       # ---------------------------------------------------------------------------
       # Usage
       # ---------------------------------------------------------------------------
+      - name: where_query_count
+        description: >
+          Number of distinct queries in the lookback window where this column appeared
+          in a WHERE clause, matched via query_text pattern. Enterprise+ uses ACCESS_HISTORY
+          for precise column-to-query attribution before matching; Standard edition scopes
+          by table name in query_text. Known limitation: column aliasing is not detected.
+
+      - name: join_query_count
+        description: >
+          Number of distinct queries in the lookback window where this column appeared
+          in a JOIN...ON clause, matched via query_text pattern. Same attribution approach
+          and aliasing limitation as where_query_count.
+
       - name: usage_count
         description: >
-          Number of distinct queries that accessed this column over the lookback window,
-          from ACCESS_HISTORY column-level attribution (Enterprise+ only). Zero for
-          Standard edition users. Heavily weighted in the score — columns that are
-          actually filtered on in real queries are strongly preferred as clustering keys.
+          Sum of where_query_count and join_query_count. Columns with usage_count = 0
+          are excluded from recommendations entirely — confirmed filter or join usage
+          is required for a column to be considered a clustering key candidate.

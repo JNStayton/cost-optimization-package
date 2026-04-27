@@ -358,11 +358,13 @@ models:
   - name: int_snowflake__column_query_stats
     description: >
       Daily column-level query access counts per table, aggregated from
-      int_snowflake__column_query_access. One row per (access_date, table_fqn, column_name).
+      int_snowflake__column_query_access joined with int_snowflake__query_history
+      for query_text classification. One row per (access_date, table_fqn, column_name).
       Incremental merge on column_query_stats_daily_key — processes new access_history
       data only, with a 1-day lookback buffer to handle ACCESS_HISTORY latency.
-      Used by fct_snowflake__clustering_key_candidates for usage scoring, and by the
-      refresh_column_cardinality macro to pre-filter which columns are worth scanning.
+      Used by fct_snowflake__clustering_key_candidates for WHERE/JOIN usage scoring.
+      query_count (any access) is also used by refresh_column_cardinality to pre-filter
+      which columns are worth running APPROX_COUNT_DISTINCT against.
       Enterprise+ only — disabled when use_access_history_attribution = false.
     config:
       materialized: incremental
@@ -383,7 +385,15 @@ models:
       - name: access_date
         description: Calendar date of the query access
       - name: query_count
-        description: Count of distinct query_ids that accessed this column on this date
+        description: Count of distinct query_ids that accessed this column on this date (any access type)
+      - name: where_query_count
+        description: >
+          Count of distinct query_ids where this column appeared in a WHERE clause,
+          matched via query_text ilike. Known limitation: column aliasing is not detected.
+      - name: join_query_count
+        description: >
+          Count of distinct query_ids where this column appeared in a JOIN...ON clause,
+          matched via query_text ilike. Known limitation: column aliasing is not detected.
 
   # ===========================================================================
   # int_snowflake__column_cardinality
