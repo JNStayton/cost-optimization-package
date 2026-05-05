@@ -56,6 +56,34 @@ This model surfaces tables that need attention and recommends which approach to 
 
 ---
 
+## Optimize Candidates vs. Liquid Clustering Candidates
+
+Both models identify fragmented Delta tables, but they answer different questions and recommend different actions.
+
+| | `fct_databricks__optimize_candidates` | `fct_databricks__liquid_clustering_candidates` |
+|---|---|---|
+| **Question it answers** | "Which fragmented tables need compacting now?" | "Which heavily-queried tables would scan fewer files with liquid clustering?" |
+| **Signal used** | Storage only (file count, avg file size) | Storage + query history (reads vs. writes) |
+| **Action recommended** | Run `OPTIMIZE` or enable Predictive Optimization | Add `CLUSTER BY` columns to the table |
+| **Effect** | Compacts existing small files into larger ones | Reorganizes data layout so future queries skip more files |
+| **PO interaction** | Tables with PO already enabled are excluded (`is_candidate = false`) | PO status is not checked — liquid clustering is complementary to PO |
+| **Type of change** | Maintenance (periodic or automatic) | Architectural (one-time schema change) |
+
+### When a table appears in both
+
+A large, read-heavy, fragmented table with Predictive Optimization disabled will show up in both models. The recommended sequence is:
+
+1. **Short-term:** Run `OPTIMIZE` to compact existing files and improve query performance immediately.
+2. **Medium-term:** Enable Predictive Optimization so Databricks handles compaction automatically going forward.
+3. **Longer-term:** Evaluate Liquid Clustering if the table has clear high-cardinality filter columns — clustering will further reduce files scanned per query beyond what compaction alone achieves.
+
+### When a table appears in only one
+
+- **Optimize only:** The table is fragmented but not actively queried (no SELECT history), or has more DML than SELECTs. Compaction is still worth doing to keep storage efficient.
+- **Liquid clustering only:** The table already has well-sized files (above the fragmentation threshold) but is very query-heavy and large. The benefit here comes from data layout, not file count.
+
+---
+
 ## Project Variables
 
 | Variable | Default | Description |
@@ -114,6 +142,19 @@ vars:
 | `ENABLE PREDICTIVE OPTIMIZATION` | Table already has Liquid Clustering defined. Enabling Predictive Optimization will automatically run `OPTIMIZE` when needed, maintaining the cluster layout without manual scheduling. |
 
 **Note:** If `predictive_optimization_enabled = true`, the table is excluded from results entirely — Databricks is already managing compaction automatically.
+
+### Enabling Predictive Optimization
+
+The `predictive_optimization_enabled` flag comes from `system.storage.table_metrics_history` — it reflects whether PO is active on the table in Databricks. It is not set in dbt. You can enable it:
+
+- **Per table** via SQL:
+  ```sql
+  ALTER TABLE catalog.schema.my_table
+  SET TBLPROPERTIES ('delta.enablePredictiveOptimization' = 'enable');
+  ```
+- **At the catalog or schema level** in the Databricks Unity Catalog UI (requires account admin).
+
+Once enabled, the table will no longer appear in this model's results. Predictive Optimization and Liquid Clustering are complementary — enabling PO on a table that also has Liquid Clustering defined is the most hands-off approach, as Databricks will automatically run `OPTIMIZE` to both compact files and maintain the cluster layout.
 
 ---
 
@@ -174,5 +215,5 @@ order by snapshot_date;
 - **`system.storage.table_metrics_history` must be enabled.** An account admin must enable the `system.storage` schema before data appears. The table is populated once per day — allow up to 24 hours after enablement for the first snapshot.
 - **Predictive Optimization availability.** Predictive Optimization is available for Unity Catalog managed tables on Databricks. It is not available for external tables or tables in the Hive metastore. Check your workspace tier for availability.
 - **External tables.** `OPTIMIZE` can be run on external Delta tables, but Predictive Optimization is only available for managed tables. External tables will always show `RUN OPTIMIZE` as the recommended action.
-- **Liquid Clustering and OPTIMIZE.** Tables with Liquid Clustering enabled use `OPTIMIZE` to maintain the cluster layout. Running `OPTIMIZE` on a clustered table both compacts files and re-clusters data. Enabling Predictive Optimization on a clustered table is the most hands-off approach.
+- **Liquid Clustering and OPTIMIZE.** Tables with Liquid Clustering enabled use `OPTIMIZE` to maintain the cluster layout — running `OPTIMIZE` on a clustered table both compacts files and re-clusters data. Enabling Predictive Optimization on a clustered table is the most hands-off approach. See the [Optimize Candidates vs. Liquid Clustering Candidates](#optimize-candidates-vs-liquid-clustering-candidates) section above for a full comparison of the two models.
 - **Incremental snapshots.** The fact model produces one snapshot per day. Running it multiple times in the same day merges into the existing snapshot rather than creating duplicates.

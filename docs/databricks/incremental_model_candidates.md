@@ -104,6 +104,12 @@ vars:
 | `estimated_monthly_bytes_scanned_gb` | Extrapolated monthly bytes scanned if the model stays as `table` |
 | `score` | `avg_bytes_scanned_gb × run_count` — higher means more total data could be saved by converting |
 | `is_candidate` | `true` when materialized = `table`, avg bytes ≥ threshold, and run count ≥ minimum |
+| `insert_count` | Number of INSERT statements observed against this table in the lookback window |
+| `update_count` | Number of UPDATE statements observed against this table in the lookback window |
+| `delete_count` | Number of DELETE statements observed against this table in the lookback window |
+| `merge_count` | Number of MERGE statements observed against this table in the lookback window |
+| `suggested_incremental_strategy` | Recommended dbt incremental strategy based on DML history: `merge`, `append`, or `insert_overwrite` |
+| `suggested_incremental_strategy_confidence` | `HIGH`, `MEDIUM`, or `LOW` — how confident the suggestion is (see below) |
 | `first_seen` | Earliest run timestamp in the lookback window |
 | `last_seen` | Most recent run timestamp in the lookback window |
 
@@ -118,6 +124,86 @@ A model is flagged as `is_candidate = true` when **all three** conditions are me
 2. **It scans enough data per run.** `avg_bytes_scanned_gb >= incremental_candidates_min_avg_bytes_scanned_gb` — models below the threshold are too small to justify the added complexity of incremental logic.
 
 3. **It runs frequently enough to establish a pattern.** `run_count >= incremental_candidates_min_run_count` — a model that ran once in the lookback window may be a one-off or a rare full refresh, not a regular scheduled run.
+
+---
+
+## Understanding `suggested_incremental_strategy`
+
+### Why this is harder than it sounds
+
+Choosing the right incremental strategy requires knowing the *update semantics* of your data — whether rows are ever modified after insertion, whether records can be deleted, and whether there is a reliable unique key. These are application-level facts that no data platform exposes directly in system tables.
+
+To approximate this, the model uses **DML type breakdown** from `system.query.history`. Databricks records the `statement_type` of every query (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`), which gives us a signal about how data actually flows into each table. This is the same approach taken in the Snowflake version of this package.
+
+**Important attribution note:** DML counts use the same fuzzy text-matching approach as the table query stats pipeline (`query_text ilike '%table_name%'`). This means DML from *any* source is captured — dbt runs, Spark jobs, manual SQL, external pipelines. That breadth is intentional: if something outside dbt is updating this table, that's important signal for choosing a strategy. But it also means the counts can include false positives if a table name is a common substring.
+
+### Decision matrix
+
+| Condition | Suggested strategy | Confidence |
+|---|---|---|
+| `update_count > 0` or `merge_count > 0` | `merge` | `HIGH` — rows are definitively mutable; append would lose updates |
+| `delete_count > 0`, no updates or merges | `merge` | `MEDIUM` — deletions require handling; merge covers this safely |
+| Only inserts, table has a partition/cluster column | `insert_overwrite` | `LOW` — pattern suggests partition-aligned writes, but not confirmed |
+| Only inserts, no partition/cluster column | `append` | `LOW` — likely immutable, but cannot be confirmed from system tables alone |
+| No DML history in lookback window | `merge` | `LOW` — safest default when no signal exists |
+
+### Confidence levels
+
+| Value | Meaning |
+|-------|---------|
+| `HIGH` | UPDATE or MERGE statements observed — rows are definitely mutable. `merge` is the correct strategy. |
+| `MEDIUM` | DELETE statements observed with no updates — rows may be deleted but not modified. `merge` is still the safe choice. |
+| `LOW` | Only inserts observed, or no DML history at all. The suggestion is a reasonable starting point but requires validation. |
+
+### What this cannot tell you
+
+- **Whether a unique key exists.** `merge` requires a `unique_key` config in dbt. This model does not suggest which column to use — you must identify a reliable unique key from your data model. Common candidates are columns named `id`, `uuid`, or composite keys combining entity and timestamp.
+- **Whether `append` is truly safe.** Even if no UPDATE statements are observed in the lookback window, out-of-band corrections or delayed reprocessing jobs could invalidate the append assumption. Always confirm with the team that owns the source data.
+- **The right predicate for `insert_overwrite`.** If you use `insert_overwrite`, dbt needs to know which partition(s) to replace. Review the `suggested_cluster_key` in `fct_databricks__liquid_clustering_candidates` for guidance on which column is most commonly filtered.
+
+### Applying the suggestion
+
+```sql
+-- Preview recommendations for all candidates
+select
+    model_name,
+    table_fqn,
+    insert_count,
+    update_count,
+    delete_count,
+    merge_count,
+    suggested_incremental_strategy,
+    suggested_incremental_strategy_confidence,
+    is_candidate
+from <your_catalog>.<your_schema>.fct_databricks__incremental_model_candidates
+where snapshot_date = current_date()
+    and is_candidate = true
+order by score desc;
+```
+
+Once you've validated the strategy, update the model's config:
+
+```sql
+-- merge (most common — requires a unique_key)
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='your_unique_key_column'
+) }}
+
+-- append (insert-only, no unique key needed)
+{{ config(
+    materialized='incremental',
+    incremental_strategy='append'
+) }}
+
+-- insert_overwrite (partition-aligned writes)
+{{ config(
+    materialized='incremental',
+    incremental_strategy='insert_overwrite',
+    partition_by=['date_column']
+) }}
+```
 
 ---
 

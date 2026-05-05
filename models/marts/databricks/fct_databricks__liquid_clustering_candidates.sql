@@ -105,6 +105,18 @@ scored as (
         and lt.table_name = dm.table_name
 ),
 
+with_suggestions as (
+    select
+        s.*,
+        cs.suggested_cluster_key,
+        cs.suggested_cluster_key_confidence
+    from scored as s
+    left join {{ ref('int_databricks__column_cluster_suggestions') }} as cs
+        on s.database_name = cs.catalog_name
+        and s.schema_name  = cs.schema_name
+        and s.table_name   = cs.table_name
+),
+
 final as (
     select
         current_timestamp() as analyzed_at,
@@ -149,8 +161,10 @@ final as (
         select_count,
         dml_count,
         round(select_count / greatest(dml_count, 1), 1) as query_to_dml_ratio,
-        round(avg_execution_time_ms / 1000, 2) as avg_query_duration_s
-    from scored
+        round(avg_execution_time_ms / 1000, 2) as avg_query_duration_s,
+        suggested_cluster_key,
+        suggested_cluster_key_confidence
+    from with_suggestions
     where
         {% if dbt_project_only %}
             dbt_model is not null
@@ -180,7 +194,9 @@ select
     select_count,
     dml_count,
     query_to_dml_ratio,
-    avg_query_duration_s
+    avg_query_duration_s,
+    suggested_cluster_key,
+    suggested_cluster_key_confidence
 from final
 {% if is_incremental() %}
 where snapshot_date >= (
