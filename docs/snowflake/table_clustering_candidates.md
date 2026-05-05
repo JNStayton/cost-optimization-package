@@ -39,7 +39,7 @@ stg_snowflake__access_       ──► int_snowflake__query_         │      st
 | `int_snowflake__query_table_access` | Flattens ACCESS_HISTORY into one row per (query, table) for exact object-level attribution. Enterprise only. |
 | `int_dbt__relations` | Compile-time mapping from dbt model metadata to physical relation names. Used to attribute results back to dbt models. |
 
-Platform-agnostic routers (`int_table_inventory`, `int_table_query_stats_daily`) sit between the platform-specific intermediate models and the fact. The fact references these routers, not the Snowflake-specific models directly.
+The fact references the Snowflake-specific intermediate models directly.
 
 ### Fact model
 

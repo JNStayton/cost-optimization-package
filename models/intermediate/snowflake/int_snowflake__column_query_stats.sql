@@ -28,7 +28,7 @@
   worth running APPROX_COUNT_DISTINCT against (query_count, any access).
 
   Enterprise+ only. Disabled when use_access_history_attribution = false.
-  Initial lookback: 30 days. Override with clustering_query_stats_initial_lookback_days.
+  Initial lookback: 30 days. Override with column_query_stats_initial_lookback_days.
 --#}
 
 {% set initial_lookback_days = var('column_query_stats_initial_lookback_days', 30) %}

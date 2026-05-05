@@ -30,7 +30,7 @@ large_tables as (
         ti.clustering_key,
         ti.approx_micropartitions,
         ti.normalized_table_type as table_type
-    from {{ ref('int_table_inventory') }} as ti
+    from {{ ref('int_snowflake__table_inventory') }} as ti
     where ti.size_gb >= {{ min_size_gb }}
         {% if target_databases and target_databases | length > 0 %}
             and upper(ti.database_name) in (
@@ -71,10 +71,10 @@ table_query_stats as (
             0
         ) as avg_partitions_total
     from large_tables as lt
-    left join {{ ref('int_table_query_stats_daily') }} as tqs
-        on upper(lt.database_name) = upper(tqs.table_database)
-        and upper(lt.schema_name) = upper(tqs.table_schema)
-        and upper(lt.table_name) = upper(tqs.table_name)
+    left join {{ ref('int_snowflake__table_query_stats_daily') }} as tqs
+        on lt.database_name = tqs.table_database
+        and lt.schema_name = tqs.table_schema
+        and lt.table_name = tqs.table_name
         and tqs.stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by lt.database_name, lt.schema_name, lt.table_name
 ),
@@ -102,13 +102,13 @@ scored as (
         ) as micropartitions
     from large_tables as lt
     left join table_query_stats as tqs
-        on upper(lt.database_name) = upper(tqs.database_name)
-        and upper(lt.schema_name) = upper(tqs.schema_name)
-        and upper(lt.table_name) = upper(tqs.table_name)
+        on lt.database_name = tqs.database_name
+        and lt.schema_name = tqs.schema_name
+        and lt.table_name = tqs.table_name
     left join {{ ref('int_dbt__relations') }} as dm
-        on upper(lt.database_name) = upper(dm.database_name)
-        and upper(lt.schema_name) = upper(dm.schema_name)
-        and upper(lt.table_name) = upper(dm.table_name)
+        on lt.database_name = dm.database_name
+        and lt.schema_name = dm.schema_name
+        and lt.table_name = dm.table_name
 ),
 
 final as (

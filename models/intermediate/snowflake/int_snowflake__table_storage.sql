@@ -5,6 +5,5 @@ select
     active_bytes,
     time_travel_bytes,
     failsafe_bytes,
-    coalesce(deleted, false) as is_deleted,
-    'snowflake' as platform
+    coalesce(deleted, false) as is_deleted
 from {{ ref('stg_snowflake__table_storage_metrics') }}

@@ -30,14 +30,12 @@
 with candidate_tables as (
     {% if full_account %}
     select distinct
-        platform,
         database_name as table_database,
         schema_name as table_schema,
         table_name
     from {{ ref('int_snowflake__table_inventory') }}
     {% else %}
     select distinct
-        ti.platform,
         ti.database_name as table_database,
         ti.schema_name as table_schema,
         ti.table_name
@@ -54,7 +52,7 @@ query_history as (
         query_id,
         cast(query_start_time as date) as stats_date,
         query_start_time,
-        statement_type,
+        query_type,
         execution_time_ms,
         partitions_scanned,
         partitions_total,
@@ -63,9 +61,8 @@ query_history as (
         bytes_spilled_remote,
         query_text
     from {{ ref('int_snowflake__query_history') }}
-    where execution_status = 'SUCCESS'
     {% if is_incremental() %}
-        and query_start_time >= dateadd(
+        where query_start_time >= dateadd(
             day,
             -1,
             (
@@ -74,7 +71,7 @@ query_history as (
             )
         )
     {% else %}
-        and query_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
+        where query_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
     {% endif %}
 ),
 
@@ -91,12 +88,11 @@ query_table_access as (
 
 matched_queries as (
     select
-        ct.platform,
         qh.stats_date,
         ct.table_database,
         ct.table_schema,
         ct.table_name,
-        qh.statement_type,
+        qh.query_type,
         qh.execution_time_ms,
         qh.partitions_scanned,
         qh.partitions_total,
@@ -115,12 +111,11 @@ matched_queries as (
 {% else %}
 matched_queries as (
     select
-        ct.platform,
         qh.stats_date,
         ct.table_database,
         ct.table_schema,
         ct.table_name,
-        qh.statement_type,
+        qh.query_type,
         qh.execution_time_ms,
         qh.partitions_scanned,
         qh.partitions_total,
@@ -135,25 +130,31 @@ matched_queries as (
 
 select
     md5(
-        coalesce(platform, '') || '|' ||
         coalesce(to_varchar(stats_date), '') || '|' ||
         coalesce(table_database, '') || '|' ||
         coalesce(table_schema, '') || '|' ||
         coalesce(table_name, '')
     ) as table_query_stats_daily_key,
-    platform,
     stats_date,
     table_database,
     table_schema,
     table_name,
     count(*) as total_query_count,
-    count(case when statement_type = 'SELECT' then 1 end) as select_count,
-    count(case when statement_type in ('INSERT', 'UPDATE', 'DELETE', 'MERGE') then 1 end) as dml_count,
-    sum(case when statement_type = 'SELECT' then coalesce(execution_time_ms, 0) else 0 end) as select_execution_time_ms_sum,
-    sum(case when statement_type = 'SELECT' then coalesce(partitions_scanned, 0) else 0 end) as select_partitions_scanned_sum,
-    sum(case when statement_type = 'SELECT' then coalesce(partitions_total, 0) else 0 end) as select_partitions_total_sum,
+    count(case when query_type = 'SELECT' then 1 end) as select_count,
+    count(case when query_type in ('INSERT', 'UPDATE', 'DELETE', 'MERGE') then 1 end) as dml_count,
+    count(case when query_type = 'INSERT' then 1 end) as insert_count,
+    count(case when query_type = 'UPDATE' then 1 end) as update_count,
+    count(case when query_type = 'DELETE' then 1 end) as delete_count,
+    count(case when query_type = 'MERGE' then 1 end) as merge_count,
+    count(case when query_type = 'CREATE_TABLE_AS_SELECT' then 1 end) as table_build_count,
+    max(case when query_type = 'CREATE_TABLE_AS_SELECT' then execution_time_ms end) as max_build_time_ms,
+    avg(case when query_type = 'CREATE_TABLE_AS_SELECT' then execution_time_ms end) as avg_build_time_ms,
+    sum(case when query_type = 'CREATE_TABLE_AS_SELECT' then coalesce(execution_time_ms, 0) else 0 end) as build_execution_time_ms_sum,
+    sum(case when query_type = 'SELECT' then coalesce(execution_time_ms, 0) else 0 end) as select_execution_time_ms_sum,
+    sum(case when query_type = 'SELECT' then coalesce(partitions_scanned, 0) else 0 end) as select_partitions_scanned_sum,
+    sum(case when query_type = 'SELECT' then coalesce(partitions_total, 0) else 0 end) as select_partitions_total_sum,
     sum(coalesce(bytes_scanned, 0)) as bytes_scanned_sum,
     sum(coalesce(bytes_spilled_local, 0)) as bytes_spilled_local_sum,
     sum(coalesce(bytes_spilled_remote, 0)) as bytes_spilled_remote_sum
 from matched_queries
-group by table_query_stats_daily_key, platform, stats_date, table_database, table_schema, table_name
+group by stats_date, table_database, table_schema, table_name

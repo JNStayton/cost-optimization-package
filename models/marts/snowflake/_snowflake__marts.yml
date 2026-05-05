@@ -172,6 +172,245 @@ models:
           that reduced scanning from clustering would meaningfully improve query latency.
 
   # ===========================================================================
+  # fct_snowflake__table_materialization_candidates
+  # ===========================================================================
+  - name: fct_snowflake__table_materialization_candidates
+    description: >
+      dbt VIEW models that are candidates for conversion to TABLE materialization,
+      scored by query volume and execution cost over a configurable lookback window.
+
+      Query attribution uses query_text ILIKE matching against the view name for
+      both Enterprise and Standard editions. ACCESS_HISTORY resolves views to their
+      base tables and cannot be used for view-level attribution.
+
+      Known limitation: view names that are substrings of other table or column
+      identifiers may produce false-positive query matches.
+
+      Controlled by the following dbt variables:
+        - table_materialization_lookback_days   (default 30)
+        - table_materialization_min_query_count (default 10)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: table_fqn
+        description: Fully-qualified view name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the view.
+
+      - name: schema_name
+        description: Snowflake schema containing the view.
+
+      - name: table_name
+        description: Name of the evaluated view.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this view.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: select_count
+        description: >
+          Number of distinct SELECT queries that referenced this view by name
+          in query_text over the lookback window.
+
+      - name: avg_query_duration_s
+        description: >
+          Average execution time in seconds for SELECT queries referencing this
+          view. Derived from execution_time_ms (excludes queue time).
+
+      - name: total_gb_scanned
+        description: >
+          Total gigabytes scanned by SELECT queries referencing this view over
+          the lookback window. A large value alongside high query volume is a
+          strong signal that materialization would reduce repeated scan cost.
+
+      - name: materialization_score
+        description: >
+          Composite priority score: select_count * avg_query_duration_s.
+          Higher scores indicate views where materializing as a TABLE would
+          deliver the greatest reduction in repeated computation cost.
+          Use for relative ranking within a single snapshot_date.
+
+      - name: recommendation
+        description: >
+          'Materialize as TABLE' when the view meets either cost threshold;
+          'Monitor' otherwise.
+
+      - name: recommendation_reason
+        description: Human-readable explanation of the recommendation and the specific metrics that triggered it.
+
+  # ===========================================================================
+  # fct_snowflake__incremental_materialization_candidates
+  # ===========================================================================
+  - name: fct_snowflake__incremental_materialization_candidates
+    description: >
+      dbt TABLE models that are candidates for conversion to INCREMENTAL
+      materialization, based on slow full-rebuild times and/or large table size
+      over a configurable lookback window.
+
+      A model is flagged when EITHER condition is met:
+        - Max full-rebuild time >= incremental_candidates_min_build_time_sec
+        - Table size >= incremental_candidates_min_size_gb
+
+      Full rebuilds are detected via CREATE_TABLE_AS_SELECT events in
+      QUERY_HISTORY. Build metrics are sourced from int_snowflake__table_query_stats_daily.
+
+      Surfaces copy-pasteable starter code for the incremental_filter_template
+      (is_incremental() WHERE block) and updated_model_config (config() block).
+      When microbatch is a strong alternative (high insert ratio + TIMESTAMP
+      column), microbatch_config_template is also populated.
+
+      Controlled by the following dbt variables:
+        - incremental_candidates_min_build_time_sec (default 300)
+        - incremental_candidates_min_size_gb        (default 10)
+        - incremental_candidates_lookback_days      (default 30)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the table.
+
+      - name: schema_name
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: table_build_count
+        description: >
+          Number of full table rebuilds (CREATE_TABLE_AS_SELECT) detected in
+          the lookback window. A high count indicates the table is rebuilt
+          frequently, amplifying the cost of full-refresh materialization.
+
+      - name: max_build_time_sec
+        description: >
+          Maximum full-rebuild execution time in seconds over the lookback window.
+          The primary signal for slow-build detection. Derived from execution_time_ms
+          (excludes queue time).
+
+      - name: avg_build_time_sec
+        description: Average full-rebuild execution time in seconds over the lookback window.
+
+      - name: select_count
+        description: Total SELECT queries against this table in the lookback window.
+
+      - name: avg_query_duration_s
+        description: Average SELECT query execution time in seconds over the lookback window.
+
+      - name: insert_count
+        description: >
+          Number of INSERT operations against this table in the lookback window.
+          A high insert_count relative to update_count + merge_count indicates
+          append-only data patterns, which favor the append or microbatch strategy.
+
+      - name: update_count
+        description: >
+          Number of UPDATE operations. A non-zero value indicates records are
+          mutated after insert, making merge the appropriate incremental strategy.
+
+      - name: delete_count
+        description: Number of DELETE operations against this table in the lookback window.
+
+      - name: merge_count
+        description: >
+          Number of MERGE operations. A non-zero value confirms the table receives
+          upsert patterns, making merge the appropriate incremental strategy.
+
+      - name: suggested_strategy
+        description: >
+          Recommended dbt incremental strategy based on detected key columns and
+          DML patterns. One of: merge, insert_overwrite, append, Manual Check.
+
+          merge: recommended when a TIMESTAMP column is found. Handles both
+          append-only and update patterns; use append as a cheaper alternative
+          if records are confirmed immutable.
+
+          insert_overwrite: recommended when only DATE columns are found and no
+          TIMESTAMP. Efficiently replaces affected date partitions.
+
+          append: recommended when only a numeric ID column is found and no
+          date/timestamp. Only safe when IDs are monotonically increasing with
+          no backfills or late-arriving records.
+
+          Manual Check: no suitable key column detected; review table columns.
+
+      - name: suggested_incremental_key
+        description: >
+          Best candidate column for the is_incremental() WHERE clause filter.
+          TIMESTAMP columns are preferred over DATE columns. Used in
+          incremental_filter_template.
+
+      - name: suggested_unique_key
+        description: >
+          Best candidate column for the unique_key config parameter (used by
+          the merge strategy for deduplication). Sourced from numeric _id or
+          _key columns. '-- TODO: add your surrogate key column' when no
+          suitable column is detected.
+
+      - name: recommendation_reason
+        description: Human-readable explanation of why this model was flagged, including the specific build time or size metrics that triggered it.
+
+      - name: incremental_filter_template
+        description: >
+          Copy-pasteable {% if is_incremental() %}...{% endif %} block with
+          the detected key column pre-filled. Add this to the model's WHERE
+          clause. Adjust the lookback window (dateadd day offset) as needed
+          for your data's late-arrival tolerance.
+
+      - name: updated_model_config
+        description: >
+          Copy-pasteable {{ config(...) }} block with materialized='incremental',
+          the suggested strategy, unique_key (if applicable), and
+          on_schema_change='append_new_columns' pre-filled. Replace the existing
+          config block at the top of the dbt model file with this output.
+
+      - name: microbatch_config_template
+        description: >
+          Populated when the primary strategy is merge, a TIMESTAMP column exists,
+          and the table's DML is predominantly INSERT (90%+ insert ratio). Provides
+          a copy-pasteable microbatch config() block as an alternative to merge.
+
+          Microbatch processes data in discrete time windows and is well-suited
+          for event/log tables with high insert volume and a reliable event timestamp.
+          The begin date must be set manually — dbt requires an explicit historical
+          start date. No is_incremental() block is needed; dbt manages the filter
+          automatically via event_time.
+
+          Null when microbatch is not a recommended alternative for this table.
+
+  # ===========================================================================
   # fct_snowflake__clustering_key_candidates
   # ===========================================================================
   - name: fct_snowflake__clustering_key_candidates
