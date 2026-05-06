@@ -6,7 +6,7 @@
 }}
 
 with flattened_parents as (
-    select
+    select distinct
         r.table_fqn        as model_fqn,
         r.materialized     as model_materialized,
         p.value::string    as neighbor_fqn,
@@ -16,7 +16,7 @@ with flattened_parents as (
 ),
 
 flattened_children as (
-    select
+    select distinct
         r.table_fqn        as model_fqn,
         r.materialized     as model_materialized,
         c.value::string    as neighbor_fqn,
