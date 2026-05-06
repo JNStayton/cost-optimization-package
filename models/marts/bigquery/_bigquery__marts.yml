@@ -1,0 +1,84 @@
+version: 2
+
+models:
+  - name: fct_bigquery__clustering_key_candidates
+    description: >
+      Daily snapshot of column-level clustering key recommendations for BigQuery
+      tables identified as candidates by fct_bigquery__table_clustering_candidates.
+      One row per (snapshot_date, table_fqn, column_name).
+
+      Scoped to the top N candidate tables by score (clustering_key_cardinality_table_limit,
+      default 10). Only tables with is_candidate = true from today's snapshot are evaluated.
+
+      Scoring uses real cardinality (distinct_values / total_rows) from
+      int_bigquery__column_cardinality, populated by the refresh_bigquery_column_cardinality
+      macro post-hook on the table-level fact. Combined with column query usage count
+      derived from JOBS_BY_PROJECT.query_text regex (heuristic, BigQuery has no
+      ACCESS_HISTORY equivalent; disable with use_query_text_attribution=false).
+
+      Use is_recommended = true or recommended_key_position <= 4 to surface the top
+      clustering key suggestions per table. BigQuery permits up to 4 clustering columns.
+
+      Controlled by:
+        - clustering_key_cardinality_table_limit (default 10)
+        - clustering_candidates_lookback_days    (default 7)
+        - use_query_text_attribution             (default true)
+    config:
+      materialized: incremental
+    columns:
+      - name: clustering_key_candidate_snapshot_key
+        description: Surrogate key from md5(snapshot_date || table_fqn || column_name); merge key
+        tests:
+          - unique
+          - not_null
+      - name: snapshot_date
+        description: Calendar date of the snapshot
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record
+      - name: table_fqn
+        description: Fully-qualified table name (project.dataset.table)
+      - name: database_name
+        description: BigQuery project ID
+      - name: schema_name
+        description: BigQuery dataset name
+      - name: table_name
+        description: Table name
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table, if known
+      - name: column_name
+        description: Name of the evaluated column
+      - name: ordinal_position
+        description: Column position in the table definition (1-based)
+      - name: data_type
+        description: BigQuery data type of the column
+      - name: recommended_key_position
+        description: >
+          Rank of this column as a clustering key for its table, ordered by
+          column_score descending. Position 1 is the top recommendation.
+          Positions 1-4 are flagged as is_recommended = true (BigQuery allows up
+          to 4 clustering columns).
+      - name: is_recommended
+        description: True when recommended_key_position <= 4
+      - name: column_score
+        description: >
+          Composite column-level score combining cardinality and query usage signals.
+          Formula: cardinality_pct + (usage_count * 20).
+          Scores are relative within a table — use recommended_key_position for ranking.
+      - name: distinct_values
+        description: >
+          Approximate distinct value count from APPROX_COUNT_DISTINCT, populated by
+          the refresh_bigquery_column_cardinality macro. Null on first run or when the
+          column was not included in the macro's pre-filtered scan set for the table.
+      - name: cardinality_pct
+        description: >
+          Cardinality as a percentage of total rows (distinct_values / total_rows * 100).
+          Null when distinct_values is null. Medium cardinality (roughly 0.1%-10%) is
+          generally ideal for clustering keys.
+      - name: cardinality_calculated_at
+        description: Timestamp when refresh_bigquery_column_cardinality last populated this row
+      - name: usage_count
+        description: >
+          Count of distinct queries that referenced this column inside a filter context
+          (WHERE / JOIN ON / ORDER BY) over the lookback window. Heuristic — derived
+          from query-text regex extraction, not engine-attested. Zero when
+          use_query_text_attribution = false. Heavily weighted in the score (× 20).
