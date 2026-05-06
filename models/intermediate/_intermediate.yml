@@ -434,6 +434,29 @@ models:
           Used for observability only — not factored into scoring.
 
   # ===========================================================================
+  # int_bigquery__column_cardinality
+  # ===========================================================================
+  - name: int_bigquery__column_cardinality
+    description: >
+      Persistent store for BigQuery column-level APPROX_COUNT_DISTINCT values produced by
+      the refresh_bigquery_column_cardinality macro. dbt creates the empty table schema
+      on first run; all data is written and maintained exclusively by the macro, which
+      runs as a post-hook on fct_bigquery__table_clustering_candidates. dbt never
+      inserts rows directly — the incremental model always returns 0 rows, preserving
+      macro-written data across runs.
+    columns:
+      - name: table_fqn
+        description: Fully-qualified table name (project.dataset.table)
+      - name: column_name
+        description: Column name
+      - name: distinct_values
+        description: Approximate distinct value count from APPROX_COUNT_DISTINCT
+      - name: total_rows
+        description: Total row count of the table at time of scan
+      - name: calculated_at
+        description: Timestamp when the macro last populated or updated this record
+
+  # ===========================================================================
   # int_snowflake__table_columns
   # ===========================================================================
   - name: int_snowflake__table_columns
