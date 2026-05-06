@@ -10,10 +10,10 @@
   materialization, based on query volume, data scan cost, execution time relative
   to project average, and view/ephemeral chain analysis.
 
-  For models in a view/ephemeral chain, only the highest-impact model per chain
-  receives the recommendation, ranked by composite_chain_score:
+  For models in a view/ephemeral chain, any model with composite_chain_score > 0
+  receives the recommendation. composite_chain_score is:
     (greatest(select_count, 1) * avg_gb_scanned_per_query * relative_duration_ratio
-      + downstream_build_time_s) * (chain_size - depth) * greatest(downstream_table_count, 1)
+      + downstream_build_time_s) * min_hops_to_table * greatest(downstream_table_count, 1)
 
   For isolated views not in any chain, existing materialization_score thresholds apply.
 
@@ -92,34 +92,32 @@ scored_stats as (
 chain_context as (
     select
         ss.*,
-        ch.chain_id,
-        ch.depth,
-        ch.chain_size,
         ch.downstream_table_count,
         ch.downstream_table_fqns,
-        ch.chain_id is not null as is_in_view_chain
+        ch.min_hops_to_table,
+        ch.model_fqn is not null as is_in_view_chain
     from scored_stats as ss
     left join {{ ref('int_snowflake__view_chains') }} as ch
         on ch.model_fqn = ss.table_fqn
 ),
 
 downstream_build_stats as (
-    -- avg build time of downstream non-view/ephemeral tables per chain,
-    -- using the pre-aggregated fqn array from view_chains to avoid fan-out
+    -- avg build time of downstream tables per view, using the pre-aggregated
+    -- fqn array from view_chains to avoid fan-out
     select
-        unique_chains.chain_id,
+        vc.model_fqn,
         avg(qh.execution_time_ms) / 1000.0 as downstream_build_time_s
     from (
-        select distinct chain_id, downstream_table_fqns
+        select distinct model_fqn, downstream_table_fqns
         from {{ ref('int_snowflake__view_chains') }}
         where array_size(downstream_table_fqns) > 0
-    ) as unique_chains,
-    lateral flatten(input => unique_chains.downstream_table_fqns) as fqn_flat
+    ) as vc,
+    lateral flatten(input => vc.downstream_table_fqns) as fqn_flat
     join {{ ref('int_snowflake__query_history') }} as qh
         on qh.query_text ilike '%' || split_part(fqn_flat.value::string, '.', 3) || '%'
        and qh.query_type in ('CREATE_TABLE_AS_SELECT', 'INSERT', 'MERGE')
        and qh.query_start_time >= dateadd(month, -1, current_timestamp())
-    group by unique_chains.chain_id
+    group by vc.model_fqn
 ),
 
 composite_scored as (
@@ -132,24 +130,11 @@ composite_scored as (
                 * coalesce(cc.relative_duration_ratio, 1.0)
             + coalesce(dbs.downstream_build_time_s, 0)
         )
-        * (coalesce(cc.chain_size, 1) - coalesce(cc.depth, 0))
+        * coalesce(cc.min_hops_to_table, 1)
         * greatest(coalesce(cc.downstream_table_count, 1), 1) as composite_chain_score
     from chain_context as cc
     left join downstream_build_stats as dbs
-        on dbs.chain_id = cc.chain_id
-),
-
-chain_ranks as (
-    -- rank views within each chain by composite_chain_score descending;
-    -- only computed for models that belong to a chain
-    select
-        table_fqn,
-        row_number() over (
-            partition by chain_id
-            order by composite_chain_score desc
-        ) as chain_rank
-    from composite_scored
-    where chain_id is not null
+        on dbs.model_fqn = cc.table_fqn
 )
 
 select
@@ -170,15 +155,12 @@ select
     round(coalesce(cs.avg_gb_scanned_per_query, 0), 6)        as avg_gb_scanned_per_query,
     round(coalesce(cs.materialization_score, 0), 2)           as materialization_score,
     cs.is_in_view_chain,
-    cs.chain_id,
-    cs.chain_size,
-    cs.depth,
+    cs.min_hops_to_table,
     cs.downstream_table_count,
-    cr.chain_rank,
     round(cs.composite_chain_score, 4)                        as composite_chain_score,
     round(coalesce(cs.downstream_build_time_s, 0), 2)         as downstream_build_time_s,
     case
-        when cs.is_in_view_chain and cr.chain_rank = 1
+        when cs.is_in_view_chain and coalesce(cs.composite_chain_score, 0) > 0
             then 'Materialize as TABLE'
         when not coalesce(cs.is_in_view_chain, false)
             and coalesce(cs.materialization_score, 0) > 500
@@ -191,9 +173,10 @@ select
         else 'Monitor'
     end                                                        as recommendation,
     case
-        when cs.is_in_view_chain and cr.chain_rank = 1
-            then 'Highest-impact model in a ' || cs.chain_size
-                || '-node chain with ' || cs.downstream_table_count
+        when cs.is_in_view_chain and coalesce(cs.composite_chain_score, 0) > 0
+            then cs.min_hops_to_table
+                || ' hop(s) from nearest downstream table with '
+                || cs.downstream_table_count
                 || ' downstream table(s) — materializing eliminates cascading recomputation'
         when not coalesce(cs.is_in_view_chain, false)
             and coalesce(cs.materialization_score, 0) > 500
@@ -212,9 +195,8 @@ select
         else 'Query volume or execution time below recommendation thresholds — continue monitoring'
     end                                                        as recommendation_reason
 from composite_scored as cs
-left join chain_ranks  as cr on cr.table_fqn = cs.table_fqn
 where coalesce(cs.select_count, 0) >= {{ min_query_count }}
    or coalesce(cs.is_in_view_chain, false)
 order by
     case when recommendation = 'Materialize as TABLE' then 0 else 1 end,
-    coalesce(cs.materialization_score, 0) desc
+    coalesce(cs.composite_chain_score, cs.materialization_score, 0) desc
