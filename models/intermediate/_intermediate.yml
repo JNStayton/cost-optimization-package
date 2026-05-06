@@ -298,6 +298,138 @@ models:
         description: Sum of remote spill bytes across matched queries
 
   # ===========================================================================
+  # int_bigquery__table_inventory
+  # ===========================================================================
+  - name: int_bigquery__table_inventory
+    description: >
+      BigQuery table inventory combining table metadata and storage metrics.
+      Mirrors int_snowflake__table_inventory schema for cross-platform compatibility.
+      Column names follow Snowflake convention; a future refactor could make them
+      platform-neutral.
+    columns:
+      - name: platform
+        description: Source data platform identifier (bigquery)
+      - name: database_name
+        description: BigQuery project ID
+      - name: schema_name
+        description: BigQuery dataset name
+      - name: table_name
+        description: BigQuery table name
+      - name: table_fqn
+        description: Fully-qualified table name (project.dataset.table)
+      - name: table_type
+        description: BigQuery native table type (BASE TABLE, MATERIALIZED VIEW)
+      - name: normalized_table_type
+        description: Human-readable table classification
+      - name: row_count
+        description: Total row count from TABLE_STORAGE
+      - name: clustering_key
+        description: Clustering columns parsed from DDL (e.g. "col1, col2"), null if unclustered
+      - name: is_already_clustered
+        description: Whether the table has a CLUSTER BY definition
+      - name: is_transient
+        description: Always false — BigQuery has no transient table concept
+      - name: active_bytes
+        description: Active physical storage in bytes (from TABLE_STORAGE), 0 if no storage data
+      - name: size_gb
+        description: Active storage converted to GB, 0 if no storage data
+      - name: approx_micropartitions
+        description: >
+          Data density proxy. BigQuery = total_partitions (actual date/range partition count
+          from TABLE_STORAGE). Snowflake equivalent is active_bytes / 16 MB.
+
+  # ===========================================================================
+  # int_bigquery__table_query_stats_daily
+  # ===========================================================================
+  - name: int_bigquery__table_query_stats_daily
+    description: >
+      Incremental daily query statistics per BigQuery table. Attribution uses query-text
+      LOWER(query_text) LIKE LOWER(table_name) matching (same approach as Snowflake Standard
+      edition; referenced_tables is not in stg_bigquery__jobs_by_project). Column names mirror
+      int_snowflake__table_query_stats_daily for cross-platform compatibility. Column names
+      follow Snowflake convention; a future refactor could make them platform-neutral.
+    columns:
+      - name: table_query_stats_daily_key
+        description: Surrogate key for stats_date + table relation
+      - name: platform
+        description: Source data platform identifier (bigquery)
+      - name: stats_date
+        description: Date grain of aggregated query statistics
+      - name: table_database
+        description: BigQuery project ID
+      - name: table_schema
+        description: BigQuery dataset name
+      - name: table_name
+        description: BigQuery table name
+      - name: total_query_count
+        description: Total count of successful queries matched to the table
+      - name: select_count
+        description: Count of SELECT queries
+      - name: dml_count
+        description: Count of INSERT/UPDATE/DELETE/MERGE/CREATE_TABLE_AS_SELECT queries
+      - name: select_execution_time_ms_sum
+        description: >
+          Sum of total_slot_ms for matched SELECT jobs. BigQuery equivalent of Snowflake
+          execution_time_ms — represents parallel CPU-weighted time, not wall clock.
+      - name: select_partitions_scanned_sum
+        description: >
+          Always 0 for BigQuery — partition scan counts are not available in JOBS_BY_PROJECT.
+          Snowflake equivalent is actual partitions scanned. Scoring falls back to
+          approx_micropartitions (total_partitions) from the inventory model.
+      - name: select_partitions_total_sum
+        description: >
+          Always 0 for BigQuery — not available at query level. Scoring falls back to
+          approx_micropartitions from the inventory model.
+      - name: select_bytes_billed_sum
+        description: >
+          Sum of total_bytes_billed for matched SELECT jobs. BigQuery-specific cost signal.
+          Not present in int_snowflake__table_query_stats_daily (Snowflake bills by compute,
+          not bytes). Used by fct_bigquery__table_clustering_candidates for BQ-native scoring,
+          and by fct__table_clustering_candidates on BigQuery targets via the router's select *.
+      - name: bytes_scanned_sum
+        description: Sum of total_bytes_billed across all matched queries (SELECT + DML)
+      - name: bytes_spilled_local_sum
+        description: Always 0 for BigQuery — no local spill concept
+      - name: bytes_spilled_remote_sum
+        description: Always 0 for BigQuery — no remote spill concept
+
+  # ===========================================================================
+  # int_bigquery__table_columns
+  # ===========================================================================
+  - name: int_bigquery__table_columns
+    description: >
+      Column metadata for active BigQuery tables, scoped to int_bigquery__table_inventory.
+      Filters to BigQuery's clustering-eligible data type allow-list (INT64, NUMERIC,
+      BIGNUMERIC, STRING, DATE, TIMESTAMP, DATETIME, BOOL, GEOGRAPHY) and excludes
+      partitioning columns (which prune before clustering). Mirrors the role of
+      int_snowflake__table_columns. Real cardinality for these columns is populated by
+      refresh_bigquery_column_cardinality into int_bigquery__column_cardinality.
+    columns:
+      - name: database_name
+        description: BigQuery project ID
+      - name: schema_name
+        description: BigQuery dataset name
+      - name: table_name
+        description: Table name
+      - name: table_fqn
+        description: Fully-qualified table name (project.dataset.table)
+      - name: column_name
+        description: Column name
+        tests:
+          - not_null
+      - name: ordinal_position
+        description: Column position in the table definition (1-based)
+      - name: data_type
+        description: BigQuery data type; restricted to the clustering-eligible allow-list
+      - name: is_nullable
+        description: Whether the column allows null values ('YES'/'NO')
+      - name: clustering_ordinal_position
+        description: >
+          Existing position of this column in the table's CLUSTER BY definition,
+          if any. Null when the column is not part of an existing clustering key.
+          Used for observability only — not factored into scoring.
+
+  # ===========================================================================
   # int_snowflake__table_columns
   # ===========================================================================
   - name: int_snowflake__table_columns
