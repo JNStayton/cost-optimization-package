@@ -14,7 +14,8 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='clustering_candidates_snapshot_key',
-    enabled=(target.type == 'bigquery')
+    enabled=(target.type == 'bigquery'),
+    post_hook="{{ refresh_bigquery_column_cardinality() }}"
   )
 }}
 
