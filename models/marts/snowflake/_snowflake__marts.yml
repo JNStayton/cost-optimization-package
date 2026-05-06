@@ -384,17 +384,17 @@ models:
 
       - name: incremental_filter_template
         description: >
-          Copy-pasteable {% if is_incremental() %}...{% endif %} block with
-          the detected key column pre-filled. Add this to the model's WHERE
-          clause. Adjust the lookback window (dateadd day offset) as needed
-          for your data's late-arrival tolerance.
+          Copy-pasteable incremental WHERE-filter block with the detected key column
+          pre-filled. Add this to the model's WHERE clause. Adjust the lookback
+          window (dateadd day offset) as needed for your data's late-arrival tolerance.
 
       - name: updated_model_config
         description: >
-          Copy-pasteable {{ config(...) }} block with materialized='incremental',
-          the suggested strategy, unique_key (if applicable), and
-          on_schema_change='append_new_columns' pre-filled. Replace the existing
-          config block at the top of the dbt model file with this output.
+          Copy-pasteable model config block for an incremental model, with
+          materialized='incremental', the suggested strategy, unique_key (if
+          applicable), and on_schema_change='append_new_columns' pre-filled.
+          Replace the existing config block at the top of the dbt model file with
+          this output.
 
       - name: microbatch_config_template
         description: >
@@ -409,6 +409,7 @@ models:
           automatically via event_time.
 
           Null when microbatch is not a recommended alternative for this table.
+
 
   # ===========================================================================
   # fct_snowflake__clustering_key_candidates
