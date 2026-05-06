@@ -3,6 +3,7 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key=['table_fqn', 'column_name'],
+    on_schema_change='append_new_columns',
     enabled=(target.type == 'bigquery')
   )
 }}

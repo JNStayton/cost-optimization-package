@@ -49,7 +49,9 @@
           table_name
       from {{ candidates_table }}
       where is_candidate = true
-          and snapshot_date = current_date()
+          and snapshot_date = (
+              select max(snapshot_date) from {{ candidates_table }}
+          )
       qualify row_number() over (order by score desc) <= {{ cardinality_limit }}
     {% endset %}
 
