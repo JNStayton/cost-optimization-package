@@ -1,0 +1,31 @@
+version: 2
+
+unit_tests:
+  - name: test_int_bigquery__column_query_access_extracts_filter_columns
+    model: int_bigquery__column_query_access
+    given:
+      - input: ref('int_bigquery__query_history')
+        rows:
+          # 1. column in WHERE clause — should match
+          - {query_id: 'q1', query_start_time: '2026-05-01 00:00:00 UTC', query_text: 'select * from proj.ds.t1 where customer_id = 5', execution_status: 'SUCCESS'}
+          # 2. column only in SELECT projection — should NOT match
+          - {query_id: 'q2', query_start_time: '2026-05-01 00:00:00 UTC', query_text: 'select customer_id from proj.ds.t1', execution_status: 'SUCCESS'}
+          # 3. JOIN ON clause — should match for both columns
+          - {query_id: 'q3', query_start_time: '2026-05-01 00:00:00 UTC', query_text: 'select * from proj.ds.t1 a join proj.ds.t2 b on a.customer_id = b.customer_id', execution_status: 'SUCCESS'}
+          # 4. ORDER BY clause — should match
+          - {query_id: 'q4', query_start_time: '2026-05-01 00:00:00 UTC', query_text: 'select 1 from proj.ds.t1 order by customer_id', execution_status: 'SUCCESS'}
+          # 5. word-boundary check: filter on customer_id should not match column "id"
+          - {query_id: 'q5', query_start_time: '2026-05-01 00:00:00 UTC', query_text: 'select * from proj.ds.t1 where customer_id = 5', execution_status: 'SUCCESS'}
+          # 6. failed query — should be excluded by upstream filter (sanity)
+          - {query_id: 'q6', query_start_time: '2026-05-01 00:00:00 UTC', query_text: 'select * from proj.ds.t1 where customer_id = 5', execution_status: 'FAILED'}
+      - input: ref('int_bigquery__table_columns')
+        rows:
+          - {database_name: 'proj', schema_name: 'ds', table_name: 't1', table_fqn: 'proj.ds.t1', column_name: 'customer_id', data_type: 'INT64'}
+          - {database_name: 'proj', schema_name: 'ds', table_name: 't1', table_fqn: 'proj.ds.t1', column_name: 'id',          data_type: 'INT64'}
+          - {database_name: 'proj', schema_name: 'ds', table_name: 't2', table_fqn: 'proj.ds.t2', column_name: 'customer_id', data_type: 'INT64'}
+    expect:
+      rows:
+        - {query_id: 'q1', table_fqn: 'proj.ds.t1', column_name: 'customer_id'}
+        - {query_id: 'q3', table_fqn: 'proj.ds.t1', column_name: 'customer_id'}
+        - {query_id: 'q3', table_fqn: 'proj.ds.t2', column_name: 'customer_id'}
+        - {query_id: 'q4', table_fqn: 'proj.ds.t1', column_name: 'customer_id'}

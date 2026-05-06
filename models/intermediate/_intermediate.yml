@@ -457,6 +457,73 @@ models:
         description: Timestamp when the macro last populated or updated this record
 
   # ===========================================================================
+  # int_bigquery__column_query_access
+  # ===========================================================================
+  - name: int_bigquery__column_query_access
+    description: >
+      One row per (query_id, table_fqn, column_name) extracted heuristically from
+      JOBS_BY_PROJECT.query_text. BigQuery has no equivalent of Snowflake's
+      ACCESS_HISTORY column-level lineage; this model regex-extracts substrings
+      rooted at WHERE / JOIN ON / ORDER BY clauses, then matches column names
+      with word-boundary regex against int_bigquery__table_columns. Heuristic;
+      may over-match on comments embedded in filter clauses, and cannot resolve
+      CTE / alias mappings. Disable by setting use_query_text_attribution=false.
+    config:
+      enabled: "{{ target.type == 'bigquery' and var('use_query_text_attribution', true) }}"
+    columns:
+      - name: query_id
+        description: BigQuery job_id
+      - name: query_start_time
+        description: Query creation timestamp from JOBS_BY_PROJECT
+      - name: table_fqn
+        description: Fully-qualified table name (project.dataset.table)
+      - name: table_database
+        description: BigQuery project ID
+      - name: table_schema
+        description: BigQuery dataset name
+      - name: table_name
+        description: Table name component of the FQN
+      - name: column_name
+        description: Column referenced in the query's filter context
+
+  # ===========================================================================
+  # int_bigquery__column_query_stats
+  # ===========================================================================
+  - name: int_bigquery__column_query_stats
+    description: >
+      Daily column-level query access counts for BigQuery tables, aggregated from
+      int_bigquery__column_query_access. One row per (access_date, table_fqn,
+      column_name). Incremental merge with a 1-day lookback buffer for late-arriving
+      JOBS_BY_PROJECT data. Mirrors int_snowflake__column_query_stats, but values are
+      heuristic (regex-extracted) rather than engine-attested. Used by
+      fct_bigquery__clustering_key_candidates for usage scoring and by the
+      refresh_bigquery_column_cardinality macro to pre-filter which columns are worth
+      scanning. Disable by setting use_query_text_attribution=false.
+    config:
+      materialized: incremental
+      enabled: "{{ target.type == 'bigquery' and var('use_query_text_attribution', true) }}"
+    columns:
+      - name: column_query_stats_daily_key
+        description: Surrogate key derived from md5(access_date || table_fqn || column_name)
+        tests:
+          - unique
+          - not_null
+      - name: table_fqn
+        description: Fully-qualified table name
+      - name: table_database
+        description: BigQuery project ID
+      - name: table_schema
+        description: BigQuery dataset name
+      - name: table_name
+        description: Table name component of the FQN
+      - name: column_name
+        description: Column name
+      - name: access_date
+        description: Calendar date of the query access
+      - name: query_count
+        description: Count of distinct query_ids that accessed this column on this date
+
+  # ===========================================================================
   # int_snowflake__table_columns
   # ===========================================================================
   - name: int_snowflake__table_columns
