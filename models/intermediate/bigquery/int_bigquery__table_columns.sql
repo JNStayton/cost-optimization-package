@@ -32,12 +32,16 @@ with eligible_columns as (
     from {{ ref('stg_bigquery__columns') }} as c
     where c.is_partitioning_column = 'NO'
         and c.data_type in (
-            'INT64', 'INT', 'INTEGER',
-            'NUMERIC', 'BIGNUMERIC',
+            'BIGNUMERIC',
+            'BOOL',
+            'DATE',
+            'DATETIME',
+            'GEOGRAPHY',
+            'INT64',
+            'NUMERIC',
+            'RANGE',
             'STRING',
-            'DATE', 'TIMESTAMP', 'DATETIME',
-            'BOOL', 'BOOLEAN',
-            'GEOGRAPHY'
+            'TIMESTAMP'
         )
 )
 

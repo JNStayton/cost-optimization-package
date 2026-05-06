@@ -399,9 +399,10 @@ models:
   - name: int_bigquery__table_columns
     description: >
       Column metadata for active BigQuery tables, scoped to int_bigquery__table_inventory.
-      Filters to BigQuery's clustering-eligible data type allow-list (INT64, NUMERIC,
-      BIGNUMERIC, STRING, DATE, TIMESTAMP, DATETIME, BOOL, GEOGRAPHY) and excludes
-      partitioning columns (which prune before clustering). Mirrors the role of
+      Filters to BigQuery's clustering-eligible data type allow-list (BIGNUMERIC,
+      BOOL, DATE, DATETIME, GEOGRAPHY, INT64, NUMERIC, RANGE, STRING, TIMESTAMP) and
+      excludes partitioning columns (which prune before clustering). Mirrors the
+      role of
       int_snowflake__table_columns. Real cardinality for these columns is populated by
       refresh_bigquery_column_cardinality into int_bigquery__column_cardinality.
     columns:
@@ -420,7 +421,10 @@ models:
       - name: ordinal_position
         description: Column position in the table definition (1-based)
       - name: data_type
-        description: BigQuery data type; restricted to the clustering-eligible allow-list
+        description: >
+          BigQuery data type; restricted to the canonical clustering-eligible
+          allow-list (BIGNUMERIC, BOOL, DATE, DATETIME, GEOGRAPHY, INT64, NUMERIC,
+          RANGE, STRING, TIMESTAMP).
       - name: is_nullable
         description: Whether the column allows null values ('YES'/'NO')
       - name: clustering_ordinal_position
