@@ -257,56 +257,58 @@ select
         when coalesce(suggested_strategy, 'Manual Check') = 'merge'
             and suggested_incremental_key is not null
             then
-                '{% if is_incremental() %}' || chr(10)
+                '{' || '%' || ' if is_incremental() ' || '%' || '}' || chr(10)
                 || '    where ' || suggested_incremental_key || ' >= (' || chr(10)
-                || '        select dateadd(day, -1, max(' || suggested_incremental_key || ')) from {{ this }}' || chr(10)
+                || '        select dateadd(day, -1, max(' || suggested_incremental_key || ')) from '
+                || '{' || '{' || ' this ' || '}' || '}' || chr(10)
                 || '    )' || chr(10)
-                || '{% endif %}'
+                || '{' || '%' || ' endif ' || '%' || '}'
         when coalesce(suggested_strategy, 'Manual Check') = 'insert_overwrite'
             and suggested_incremental_key is not null
             then
-                '{% if is_incremental() %}' || chr(10)
+                '{' || '%' || ' if is_incremental() ' || '%' || '}' || chr(10)
                 || '    where ' || suggested_incremental_key || ' >= dateadd(day, -3, current_date())  -- adjust lookback as needed' || chr(10)
-                || '{% endif %}'
+                || '{' || '%' || ' endif ' || '%' || '}'
         when coalesce(suggested_strategy, 'Manual Check') = 'append'
             and suggested_incremental_key is not null
             then
-                '{% if is_incremental() %}' || chr(10)
-                || '    where ' || suggested_incremental_key || ' > (select max(' || suggested_incremental_key || ') from {{ this }})' || chr(10)
-                || '{% endif %}'
-        else '-- No suitable incremental key detected. Add an {% if is_incremental() %} filter manually.'
+                '{' || '%' || ' if is_incremental() ' || '%' || '}' || chr(10)
+                || '    where ' || suggested_incremental_key || ' > (select max(' || suggested_incremental_key || ') from '
+                || '{' || '{' || ' this ' || '}' || '})' || chr(10)
+                || '{' || '%' || ' endif ' || '%' || '}'
+        else '-- No suitable incremental key detected. Add an ' || '{' || '%' || ' if is_incremental() ' || '%' || '}' || ' filter manually.'
     end as incremental_filter_template,
     -- copy-pasteable config() block for the dbt model
     case
         when coalesce(suggested_strategy, 'Manual Check') = 'merge'
             then
-                '{{ config(' || chr(10)
+                '{' || '{' || ' config(' || chr(10)
                 || '    materialized=''incremental'',' || chr(10)
                 || '    incremental_strategy=''merge'',' || chr(10)
                 || '    unique_key=''' || coalesce(suggested_unique_key, '-- TODO: add your surrogate key column') || ''',' || chr(10)
                 || '    on_schema_change=''append_new_columns''' || chr(10)
-                || ') }}'
+                || ') ' || '}' || '}'
         when coalesce(suggested_strategy, 'Manual Check') = 'insert_overwrite'
             then
-                '{{ config(' || chr(10)
+                '{' || '{' || ' config(' || chr(10)
                 || '    materialized=''incremental'',' || chr(10)
                 || '    incremental_strategy=''insert_overwrite'',' || chr(10)
                 || '    on_schema_change=''append_new_columns''' || chr(10)
-                || ') }}'
+                || ') ' || '}' || '}'
         when coalesce(suggested_strategy, 'Manual Check') = 'append'
             then
-                '{{ config(' || chr(10)
+                '{' || '{' || ' config(' || chr(10)
                 || '    materialized=''incremental'',' || chr(10)
                 || '    incremental_strategy=''append'',' || chr(10)
                 || '    on_schema_change=''append_new_columns''' || chr(10)
-                || ') }}'
+                || ') ' || '}' || '}'
         else
-                '{{ config(' || chr(10)
+                '{' || '{' || ' config(' || chr(10)
                 || '    materialized=''incremental'',' || chr(10)
                 || '    incremental_strategy=''merge'',  -- verify strategy based on your data patterns' || chr(10)
                 || '    unique_key=''-- TODO: add your surrogate key column'',' || chr(10)
                 || '    on_schema_change=''append_new_columns''' || chr(10)
-                || ') }}'
+                || ') ' || '}' || '}'
     end as updated_model_config,
     -- microbatch alternative: populated when insert-heavy + TIMESTAMP column exists
     case
@@ -314,14 +316,14 @@ select
             and best_timestamp_col is not null
             and (insert_count > (update_count + merge_count) * 9 or (update_count + merge_count) = 0)
             then
-                '{{ config(' || chr(10)
+                '{' || '{' || ' config(' || chr(10)
                 || '    materialized=''incremental'',' || chr(10)
                 || '    incremental_strategy=''microbatch'',' || chr(10)
                 || '    event_time=''' || best_timestamp_col || ''',' || chr(10)
                 || '    begin=''YYYY-MM-DD'',  -- TODO: set your historical start date' || chr(10)
                 || '    batch_size=''day'',' || chr(10)
                 || '    lookback=1' || chr(10)
-                || ') }}'
+                || ') ' || '}' || '}'
         else null
     end as microbatch_config_template
 from scored
