@@ -1,7 +1,7 @@
 {{
   config(
     materialized='table',
-    enabled=(target.type == 'snowflake')
+    enabled=false
   )
 }}
 
