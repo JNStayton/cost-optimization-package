@@ -7,9 +7,12 @@ This document covers the pipeline for identifying dbt models that are materializ
 ```
 Staging                              Intermediate                               Mart
 ───────                              ────────────                               ────
-stg_databricks__query_history    ──► int_databricks__dbt_model_run_history  ──► fct_databricks__
-  (system.query.history)                                                          incremental_model_
-                                  int_dbt__relations                              candidates
+stg_databricks__query_history    ──► int_databricks__dbt_model_run_history  ──►
+  (system.query.history)                                                         fct_databricks__
+stg_databricks__columns          ──► int_databricks__column_cluster_suggestions  incremental_model_
+  (information_schema.columns)   ──►                                             candidates
+                                  int_dbt__relations
+                                  int_table_inventory
 ```
 
 ### How query-to-model attribution works
@@ -35,10 +38,24 @@ The intermediate model extracts `node_id` from this comment using `regexp_extrac
 |-------|---------|
 | `int_databricks__dbt_model_run_history` | Filters query history to dbt-executed queries, extracts `node_id` from the comment header, and joins to `int_dbt__relations` to get model name and materialization type. One row per successful dbt model run. |
 | `int_dbt__relations` | Compile-time mapping from dbt model metadata to physical relation names and materialization types. |
+| `int_databricks__column_cluster_suggestions` | Scores each table's columns by query filter frequency to suggest the best cluster/filter column. Used here to populate `suggested_filter_column`. |
 
 ### Fact model
 
-**`fct_databricks__incremental_model_candidates`** aggregates model run history over the lookback window and flags `table`-materialized models that scan above the threshold as candidates for conversion to `incremental`.
+**`fct_databricks__incremental_model_candidates`** aggregates model run history over the lookback window, flags `table`-materialized models that scan above the threshold as candidates for conversion to `incremental`, and surfaces copy-pasteable starter code so engineers can act on the recommendation directly.
+
+**Key CTEs in the fact model:**
+
+| CTE | Purpose |
+|-----|---------|
+| `model_runs` | Aggregates run history from `int_databricks__dbt_model_run_history` over the lookback window. |
+| `table_dml_stats` | Sums INSERT/UPDATE/DELETE/MERGE counts from `int_databricks__table_query_stats_daily` to determine update semantics. |
+| `table_clustered` | Looks up whether each table already has a cluster key from `int_table_inventory`. |
+| `unique_key_candidates` / `suggested_unique_keys` | Reads `stg_databricks__columns` and scores column names by pattern (`_id`, `id`, `uuid`, `guid`, `_key`) to suggest a merge unique key. The top-scoring column per table is surfaced as `suggested_unique_key`. |
+| `filter_column_suggestions` | Pulls the top suggested filter/cluster column per table from `int_databricks__column_cluster_suggestions`. |
+| `filter_column_data_types` | Joins `stg_databricks__columns` with the filter column suggestion to retrieve that column's `data_type` — needed to detect microbatch candidates. |
+| `final` | Joins all of the above, computes scores, flags candidates, and derives `suggested_incremental_strategy`. |
+| `final_with_templates` | Wraps `final` to add four template string columns (`recommendation_reason`, `incremental_filter_template`, `updated_model_config`, `microbatch_config_template`) that produce copy-pasteable dbt code. |
 
 ---
 
@@ -112,6 +129,14 @@ vars:
 | `suggested_incremental_strategy_confidence` | `HIGH`, `MEDIUM`, or `LOW` — how confident the suggestion is (see below) |
 | `first_seen` | Earliest run timestamp in the lookback window |
 | `last_seen` | Most recent run timestamp in the lookback window |
+| `suggested_unique_key` | Best candidate column name for use as the `unique_key` in a `merge` strategy. Scored by naming pattern: `_id` suffix (score 9) > `id` exact (8) > `uuid`/`guid` exact (7) > `_uuid`/`_guid`/`_key` suffix (6). `null` if no qualifying column is found. |
+| `suggested_filter_column` | Best candidate column for the `{% if is_incremental() %}` filter predicate, sourced from `int_databricks__column_cluster_suggestions`. `null` if no suggestion is available. |
+| `suggested_filter_column_confidence` | Confidence level for `suggested_filter_column`, inherited from `int_databricks__column_cluster_suggestions`. |
+| `filter_column_data_type` | Data type of `suggested_filter_column`. Used internally to detect microbatch eligibility; also useful for validating filter syntax. |
+| `recommendation_reason` | Human-readable summary of why this model is a candidate (e.g. "Avg 1.5 GB scanned per run across 14 runs in the last 7 days — incrementalization would reduce compute cost"). `null` for non-candidates. |
+| `incremental_filter_template` | Copy-pasteable SQL snippet for the `{% if is_incremental() %}` filter block, pre-filled with `suggested_filter_column` and the appropriate predicate for the suggested strategy. |
+| `updated_model_config` | Copy-pasteable `{{ config(...) }}` block with `materialized='incremental'`, `incremental_strategy`, `unique_key` (if applicable), and `on_schema_change='append_new_columns'` pre-filled. |
+| `microbatch_config_template` | Copy-pasteable microbatch `{{ config(...) }}` block. Only populated when: strategy is `merge`, filter column is a timestamp type, and the table is insert-heavy (insert_count > 9× update+merge, or zero updates). `null` otherwise. |
 
 ---
 
@@ -157,53 +182,55 @@ To approximate this, the model uses **DML type breakdown** from `system.query.hi
 
 ### What this cannot tell you
 
-- **Whether a unique key exists.** `merge` requires a `unique_key` config in dbt. This model does not suggest which column to use — you must identify a reliable unique key from your data model. Common candidates are columns named `id`, `uuid`, or composite keys combining entity and timestamp.
+- **Whether `suggested_unique_key` is actually unique.** The model scores columns by name pattern (`_id`, `id`, `uuid`, etc.) but cannot verify uniqueness from system tables. Always run `count(*) vs count(distinct <col>)` before using the suggestion.
 - **Whether `append` is truly safe.** Even if no UPDATE statements are observed in the lookback window, out-of-band corrections or delayed reprocessing jobs could invalidate the append assumption. Always confirm with the team that owns the source data.
 - **The right predicate for `insert_overwrite`.** If you use `insert_overwrite`, dbt needs to know which partition(s) to replace. Review the `suggested_cluster_key` in `fct_databricks__liquid_clustering_candidates` for guidance on which column is most commonly filtered.
+- **Whether the microbatch template is the right final config.** `microbatch_config_template` is only surfaced when conditions strongly suggest it (timestamp filter column + insert-heavy pattern), but you should verify the `event_time` column truly represents event time and set a realistic `begin` date before using it.
 
 ### Applying the suggestion
 
+The fact model surfaces four template columns that produce copy-pasteable dbt starter code. Retrieve them for a specific model and paste the output directly into your `.sql` file:
+
 ```sql
--- Preview recommendations for all candidates
+-- Get copy-pasteable starter code for a specific model
 select
     model_name,
     table_fqn,
-    insert_count,
-    update_count,
-    delete_count,
-    merge_count,
+    recommendation_reason,
     suggested_incremental_strategy,
     suggested_incremental_strategy_confidence,
-    is_candidate
+    suggested_unique_key,
+    suggested_filter_column,
+    incremental_filter_template,
+    updated_model_config,
+    microbatch_config_template
 from <your_catalog>.<your_schema>.fct_databricks__incremental_model_candidates
 where snapshot_date = current_date()
     and is_candidate = true
 order by score desc;
 ```
 
-Once you've validated the strategy, update the model's config:
+`updated_model_config` contains a ready-to-use `{{ config(...) }}` block, and `incremental_filter_template` contains the corresponding `{% if is_incremental() %}` WHERE clause. For example, a merge candidate with `suggested_unique_key = 'event_id'` and `suggested_filter_column = 'created_at'` would produce:
 
 ```sql
--- merge (most common — requires a unique_key)
+-- updated_model_config:
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key='your_unique_key_column'
+    unique_key='event_id',
+    on_schema_change='append_new_columns'
 ) }}
 
--- append (insert-only, no unique key needed)
-{{ config(
-    materialized='incremental',
-    incremental_strategy='append'
-) }}
-
--- insert_overwrite (partition-aligned writes)
-{{ config(
-    materialized='incremental',
-    incremental_strategy='insert_overwrite',
-    partition_by=['date_column']
-) }}
+-- incremental_filter_template (add this to the end of your model's WHERE clause):
+{% if is_incremental() %}
+    where created_at >= (
+        select max(created_at) - INTERVAL 1 DAY
+        from {{ this }}
+    )
+{% endif %}
 ```
+
+If `microbatch_config_template` is non-null, it means the table pattern (insert-heavy + timestamp filter column) is consistent with microbatch. Review the template and set the `begin` date before using it.
 
 ---
 
@@ -221,7 +248,11 @@ select
     estimated_monthly_runs,
     estimated_monthly_bytes_scanned_gb,
     score,
-    is_candidate
+    is_candidate,
+    recommendation_reason,
+    suggested_incremental_strategy,
+    suggested_unique_key,
+    suggested_filter_column
 from <your_catalog>.<your_schema>.fct_databricks__incremental_model_candidates
 where snapshot_date = current_date()
 order by estimated_monthly_bytes_scanned_gb desc;
