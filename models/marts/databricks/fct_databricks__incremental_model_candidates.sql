@@ -113,6 +113,13 @@ filter_column_data_types as (
         and lower(c.column_name) = lower(fcs.suggested_filter_column)
 ),
 
+graph_metadata as (
+    select
+        dbt_model,
+        downstream_model_count
+    from {{ ref('int_dbt__relations') }}
+),
+
 final as (
     select
         current_date() as snapshot_date,
@@ -180,7 +187,8 @@ final as (
         uk.suggested_unique_key,
         fc.suggested_filter_column,
         fc.suggested_filter_column_confidence,
-        fcd.filter_column_data_type
+        fcd.filter_column_data_type,
+        coalesce(gm.downstream_model_count, 0) as downstream_model_count
     from model_runs as mr
     left join table_dml_stats as ds
         on mr.database_name = ds.table_database
@@ -202,6 +210,8 @@ final as (
         on lower(mr.database_name) = lower(fcd.catalog_name)
         and lower(mr.schema_name) = lower(fcd.schema_name)
         and lower(mr.table_name) = lower(fcd.table_name)
+    left join graph_metadata as gm
+        on mr.node_id = gm.dbt_model
 ),
 
 final_with_templates as (

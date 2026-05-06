@@ -137,6 +137,7 @@ vars:
 | `incremental_filter_template` | Copy-pasteable SQL snippet for the `{% if is_incremental() %}` filter block, pre-filled with `suggested_filter_column` and the appropriate predicate for the suggested strategy. |
 | `updated_model_config` | Copy-pasteable `{{ config(...) }}` block with `materialized='incremental'`, `incremental_strategy`, `unique_key` (if applicable), and `on_schema_change='append_new_columns'` pre-filled. |
 | `microbatch_config_template` | Copy-pasteable microbatch `{{ config(...) }}` block. Only populated when: strategy is `merge`, filter column is a timestamp type, and the table is insert-heavy (insert_count > 9× update+merge, or zero updates). `null` otherwise. |
+| `downstream_model_count` | Number of dbt models that directly depend on this model, from `int_dbt__relations`. Useful for prioritizing conversions — high downstream count means more models benefit from faster runtime. |
 
 ---
 
