@@ -460,6 +460,7 @@ sources:
       enabled: "{{ target.type == 'databricks' }}"
     tables:
       - name: tables
+      - name: columns
 
   - name: databricks_billing
     description: Databricks usage and billing data
@@ -477,4 +478,4 @@ sources:
     config:
       enabled: "{{ target.type == 'databricks' }}"
     tables:
-      - name: table_info
+      - name: table_metrics_history
