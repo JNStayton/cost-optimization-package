@@ -63,8 +63,8 @@ with table_candidates as (
 ),
 
 build_stats as (
-    -- single scan: build performance, DML activity, and growth signal in one pass.
-    -- growth signal aggregates are scoped to CTAS-build days via FILTER.
+    -- single scan: growth signal aggregates use a null key for non-build days so
+    -- MIN_BY/MAX_BY naturally exclude them (null keys are skipped by aggregates).
     select
         table_database || '.' || table_schema || '.' || table_name            as table_fqn,
         sum(table_build_count)                                                 as table_build_count,
@@ -80,12 +80,16 @@ build_stats as (
         sum(update_count)                                                      as update_count,
         sum(delete_count)                                                      as delete_count,
         sum(merge_count)                                                       as merge_count,
-        -- growth signal — scoped to days that had a CTAS build
+        -- growth signal — null key excludes non-build days from MIN_BY/MAX_BY
         count_if(rows_inserted_build_snapshot is not null)                    as qualified_build_days,
-        min_by(rows_inserted_build_snapshot, stats_date)
-            filter (where rows_inserted_build_snapshot is not null)           as rows_at_period_start,
-        max_by(rows_inserted_build_snapshot, stats_date)
-            filter (where rows_inserted_build_snapshot is not null)           as rows_at_period_end
+        min_by(
+            rows_inserted_build_snapshot,
+            case when rows_inserted_build_snapshot is not null then stats_date end
+        )                                                                     as rows_at_period_start,
+        max_by(
+            rows_inserted_build_snapshot,
+            case when rows_inserted_build_snapshot is not null then stats_date end
+        )                                                                     as rows_at_period_end
     from {{ ref('int_snowflake__table_query_stats_daily') }}
     where stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by 1
