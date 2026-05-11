@@ -59,7 +59,8 @@ query_history as (
         bytes_scanned,
         bytes_spilled_local,
         bytes_spilled_remote,
-        query_text
+        query_text,
+        rows_inserted
     from {{ ref('int_snowflake__query_history') }}
     {% if is_incremental() %}
         where query_start_time >= dateadd(
@@ -98,7 +99,8 @@ matched_queries as (
         qh.partitions_total,
         qh.bytes_scanned,
         qh.bytes_spilled_local,
-        qh.bytes_spilled_remote
+        qh.bytes_spilled_remote,
+        qh.rows_inserted
     from query_history as qh
     inner join query_table_access as qta
         on qh.query_id = qta.query_id
@@ -121,7 +123,8 @@ matched_queries as (
         qh.partitions_total,
         qh.bytes_scanned,
         qh.bytes_spilled_local,
-        qh.bytes_spilled_remote
+        qh.bytes_spilled_remote,
+        qh.rows_inserted
     from query_history as qh
     inner join candidate_tables as ct
         on qh.query_text ilike '%' || ct.table_name || '%'
@@ -155,6 +158,7 @@ select
     sum(case when query_type = 'SELECT' then coalesce(partitions_total, 0) else 0 end) as select_partitions_total_sum,
     sum(coalesce(bytes_scanned, 0)) as bytes_scanned_sum,
     sum(coalesce(bytes_spilled_local, 0)) as bytes_spilled_local_sum,
-    sum(coalesce(bytes_spilled_remote, 0)) as bytes_spilled_remote_sum
+    sum(coalesce(bytes_spilled_remote, 0)) as bytes_spilled_remote_sum,
+    max(case when query_type = 'CREATE_TABLE_AS_SELECT' then rows_inserted end) as rows_inserted_build_snapshot
 from matched_queries
 group by stats_date, table_database, table_schema, table_name
