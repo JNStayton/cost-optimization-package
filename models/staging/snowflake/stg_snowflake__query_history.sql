@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
-    unique_key='query_id'
+    unique_key='query_id',
+    on_schema_change='append_new_columns'
 ) }}
 
 select
@@ -20,8 +21,9 @@ select
     bytes_spilled_to_local_storage, 
     bytes_spilled_to_remote_storage, 
     query_text, 
-    session_id, 
-    execution_status
+    session_id,
+    execution_status,
+    rows_inserted
 from {{ source('snowflake_usage', 'query_history') }}
 where execution_status = 'SUCCESS'
 {% if is_incremental() %}

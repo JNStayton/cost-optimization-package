@@ -24,7 +24,7 @@ select
     c.is_nullable
 from {{ ref('stg_snowflake__columns') }} as c
 inner join {{ ref('int_snowflake__table_inventory') }} as ti
-    on upper(c.database_name) = upper(ti.database_name)
-    and upper(c.schema_name) = upper(ti.schema_name)
-    and upper(c.table_name) = upper(ti.table_name)
+    on c.database_name = ti.database_name
+    and c.schema_name = ti.schema_name
+    and c.table_name = ti.table_name
 where c.deleted is null

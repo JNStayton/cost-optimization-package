@@ -23,6 +23,7 @@ select
     bytes_spilled_to_remote_storage as bytes_spilled_remote,
     query_text,
     session_id,
-    execution_status
+    execution_status,
+    rows_inserted
 from {{ ref('stg_snowflake__query_history') }}
 where start_time >= dateadd(day, -60, current_timestamp())
