@@ -114,7 +114,13 @@ scored as (
         tc.package_name,
         -- size & structure
         coalesce(ts.size_gb, 0)                                                as size_gb,
-        coalesce(ts.row_count, 0)                                              as row_count,
+        -- ACCOUNT_USAGE.TABLES row_count can be stale or 0 for frequently-rebuilt
+        -- tables; fall back to the most recent CTAS rows_inserted snapshot when null/0
+        coalesce(
+            nullif(ts.row_count, 0),
+            bs.rows_at_period_end,
+            0
+        )                                                                      as row_count,
         -- build performance
         coalesce(bs.table_build_count, 0)                                      as table_build_count,
         round(
