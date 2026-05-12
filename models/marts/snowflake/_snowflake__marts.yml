@@ -412,6 +412,173 @@ models:
 
 
   # ===========================================================================
+  # fct_snowflake__incremental_config_recommendations
+  # ===========================================================================
+  - name: fct_snowflake__incremental_config_recommendations
+    description: >
+      Model 2 of the incremental materialization recommendation flow. Depends on
+      fct_snowflake__incremental_materialization_candidates (Model 1).
+
+      For each candidate table, detects the best filter column (timestamp/date),
+      ranks unique key candidates by naming convention, recommends a
+      Snowflake-optimized incremental strategy, and generates a copy-pasteable
+      dbt config template with the is_incremental() filter block pre-filled.
+
+      Excludes 'Low ROI — Minimal Rebuild Redundancy' tables from Model 1.
+
+      Strategy selection priority:
+        1. External deletes detected + filter column  → delete+insert (flagged)
+        2. External deletes detected, no filter       → merge (flagged)
+        3. Unique key + filter + large scale          → delete+insert
+        4. Unique key + filter, moderate scale        → merge
+        5. Filter only, no DML, large scale           → microbatch
+        6. Filter only, no DML                        → append
+        7. Filter only, external DML, no key          → append (flag manual review)
+        8. Unique key only                            → merge
+        9. No key candidates                          → append
+
+      Controlled by the following dbt variables:
+        - incremental_large_table_row_threshold (default 10000000)
+        - incremental_large_table_gb_threshold  (default 10)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the table.
+
+      - name: schema_name
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: redundancy_tier
+        description: >
+          Redundancy classification from Model 1. One of: Strong Candidate,
+          Candidate, Candidate — Moderate Redundancy, Candidate — Verify Growth
+          Signal, Candidate — Insufficient History.
+
+      - name: redundancy_reason
+        description: Human-readable explanation of the Model 1 redundancy signal.
+
+      - name: rebuild_redundancy_rate
+        description: >
+          Fraction of each full rebuild that re-processes unchanged rows
+          (rows_at_period_start / rows_at_period_end). Null when growth signal
+          is unreliable or history is insufficient.
+
+      - name: est_daily_redundant_gb_scanned
+        description: >
+          Estimated GB scanned per day that is redundant
+          (size_gb × builds_per_day × rebuild_redundancy_rate). Null when
+          growth signal is unreliable.
+
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: total_rows
+        description: Approximate row count of the table.
+
+      - name: table_build_count
+        description: Number of full table rebuilds detected in the analysis window.
+
+      - name: builds_per_day
+        description: Average number of full rebuilds per day over the analysis window.
+
+      - name: max_build_time_sec
+        description: Maximum full-rebuild execution time in seconds over the analysis window.
+
+      - name: avg_build_time_sec
+        description: Average full-rebuild execution time in seconds over the analysis window.
+
+      - name: dml_count
+        description: Total INSERT, UPDATE, DELETE, and MERGE operations in the analysis window.
+
+      - name: insert_count
+        description: INSERT operations in the analysis window.
+
+      - name: update_count
+        description: UPDATE operations in the analysis window.
+
+      - name: delete_count
+        description: >
+          DELETE operations in the analysis window. Non-zero indicates external
+          processes are deleting from this table, which influences strategy selection.
+
+      - name: merge_count
+        description: MERGE operations in the analysis window.
+
+      - name: incremental_strategy
+        description: >
+          Recommended dbt incremental strategy. One of: append, merge,
+          delete+insert, microbatch. See strategy_notes for rationale.
+
+      - name: has_filter_column
+        description: True when a timestamp or date column was detected for use in the is_incremental() filter.
+
+      - name: has_unique_key_candidate
+        description: True when at least one plausible unique key candidate was detected by naming convention.
+
+      - name: has_external_deletes
+        description: True when delete_count > 0, indicating an external process deletes rows from this table.
+
+      - name: is_large_table
+        description: >
+          True when total_rows > incremental_large_table_row_threshold OR
+          table_size_gb > incremental_large_table_gb_threshold. Used to prefer
+          delete+insert over merge at large scale.
+
+      - name: suggested_filter_column
+        description: >
+          Best timestamp or date column for the is_incremental() WHERE filter,
+          ranked by name pattern. Null when no qualifying column is found.
+          Detection priority: *updated_at* / *modified_at* > *loaded_at* /
+          *ingested_at* / *inserted_at* / *synced_at* > *created_at* /
+          *event_date* / *event_time* / *event_timestamp* > any timestamp/date column.
+
+      - name: unique_key_candidates
+        description: >
+          Array of up to 3 plausible unique key column names, ordered by naming
+          convention rank. Uniqueness is not verified — run validate_uniqueness_sql
+          before implementing.
+
+      - name: strategy_notes
+        description: Human-readable rationale for the recommended strategy, including key column names and any caveats.
+
+      - name: validate_uniqueness_sql
+        description: >
+          SQL snippet to verify uniqueness of the top unique key candidate before
+          implementing. Returns is_unique = TRUE when the column has no duplicates.
+          Null when no unique key candidate was detected.
+
+      - name: dbt_config_template
+        description: >
+          Copy-pasteable dbt config block and is_incremental() filter for the
+          recommended strategy, with the detected column names pre-filled.
+          Replace the existing config() block at the top of your model file.
+          For microbatch, set the begin date manually before running.
+          Unique key placeholders (<unique_key>) require manual identification
+          when no candidate was detected.
+
+  # ===========================================================================
   # fct_snowflake__clustering_key_candidates
   # ===========================================================================
   - name: fct_snowflake__clustering_key_candidates
