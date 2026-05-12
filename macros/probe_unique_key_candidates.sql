@@ -14,9 +14,17 @@
       - validate_uniqueness_sql — re-pointed to the confirmed column
       - dbt_config_template     — unique_key parameter swapped to confirmed column
 
-    When no single-column unique key is found, likely_unique_key stays null.
-    This correctly signals that the table requires a composite key or a
-    dedicated surrogate key column.
+    When no single-column unique key is found and the initial strategy was
+    delete+insert or merge, downgrades to append and updates:
+      - incremental_strategy    — changed to 'append'
+      - strategy_notes          — explains the downgrade and provides next steps
+                                  (surrogate key path via dbt_utils.generate_surrogate_key,
+                                   incremental_predicates path for clean date windows)
+      - dbt_config_template     — rebuilt as an append config template
+
+    append is the safe default when no unique key is confirmed: its failure mode
+    (visible duplicates) is preferable to silent data corruption from merge or
+    delete+insert on an unconfirmed key.
 
     Variables:
       incremental_unique_key_probe_threshold (default 0.95)
@@ -34,7 +42,9 @@
       select
         table_fqn,
         best_unique_key,
-        array_to_string(unique_key_candidates, ',') as candidates_csv
+        array_to_string(unique_key_candidates, ',') as candidates_csv,
+        incremental_strategy,
+        lower(suggested_filter_column)              as suggested_filter_column
       from {{ this }}
       where unique_key_candidates is not null
         and array_size(unique_key_candidates) > 0
@@ -46,10 +56,12 @@
 
       {% for row in candidates %}
 
-        {% set table_fqn     = row['TABLE_FQN'] %}
-        {% set best_conv_key = row['BEST_UNIQUE_KEY'] %}
+        {% set table_fqn      = row['TABLE_FQN'] %}
+        {% set best_conv_key  = row['BEST_UNIQUE_KEY'] %}
         {% set candidates_csv = row['CANDIDATES_CSV'] %}
         {% set candidate_cols = candidates_csv.split(',') %}
+        {% set current_strat  = row['INCREMENTAL_STRATEGY'] %}
+        {% set filter_col     = row['SUGGESTED_FILTER_COLUMN'] if row['SUGGESTED_FILTER_COLUMN'] else none %}
 
         {{ log("probe_unique_key_candidates: probing " ~ (candidate_cols | length) ~ " candidate(s) for " ~ table_fqn, info=true) }}
 
@@ -101,7 +113,59 @@
           {{ log("probe_unique_key_candidates: confirmed '" ~ ns.confirmed_key ~ "' as likely unique key for " ~ table_fqn, info=true) }}
 
         {% else %}
+
           {{ log("probe_unique_key_candidates: no single-column unique key found for " ~ table_fqn ~ " — composite key likely needed", info=true) }}
+
+          {# Downgrade delete+insert or merge to append when no unique key is confirmed.
+             Using an unconfirmed key with merge/delete+insert risks silent data corruption
+             (phantom deletes or missed upserts); append failure mode (visible duplicates)
+             is the safer default. strategy_notes guides the user to the correct next step. #}
+          {% if current_strat in ('delete+insert', 'merge') %}
+
+            {% if filter_col %}
+              {% set update_sql %}
+                update {{ this }}
+                set
+                  incremental_strategy = 'append',
+                  strategy_notes       = $sn$No single-column unique key confirmed by cardinality probe — strategy downgraded from {{ current_strat }} to append. To implement a scoped strategy: (1) generate a surrogate key with dbt_utils.generate_surrogate_key([<grain_columns>]) and configure unique_key on that column, then re-evaluate for merge or delete+insert; or (2) use incremental_predicates with delete+insert to scope deletes to the {{ filter_col }} window if records arrive cleanly with no late-arriving data outside the window.$sn$,
+                  dbt_config_template  =
+                      '{'||'{'||chr(10)
+                    ||'  config('||chr(10)
+                    ||'    materialized=''incremental'','||chr(10)
+                    ||'    incremental_strategy=''append'''||chr(10)
+                    ||'  )'||chr(10)
+                    ||'}'||'}'||chr(10)||chr(10)
+                    ||'{'||'%'||' if is_incremental() '||'%'||'}'||chr(10)
+                    ||'where {{ filter_col }}'
+                    ||' > (select max({{ filter_col }}) from '
+                    ||'{'||'{'||' this '||'}'||'}'||')'||chr(10)
+                    ||'{'||'%'||' endif '||'%'||'}'
+                where table_fqn = '{{ table_fqn }}'
+              {% endset %}
+            {% else %}
+              {% set update_sql %}
+                update {{ this }}
+                set
+                  incremental_strategy = 'append',
+                  strategy_notes       = $sn$No single-column unique key confirmed by cardinality probe — strategy downgraded from {{ current_strat }} to append. To implement a scoped strategy: generate a surrogate key with dbt_utils.generate_surrogate_key([<grain_columns>]) and configure unique_key on that column, then re-evaluate for merge or delete+insert.$sn$,
+                  dbt_config_template  =
+                      '{'||'{'||chr(10)
+                    ||'  config('||chr(10)
+                    ||'    materialized=''incremental'','||chr(10)
+                    ||'    incremental_strategy=''append'''||chr(10)
+                    ||'  )'||chr(10)
+                    ||'}'||'}'||chr(10)||chr(10)
+                    ||'-- TODO: add a filter column (timestamp/date) to scope incremental loads'||chr(10)
+                    ||'-- TODO: verify data is truly append-only before using this strategy'
+                where table_fqn = '{{ table_fqn }}'
+              {% endset %}
+            {% endif %}
+
+            {% do run_query(update_sql) %}
+            {{ log("probe_unique_key_candidates: downgraded " ~ table_fqn ~ " from " ~ current_strat ~ " to append — no confirmed unique key", info=true) }}
+
+          {% endif %}
+
         {% endif %}
 
       {% endfor %}

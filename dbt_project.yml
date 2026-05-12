@@ -17,6 +17,7 @@ require-dbt-version: [">=1.0.0"]
 # Model configurations
 models:
   dbt_cost_optimization_package:
+    +schema: dbt_cost_optimization
     # Staging models - platform-specific data extraction
     staging:
       +materialized: view
@@ -40,7 +41,15 @@ models:
         +enabled: "{{ target.type == 'redshift' }}"
     marts:
       snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
+        clustering:
+          +enabled: "{{ target.type == 'snowflake' }}"
+          +tags: ['clustering']
+        materialization:
+          +enabled: "{{ target.type == 'snowflake' }}"
+          +tags: ['materialization']
+        warehouse:
+          +enabled: "{{ target.type == 'snowflake' }}"
+          +tags: ['warehouse']
       bigquery:
         +enabled: "{{ target.type == 'bigquery' }}"
       databricks:

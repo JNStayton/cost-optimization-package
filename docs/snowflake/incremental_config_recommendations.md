@@ -10,15 +10,16 @@ This model depends on `fct_snowflake__incremental_materialization_candidates` (M
 
 ## Strategy decision matrix
 
-The recommended strategy is derived from three signals: the availability of a timestamp/date filter column, the availability of a unique key candidate, and table scale (row count and size).
+The recommended strategy is derived from three signals: the availability of a timestamp/date filter column, the availability of a **confirmed** unique key (see [unique key detection](#key-column-detection) below), and table scale (row count and size).
 
 | Scenario | Recommended strategy | Rationale |
 |---|---|---|
-| Unique key + filter column + large scale (>10M rows or >10 GB) | `delete+insert` | Scopes deletes to the filter window; avoids full-target merge scan at large scale |
-| Unique key + filter column + moderate scale | `merge` | Standard default; merge cost is acceptable at moderate scale |
+| Confirmed unique key + filter column + large scale (>10M rows or >10 GB) | `delete+insert` | Scopes deletes to the filter window; avoids full-target merge scan at large scale |
+| Confirmed unique key + filter column + moderate scale | `merge` | Standard default; merge cost is acceptable at moderate scale |
+| Confirmed unique key only, no filter column | `merge` | No time boundary available; merge is the only safe option |
+| Unique key candidate detected but not confirmed by cardinality probe | `append` (downgraded) | No single-column unique key with ≥ 95% distinct values confirmed — using an unconfirmed key with merge/delete+insert risks silent data corruption; `append` is the safe default. See `strategy_notes` for surrogate key and `incremental_predicates` paths. |
 | Filter column only, no external DML, high volume | `microbatch` | Processes data in self-healing time batches; best for reliability at scale |
 | Filter column only, no external DML | `append` | Simplest and cheapest; suitable when source data is truly append-only |
-| Unique key only, no filter column | `merge` | No time boundary available; merge is the only safe option |
 | External deletes detected | `delete+insert` (flagged for review) | Window-scoped only — deletes outside the defined window still require a periodic full-refresh |
 | No key candidates detected | `append` | Safest default; config template flags key identification as a required next step |
 
@@ -60,27 +61,29 @@ Detection order:
    - `*created_at*`, `*event_date*`, `*event_time*`, `*event_timestamp*` — creation or event time
    - Any other timestamp/date column — lowest priority
 
-### Unique key (`unique_key_candidates`)
-Identifies columns that are plausible unique key candidates based on naming conventions. Returns a ranked list rather than a single assertion — uniqueness must be validated before implementing.
+### Unique key (`best_unique_key` and `likely_unique_key`)
+Identifies columns that are plausible unique key candidates based on naming conventions, then verifies cardinality via a post-build probe.
+
+**`best_unique_key`** — top candidate by naming convention. Not cardinality-verified; exists as a reference in case the probe cannot confirm a key.
 
 Detection criteria:
 - Column name matches `id` (exact), `*_id`, `*_key`, `*_sk` (surrogate key), `surrogate_key`, `primary_key`
 - Integer or string data types preferred
 - Ranked by name specificity: surrogate/primary key names > exact `id` > `*_id` patterns
 
-**Uniqueness is not verified at query time.** The model provides a `validate_uniqueness_sql` snippet for each top candidate:
-```sql
-select count(*) = count(distinct <column>) as is_unique from <schema>.<table>
-```
-Run this before implementing to confirm the column is suitable as a `unique_key`.
+**`likely_unique_key`** — confirmed by the `probe_unique_key_candidates` post-hook using `APPROX_COUNT_DISTINCT`. A column is confirmed when its approximate distinct count is ≥ 95% of the table's row count (accounting for HyperLogLog's error margin). When confirmed, `dbt_config_template` and `validate_uniqueness_sql` are updated to reference this column.
+
+When no single-column unique key is confirmed — common for fact tables where all candidate columns are foreign keys — `likely_unique_key` is null. If the initial strategy was `delete+insert` or `merge`, the post-hook **downgrades the strategy to `append`**: the safe default whose failure mode (visible duplicates) is preferable to silent data corruption. `strategy_notes` explains the downgrade and provides two paths forward:
+1. **Surrogate key path** — generate a surrogate key with `dbt_utils.generate_surrogate_key([<grain_columns>])`, configure `unique_key` on that column, then re-evaluate for `merge` or `delete+insert`
+2. **`incremental_predicates` path** — use `delete+insert` with `incremental_predicates` to scope deletes by date window, but only if records arrive cleanly within the window with no late-arriving data
 
 ---
 
 ## Implementing the recommendation
 
-1. Run the validation SQL from `validate_uniqueness_sql` to confirm the unique key candidate
+1. Check `likely_unique_key` — if populated, the cardinality probe has confirmed the column as a likely unique key and `dbt_config_template` already references it; if null, the strategy has been downgraded to `append` and `strategy_notes` explains next steps for defining a surrogate key or using `incremental_predicates`
 2. Copy the `dbt_config_template` into your model file
-3. Fill in the `unique_key` placeholder with the validated column
+3. If using a surrogate key strategy, add `dbt_utils.generate_surrogate_key([<grain_columns>])` to your model and update the `unique_key` in the config block
 4. Add a `unique` test to your schema YAML for the chosen key column
 5. Run a full-refresh on the first incremental run: `dbt run --full-refresh --select <model>`
 
@@ -98,3 +101,4 @@ Run this before implementing to confirm the column is suitable as a `unique_key`
 | `incremental_candidates_min_qualified_build_days` | 3 | Minimum CTAS build days required to trust the growth signal |
 | `incremental_large_table_row_threshold` | 10000000 | Row count above which `delete+insert` is preferred over `merge` |
 | `incremental_large_table_gb_threshold` | 10 | Size in GB above which `delete+insert` is preferred over `merge` |
+| `incremental_unique_key_probe_threshold` | 0.95 | `APPROX_COUNT_DISTINCT` / `COUNT(*)` ratio required to confirm a column as a likely unique key |
