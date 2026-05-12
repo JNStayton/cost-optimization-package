@@ -1,7 +1,8 @@
 {{
   config(
     materialized='table',
-    enabled=(target.type == 'snowflake')
+    enabled=(target.type == 'snowflake'),
+    post_hook="{{ probe_unique_key_candidates() }}"
   )
 }}
 
@@ -218,6 +219,9 @@ select
     -- key detection
     suggested_filter_column,
     unique_key_candidates,
+    best_unique_key,
+    -- populated post-build by probe_unique_key_candidates() — null until macro runs
+    null::string                                                            as likely_unique_key,
     -- strategy rationale
     case
         when incremental_strategy = 'delete+insert' and has_external_deletes
