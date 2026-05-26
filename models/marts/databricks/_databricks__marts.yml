@@ -1,0 +1,227 @@
+version: 2
+
+models:
+  # ===========================================================================
+  # fct_databricks__incremental_model_candidates
+  # ===========================================================================
+  - name: fct_databricks__incremental_model_candidates
+    description: >
+      Daily snapshot of dbt TABLE-materialized models on Databricks that are
+      candidates for conversion to INCREMENTAL, with strategy recommendations
+      (merge / delete+insert / microbatch / insert_overwrite / append) and
+      copy-pasteable config templates.
+
+      Strategy selection considers: observed DML pattern (inserts vs updates vs
+      deletes vs merges), Delta clustering state, a date/timestamp filter column
+      suggestion from int_databricks__column_cluster_suggestions, and a table-size
+      tier driven by avg_bytes_scanned per build. The probe_unique_key_candidates()
+      post-hook then validates the top-ranked unique key candidates using
+      approx_count_distinct; when no single-column key passes the threshold,
+      strategies that depend on a unique key are downgraded to append to avoid
+      silent data corruption.
+
+      Controlled by the following dbt variables:
+        - incremental_candidates_lookback_days                (default 7)
+        - incremental_candidates_min_avg_bytes_scanned_gb     (default 0.1)
+        - incremental_candidates_min_run_count                (default 3)
+        - incremental_candidates_large_table_gb_threshold     (default 10)
+        - incremental_unique_key_probe_threshold              (default 0.95)
+    config:
+      materialized: incremental
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: snapshot_date
+        description: Calendar date of the snapshot. Combined with dbt_model to form the unique key for incremental loads.
+        tests:
+          - not_null
+      - name: incremental_candidates_snapshot_key
+        description: >
+          Surrogate key for the snapshot row. Derived from md5(snapshot_date || dbt_model).
+          Used as the merge key for the incremental materialization — one record per
+          model per day.
+        tests:
+          - not_null
+          - unique
+
+      # ---------------------------------------------------------------------------
+      # Model identity
+      # ---------------------------------------------------------------------------
+      - name: dbt_model
+        description: dbt unique_id of the evaluated model (e.g. model.my_project.my_model).
+        tests:
+          - not_null
+      - name: model_name
+        description: dbt model name (file basename, before alias).
+      - name: materialized
+        description: Current materialization of the model. Only `table`-materialized models are flagged as candidates; other materializations are still scored for context.
+      - name: table_fqn
+        description: Fully-qualified table identifier in CATALOG.SCHEMA.TABLE format.
+      - name: database_name
+        description: Databricks catalog containing the table backing the model.
+      - name: schema_name
+        description: Databricks schema containing the table backing the model.
+      - name: table_name
+        description: Name of the table backing the model.
+
+      # ---------------------------------------------------------------------------
+      # Run history (lookback window)
+      # ---------------------------------------------------------------------------
+      - name: run_count
+        description: >
+          Number of times this model was built in the lookback window
+          (controlled by incremental_candidates_lookback_days, default 7).
+      - name: first_seen
+        description: Timestamp of the earliest model run observed in the lookback window.
+      - name: last_seen
+        description: Timestamp of the most recent model run observed in the lookback window.
+
+      # ---------------------------------------------------------------------------
+      # Scan and compute metrics
+      # ---------------------------------------------------------------------------
+      - name: total_bytes_scanned_gb
+        description: Sum of bytes_scanned across all runs in the lookback window, converted to GB.
+      - name: avg_bytes_scanned_gb
+        description: >
+          Average bytes_scanned per run in the lookback window, converted to GB.
+          Used by the strategy logic as a proxy for table size when applying the
+          large-table size tier (incremental_candidates_large_table_gb_threshold).
+      - name: total_execution_time_s
+        description: Sum of execution_time across all runs in the lookback window, in seconds.
+      - name: avg_execution_time_s
+        description: Average execution_time per run in the lookback window, in seconds.
+      - name: estimated_monthly_runs
+        description: run_count projected to a 30-day month based on the lookback window. Used to size cost-savings estimates.
+      - name: estimated_monthly_bytes_scanned_gb
+        description: avg_bytes_scanned_gb × estimated_monthly_runs. Approximate monthly scan volume the recommendation would replace.
+      - name: score
+        description: avg_bytes_scanned_gb × run_count. Composite ranking signal — higher values indicate more total compute waste from rebuilds in the lookback window.
+
+      # ---------------------------------------------------------------------------
+      # Candidacy
+      # ---------------------------------------------------------------------------
+      - name: is_candidate
+        description: >
+          True when the model meets all of: materialized='table',
+          avg_bytes_scanned_gb >= incremental_candidates_min_avg_bytes_scanned_gb (default 0.1),
+          and run_count >= incremental_candidates_min_run_count (default 3).
+          Drives whether a recommendation is surfaced; models below the thresholds
+          are still scored for transparency.
+      - name: recommendation_reason
+        description: >
+          Human-readable rationale for surfacing the model as a candidate, citing
+          the avg scan volume and run count over the lookback window. Null when
+          is_candidate is false.
+
+      # ---------------------------------------------------------------------------
+      # DML breakdown (lookback window)
+      # ---------------------------------------------------------------------------
+      - name: insert_count
+        description: Count of INSERT statements observed against the underlying table in the lookback window. Sourced from int_databricks__table_query_stats_daily.
+      - name: update_count
+        description: Count of UPDATE statements observed against the underlying table. Drives merge/delete+insert recommendations.
+      - name: delete_count
+        description: Count of DELETE statements observed against the underlying table. Triggers the external-deletes warning in strategy_notes.
+      - name: merge_count
+        description: Count of MERGE statements observed against the underlying table. Drives merge / delete+insert recommendations.
+
+      # ---------------------------------------------------------------------------
+      # Filter column detection (cluster-suggestion inputs)
+      # ---------------------------------------------------------------------------
+      - name: suggested_filter_column
+        description: >
+          Date / timestamp column suggested as the is_incremental() filter, sourced
+          from int_databricks__column_cluster_suggestions. Used to scope
+          delete+insert / append load windows and to populate microbatch event_time.
+      - name: suggested_filter_column_confidence
+        description: Confidence rating from int_databricks__column_cluster_suggestions on the suggested filter column. Pass-through from upstream.
+      - name: filter_column_data_type
+        description: >
+          Data type of the suggested_filter_column (e.g. timestamp, timestamp_ntz,
+          date). Filtered to date/timestamp types in the strategy decision — non-temporal
+          cluster columns are ignored for incremental filter selection.
+
+      # ---------------------------------------------------------------------------
+      # Graph context
+      # ---------------------------------------------------------------------------
+      - name: downstream_model_count
+        description: Number of dbt models that depend on this model. Useful for prioritizing recommendations — converting a high-fanout model to incremental yields larger downstream savings.
+
+      # ---------------------------------------------------------------------------
+      # Strategy recommendation outputs
+      # ---------------------------------------------------------------------------
+      - name: suggested_incremental_strategy
+        description: >
+          Recommended incremental_strategy for the model. One of: merge,
+          delete+insert, microbatch, insert_overwrite, append. May be downgraded
+          to append by the probe_unique_key_candidates() post-hook if no
+          single-column unique key passes the cardinality probe.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['merge', 'delete+insert', 'microbatch', 'insert_overwrite', 'append']
+      - name: suggested_incremental_strategy_confidence
+        description: "Confidence of the strategy recommendation: HIGH (updates/merges observed), MEDIUM (deletes observed without updates), LOW (no DML history or insert-only)."
+      - name: strategy_notes
+        description: >
+          Human-readable rationale for the chosen strategy, including operational
+          warnings (e.g. external deletes will be missed by incremental loads
+          outside the filter window).
+      - name: validate_uniqueness_sql
+        description: >
+          Ready-to-run SQL that verifies whether suggested_unique_key is truly
+          unique on the source table. Re-pointed to likely_unique_key by the
+          post-hook when the probe finds a different confirmed key.
+      - name: incremental_filter_template
+        description: >
+          Copy-pasteable Jinja block (is_incremental() filter) scoped to
+          suggested_filter_column. For microbatch, replaced with a note that
+          microbatch handles filtering via event_time in config.
+      - name: updated_model_config
+        description: >
+          Copy-pasteable dbt config block for the model, parameterized to the
+          recommended strategy and unique_key. The post-hook swaps the
+          unique_key value when the cardinality probe confirms a different
+          column than the name-pattern-ranked suggestion.
+      - name: microbatch_config_template
+        description: >
+          Alternative microbatch config template, populated when the model is
+          merge-suggested but exhibits an append-dominant insert pattern and has
+          a timestamp filter column. Null otherwise.
+
+      # ---------------------------------------------------------------------------
+      # Unique key detection (added with top-N + probe-hook improvements)
+      # ---------------------------------------------------------------------------
+      - name: suggested_unique_key
+        description: >
+          Top-ranked unique key candidate by naming convention (surrogate_key,
+          *_sk, id, *_id, *_key, *_uuid, etc.), excluding timestamp / date /
+          float / double / boolean columns. Uniqueness is NOT verified at this
+          stage — see likely_unique_key for the post-hook-confirmed value.
+      - name: unique_key_candidates
+        description: >
+          Array of the top three name-pattern-ranked unique key candidates, in
+          rank order. Probed by probe_unique_key_candidates() in order; the
+          first column whose approx_count_distinct exceeds the threshold (default
+          0.95 of total_rows) is written to likely_unique_key. Provides fallback
+          options when the top-ranked candidate fails the cardinality check.
+      - name: likely_unique_key
+        description: >
+          Confirmed unique key from the probe_unique_key_candidates() post-hook.
+          Populated only when at least one column in unique_key_candidates passed
+          the cardinality threshold. Null when no single-column key passed — in
+          that case suggested_incremental_strategy is downgraded to append.
+
+      # ---------------------------------------------------------------------------
+      # Boolean flags for downstream filtering
+      # ---------------------------------------------------------------------------
+      - name: has_filter_column
+        description: True when int_databricks__column_cluster_suggestions surfaced a date/timestamp filter column for the table.
+      - name: has_unique_key_candidate
+        description: True when at least one column matched the name-pattern unique key heuristic. Does NOT imply uniqueness was confirmed — see likely_unique_key.
+      - name: has_external_deletes
+        description: True when delete_count > 0 in the lookback window. Signals that incremental loads will miss out-of-window deletes; periodic full-refresh recommended.
+      - name: is_large_table
+        description: True when avg_bytes_scanned per build exceeds incremental_candidates_large_table_gb_threshold (default 10 GB). Triggers delete+insert / microbatch preference over merge / append.

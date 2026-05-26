@@ -51,11 +51,11 @@ The intermediate model extracts `node_id` from this comment using `regexp_extrac
 | `model_runs` | Aggregates run history from `int_databricks__dbt_model_run_history` over the lookback window. |
 | `table_dml_stats` | Sums INSERT/UPDATE/DELETE/MERGE counts from `int_databricks__table_query_stats_daily` to determine update semantics. |
 | `table_clustered` | Looks up whether each table already has a cluster key from `int_table_inventory`. |
-| `unique_key_candidates` / `suggested_unique_keys` | Reads `stg_databricks__columns` and scores column names by pattern (`_id`, `id`, `uuid`, `guid`, `_key`) to suggest a merge unique key. The top-scoring column per table is surfaced as `suggested_unique_key`. |
+| `unique_key_candidates` / `suggested_unique_keys` | Reads `stg_databricks__columns` and scores column names by pattern. Non-key data types (timestamp, date, float, double, boolean) are excluded before scoring. The top-scoring column per table is surfaced as `suggested_unique_key`. |
 | `filter_column_suggestions` | Pulls the top suggested filter/cluster column per table from `int_databricks__column_cluster_suggestions`. |
-| `filter_column_data_types` | Joins `stg_databricks__columns` with the filter column suggestion to retrieve that column's `data_type` — needed to detect microbatch candidates. |
+| `filter_column_data_types` | Joins `stg_databricks__columns` with the filter column suggestion to retrieve that column's `data_type` — needed to detect `delete+insert` candidates and microbatch candidates. |
 | `final` | Joins all of the above, computes scores, flags candidates, and derives `suggested_incremental_strategy`. |
-| `final_with_templates` | Wraps `final` to add four template string columns (`recommendation_reason`, `incremental_filter_template`, `updated_model_config`, `microbatch_config_template`) that produce copy-pasteable dbt code. |
+| `final_with_templates` | Wraps `final` to add six template string columns (`recommendation_reason`, `strategy_notes`, `validate_uniqueness_sql`, `incremental_filter_template`, `updated_model_config`, `microbatch_config_template`) that produce copy-pasteable dbt code. |
 
 ---
 
@@ -129,11 +129,13 @@ vars:
 | `suggested_incremental_strategy_confidence` | `HIGH`, `MEDIUM`, or `LOW` — how confident the suggestion is (see below) |
 | `first_seen` | Earliest run timestamp in the lookback window |
 | `last_seen` | Most recent run timestamp in the lookback window |
-| `suggested_unique_key` | Best candidate column name for use as the `unique_key` in a `merge` strategy. Scored by naming pattern: `_id` suffix (score 9) > `id` exact (8) > `uuid`/`guid` exact (7) > `_uuid`/`_guid`/`_key` suffix (6). `null` if no qualifying column is found. |
+| `suggested_unique_key` | Best candidate column name for use as the `unique_key` in a `merge` strategy. Columns with non-key data types (timestamp, date, float, double, boolean) are excluded before scoring. Scored by naming pattern: `surrogate_key`/`primary_key` exact (score 10) > `_id` suffix (9) > `_sk` suffix (8) > `id` exact (7) > `uuid`/`guid` exact (6) > `_uuid`/`_guid`/`_key` suffix (5). `null` if no qualifying column is found. |
 | `suggested_filter_column` | Best candidate column for the `{% if is_incremental() %}` filter predicate, sourced from `int_databricks__column_cluster_suggestions`. `null` if no suggestion is available. |
 | `suggested_filter_column_confidence` | Confidence level for `suggested_filter_column`, inherited from `int_databricks__column_cluster_suggestions`. |
 | `filter_column_data_type` | Data type of `suggested_filter_column`. Used internally to detect microbatch eligibility; also useful for validating filter syntax. |
 | `recommendation_reason` | Human-readable summary of why this model is a candidate (e.g. "Avg 1.5 GB scanned per run across 14 runs in the last 7 days — incrementalization would reduce compute cost"). `null` for non-candidates. |
+| `strategy_notes` | Human-readable explanation of why the suggested strategy was chosen and what to verify before applying it. Always populated when `is_candidate = true`. |
+| `validate_uniqueness_sql` | Copy-pasteable SQL query to verify that `suggested_unique_key` is actually unique in the target table: `select count(*) = count(distinct <key>) as is_unique from <table_fqn>`. `null` if no unique key was suggested. Run this before using the key in a `merge` config. |
 | `incremental_filter_template` | Copy-pasteable SQL snippet for the `{% if is_incremental() %}` filter block, pre-filled with `suggested_filter_column` and the appropriate predicate for the suggested strategy. |
 | `updated_model_config` | Copy-pasteable `{{ config(...) }}` block with `materialized='incremental'`, `incremental_strategy`, `unique_key` (if applicable), and `on_schema_change='append_new_columns'` pre-filled. |
 | `microbatch_config_template` | Copy-pasteable microbatch `{{ config(...) }}` block. Only populated when: strategy is `merge`, filter column is a timestamp type, and the table is insert-heavy (insert_count > 9× update+merge, or zero updates). `null` otherwise. |
@@ -170,7 +172,8 @@ To approximate this, the model uses **DML type breakdown** from `system.query.hi
 | `update_count > 0` or `merge_count > 0` | `merge` | `HIGH` — rows are definitively mutable; append would lose updates |
 | `delete_count > 0`, no updates or merges | `merge` | `MEDIUM` — deletions require handling; merge covers this safely |
 | Only inserts, table has a partition/cluster column | `insert_overwrite` | `LOW` — pattern suggests partition-aligned writes, but not confirmed |
-| Only inserts, no partition/cluster column | `append` | `LOW` — likely immutable, but cannot be confirmed from system tables alone |
+| Only inserts, no cluster column, filter column is a date/timestamp type | `delete+insert` | `LOW` — partition-range rewrite is cheaper than row-level merge for high-volume tables; requires a reliable filter column to bound the delete window |
+| Only inserts, no cluster column, no timestamp filter column | `append` | `LOW` — likely immutable, but cannot be confirmed from system tables alone |
 | No DML history in lookback window | `merge` | `LOW` — safest default when no signal exists |
 
 ### Confidence levels
@@ -183,9 +186,10 @@ To approximate this, the model uses **DML type breakdown** from `system.query.hi
 
 ### What this cannot tell you
 
-- **Whether `suggested_unique_key` is actually unique.** The model scores columns by name pattern (`_id`, `id`, `uuid`, etc.) but cannot verify uniqueness from system tables. Always run `count(*) vs count(distinct <col>)` before using the suggestion.
+- **Whether `suggested_unique_key` is actually unique.** The model scores columns by name pattern but cannot verify uniqueness from system tables. Use the `validate_uniqueness_sql` column to run a quick check before applying the suggestion.
 - **Whether `append` is truly safe.** Even if no UPDATE statements are observed in the lookback window, out-of-band corrections or delayed reprocessing jobs could invalidate the append assumption. Always confirm with the team that owns the source data.
 - **The right predicate for `insert_overwrite`.** If you use `insert_overwrite`, dbt needs to know which partition(s) to replace. Review the `suggested_cluster_key` in `fct_databricks__liquid_clustering_candidates` for guidance on which column is most commonly filtered.
+- **The right lookback window for `delete+insert`.** The template defaults to `INTERVAL 3 DAYS` as a conservative starting point. The correct window depends on your data's latency and reprocessing patterns — too narrow and late-arriving rows will be missed; too wide and you're scanning more than necessary.
 - **Whether the microbatch template is the right final config.** `microbatch_config_template` is only surfaced when conditions strongly suggest it (timestamp filter column + insert-heavy pattern), but you should verify the `event_time` column truly represents event time and set a realistic `begin` date before using it.
 
 ### Applying the suggestion
@@ -198,9 +202,11 @@ select
     model_name,
     table_fqn,
     recommendation_reason,
+    strategy_notes,
     suggested_incremental_strategy,
     suggested_incremental_strategy_confidence,
     suggested_unique_key,
+    validate_uniqueness_sql,
     suggested_filter_column,
     incremental_filter_template,
     updated_model_config,
