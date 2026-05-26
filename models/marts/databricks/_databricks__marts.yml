@@ -225,3 +225,113 @@ models:
         description: True when delete_count > 0 in the lookback window. Signals that incremental loads will miss out-of-window deletes; periodic full-refresh recommended.
       - name: is_large_table
         description: True when avg_bytes_scanned per build exceeds incremental_candidates_large_table_gb_threshold (default 10 GB). Triggers delete+insert / microbatch preference over merge / append.
+
+  # ===========================================================================
+  # fct_databricks__table_materialization_candidates
+  # ===========================================================================
+  - name: fct_databricks__table_materialization_candidates
+    description: >
+      Daily snapshot of dbt VIEW and EPHEMERAL models on Databricks evaluated
+      as candidates for conversion to TABLE materialization, based on query
+      volume, data scan cost, query duration relative to project average, and
+      view-chain depth.
+
+      Two recommendation paths are evaluated:
+
+        1. View-chain path: any model in a view/ephemeral chain that ultimately
+           feeds a table receives a recommendation when its composite_chain_score
+           is positive. The score combines per-query scan cost, project-relative
+           duration, downstream-table build time, hops-to-table, and number of
+           downstream tables — surfacing views whose recomputation cascades.
+
+        2. Isolated-view path: views not in any chain are recommended when
+           either (a) materialization_score > 500 AND total_gb_scanned > 10, or
+           (b) avg_query_duration_s > 10 AND select_count > 50.
+
+      Query attribution uses ILIKE substring matching against query_text from
+      int_databricks__query_history. Known limitation: view names that are
+      substrings of other identifiers may produce false-positive matches.
+
+      Controlled by the following dbt variables:
+        - table_materialization_lookback_days   (default 14)
+        - table_materialization_min_query_count (default 10)
+    config:
+      materialized: table
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: snapshot_date
+        description: Calendar date of the snapshot.
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      # ---------------------------------------------------------------------------
+      # Model identity
+      # ---------------------------------------------------------------------------
+      - name: table_fqn
+        description: Fully-qualified model identifier in DATABASE.SCHEMA.TABLE format (uppercased).
+      - name: database_name
+        description: Databricks catalog containing the view or ephemeral relation.
+      - name: schema_name
+        description: Databricks schema containing the view or ephemeral relation.
+      - name: table_name
+        description: Name of the view or ephemeral relation.
+      - name: dbt_model
+        description: dbt unique_id of the model.
+      - name: model_name
+        description: dbt model name (file basename, before alias).
+      - name: package_name
+        description: dbt package the model belongs to.
+      - name: materialized
+        description: "Current materialization of the model: 'view' or 'ephemeral'."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['view', 'ephemeral']
+
+      # ---------------------------------------------------------------------------
+      # Query activity (isolated-view scoring inputs)
+      # ---------------------------------------------------------------------------
+      - name: select_count
+        description: Distinct SELECT queries observed against the view in the lookback window.
+      - name: avg_query_duration_s
+        description: Average per-query execution time in seconds across SELECT queries that hit the view.
+      - name: relative_duration_ratio
+        description: This view's avg_query_duration_s divided by the project-wide average across all evaluated views. Normalizes out warehouse-size differences when ranking.
+      - name: total_gb_scanned
+        description: Sum of bytes_scanned across SELECT queries on the view in the lookback window, converted to GB.
+      - name: avg_gb_scanned_per_query
+        description: total_gb_scanned divided by select_count. Used in the composite_chain_score formula.
+      - name: materialization_score
+        description: "select_count × avg_query_duration_s. Primary signal for the isolated-view recommendation path (threshold: > 500 paired with > 10 GB scanned)."
+
+      # ---------------------------------------------------------------------------
+      # View-chain scoring inputs
+      # ---------------------------------------------------------------------------
+      - name: is_in_view_chain
+        description: True when the model has at least one downstream table reachable through a chain of view/ephemeral hops (as identified by int_databricks__view_chains).
+      - name: min_hops_to_table
+        description: Shortest distance, in edges, from this view to any downstream terminal table. Null when not in a view chain.
+      - name: downstream_table_count
+        description: Count of distinct terminal tables reachable from this view through any view/ephemeral chain.
+      - name: downstream_build_time_s
+        description: Average build time (in seconds) of the downstream terminal tables, inferred from CREATE_TABLE_AS / INSERT / MERGE statements in the last 30 days that matched against each downstream table's name.
+      - name: composite_chain_score
+        description: >
+          (greatest(select_count, 1) × avg_gb_scanned_per_query × relative_duration_ratio
+            + downstream_build_time_s) × min_hops_to_table × greatest(downstream_table_count, 1).
+          Any positive value triggers the recommendation for chain members.
+
+      # ---------------------------------------------------------------------------
+      # Recommendation
+      # ---------------------------------------------------------------------------
+      - name: recommendation
+        description: "'Materialize as TABLE' when any of the three recommendation paths fires; 'Monitor' otherwise."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Materialize as TABLE', 'Monitor']
+      - name: recommendation_reason
+        description: Human-readable rationale for the recommendation, citing the specific signal that triggered it (hops + downstream table count, scan volume, or query frequency + duration).

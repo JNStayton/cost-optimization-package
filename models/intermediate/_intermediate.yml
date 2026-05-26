@@ -263,3 +263,73 @@ models:
         description: Total row count of the table at time of scan
       - name: calculated_at
         description: Timestamp when the macro last populated or updated this record
+
+  # ===========================================================================
+  # int_databricks__model_relationships
+  # ===========================================================================
+  - name: int_databricks__model_relationships
+    description: >
+      One row per directed edge in the dbt model graph. Flattens the parent_models
+      and child_models array columns from int_dbt__relations into individual
+      (model_fqn, neighbor_fqn) pairs and joins back to int_dbt__relations to
+      enrich each edge with the neighbor's materialization. Used by
+      int_databricks__view_chains for view-chain analysis, and available for any
+      downstream model that needs to walk parent/child edges.
+    config:
+      materialized: table
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      - name: model_fqn
+        description: Fully-qualified name of the model that owns this edge (DATABASE.SCHEMA.TABLE, uppercased).
+      - name: model_materialized
+        description: Materialization of the model that owns the edge (table, view, ephemeral, incremental, etc.).
+      - name: neighbor_fqn
+        description: Fully-qualified name of the model on the other side of the edge.
+      - name: relationship
+        description: "Direction of the edge from the model_fqn's perspective. One of: 'parent' (neighbor is upstream) or 'child' (neighbor is downstream)."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['parent', 'child']
+      - name: neighbor_materialized
+        description: >
+          Materialization of the neighbor model. May be null if the neighbor is referenced
+          in the dbt graph but not present in int_dbt__relations (e.g. a disabled model).
+
+  # ===========================================================================
+  # int_databricks__view_chains
+  # ===========================================================================
+  - name: int_databricks__view_chains
+    description: >
+      For each view or ephemeral model, identifies all downstream tables reachable
+      through chains of intermediate views/ephemerals. Uses a recursive CTE that
+      walks the dbt graph from each view, following only view/ephemeral edges and
+      stopping at the first table encountered on each path. Output captures
+      min_hops_to_table (the shortest distance to any downstream table, handling
+      diamond DAGs) and downstream_table_count (distinct terminal tables reachable).
+
+      Consumed by fct_databricks__table_materialization_candidates to compute the
+      composite_chain_score that surfaces views whose recomputation is cascading
+      through downstream view chains.
+    config:
+      materialized: table
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      - name: model_fqn
+        description: Fully-qualified name of the view or ephemeral model (DATABASE.SCHEMA.TABLE, uppercased).
+        tests:
+          - not_null
+      - name: downstream_table_count
+        description: >
+          Distinct count of terminal tables reachable from this view through any chain of
+          view/ephemeral hops. Higher values indicate the view's recomputation cost cascades
+          across more downstream rebuilds.
+      - name: downstream_table_fqns
+        description: >
+          Array of fully-qualified names for each terminal table reachable from this view.
+          Used by the downstream-build-time aggregation in fct_databricks__table_materialization_candidates.
+      - name: min_hops_to_table
+        description: >
+          Shortest path length from this view to any reachable terminal table, in number of
+          edges. A value of 1 means the view feeds directly into a table; higher values
+          indicate the view sits behind one or more intermediate views/ephemerals.
