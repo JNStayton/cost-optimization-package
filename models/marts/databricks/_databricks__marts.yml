@@ -335,3 +335,175 @@ models:
                 values: ['Materialize as TABLE', 'Monitor']
       - name: recommendation_reason
         description: Human-readable rationale for the recommendation, citing the specific signal that triggered it (hops + downstream table count, scan volume, or query frequency + duration).
+
+  # ===========================================================================
+  # fct_databricks__snapshot_optimization_candidates
+  # ===========================================================================
+  - name: fct_databricks__snapshot_optimization_candidates
+    description: >
+      Daily snapshot of dbt SNAPSHOT-resource models on Databricks evaluated for
+      optimization opportunities. Surfaces three classes of recommendation:
+
+        1. Pause snapshot       — snapshot has run repeatedly but no new SCD-2
+                                  versions were added in the lookback window.
+        2. Reduce run frequency — productive_run_pct is low and total scan cost
+                                  is non-trivial; running less often would cut
+                                  compute without sacrificing change capture.
+        3. Switch to timestamp  — snapshot uses 'check' strategy but its source
+                                  table has a column matching common updated_at
+                                  naming patterns; timestamp strategy avoids the
+                                  per-column comparison cost.
+
+      Pulls snapshot configs from int_dbt__snapshots, run history from
+      stg_databricks__query_history (parsed by node_id from dbt-attributed
+      statements), and change activity from int_databricks__table_query_stats_daily.
+      For Tier 2 strategy fit, joins to stg_databricks__columns against the
+      snapshot's primary parent FQN to detect updated_at-like columns.
+
+      Controlled by the following dbt variables:
+        - snapshot_candidates_lookback_days              (default 30)
+        - snapshot_candidates_min_run_count              (default 3)
+        - snapshot_candidates_min_runs_for_pause         (default 14)
+        - snapshot_candidates_low_productivity_threshold (default 0.25)
+    config:
+      materialized: incremental
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: snapshot_date
+        description: Calendar date of the snapshot. Combined with dbt_snapshot to form the merge key.
+        tests:
+          - not_null
+      - name: snapshot_optimization_snapshot_key
+        description: >
+          Surrogate key for the snapshot row. Derived from md5(snapshot_date || dbt_snapshot).
+          Used as the merge key for the incremental materialization — one record per
+          snapshot per day.
+        tests:
+          - not_null
+          - unique
+
+      # ---------------------------------------------------------------------------
+      # Snapshot identity
+      # ---------------------------------------------------------------------------
+      - name: dbt_snapshot
+        description: dbt unique_id of the snapshot node.
+      - name: snapshot_name
+        description: Snapshot name as defined in the dbt project.
+      - name: package_name
+        description: dbt package containing the snapshot.
+      - name: table_fqn
+        description: Fully-qualified snapshot identifier in CATALOG.SCHEMA.TABLE format (uppercased).
+      - name: database_name
+        description: Catalog hosting the snapshot table.
+      - name: schema_name
+        description: Schema hosting the snapshot table.
+      - name: table_name
+        description: Name of the snapshot table.
+
+      # ---------------------------------------------------------------------------
+      # dbt config (pass-through from int_dbt__snapshots)
+      # ---------------------------------------------------------------------------
+      - name: strategy
+        description: "Snapshot strategy: 'timestamp' or 'check'."
+      - name: updated_at
+        description: Column used by the timestamp strategy. Empty when strategy = 'check'.
+      - name: check_cols
+        description: Array of columns compared by the check strategy. Empty when strategy = 'timestamp'.
+      - name: unique_key
+        description: Configured unique key, joined with commas if composite.
+      - name: invalidate_hard_deletes
+        description: Whether the snapshot closes valid_to on rows missing from the source.
+      - name: downstream_model_count
+        description: Number of downstream models/snapshots that depend on this snapshot — useful for prioritization.
+
+      # ---------------------------------------------------------------------------
+      # Run history (lookback window)
+      # ---------------------------------------------------------------------------
+      - name: run_count
+        description: Total snapshot runs observed in the lookback window (default 30 days).
+      - name: total_bytes_scanned_gb
+        description: Sum of bytes scanned across all runs in the lookback window, converted to GB.
+      - name: avg_bytes_scanned_per_run_gb
+        description: Average bytes scanned per run in the lookback window, converted to GB.
+      - name: avg_execution_time_per_run_s
+        description: Average run duration in seconds across the lookback window.
+      - name: first_run_date
+        description: Date of the earliest snapshot run observed in the lookback window.
+      - name: last_run_date
+        description: Date of the most recent snapshot run observed in the lookback window.
+
+      # ---------------------------------------------------------------------------
+      # Change activity (DML on the snapshot table)
+      # ---------------------------------------------------------------------------
+      - name: total_new_versions
+        description: >
+          Total INSERTs against the snapshot table in the lookback window. For a
+          snapshot, INSERTs correspond to new SCD-2 versions (either net-new
+          records or new versions of changed records).
+      - name: total_supersedes
+        description: >
+          Total UPDATEs against the snapshot table — the number of valid_to writes
+          when prior versions are superseded by new ones.
+      - name: total_deletes
+        description: Total DELETEs against the snapshot table. Should be zero under normal snapshot operation; non-zero values suggest manual intervention.
+
+      # ---------------------------------------------------------------------------
+      # Productivity metrics
+      # ---------------------------------------------------------------------------
+      - name: total_run_days
+        description: Distinct calendar dates within the lookback window on which the snapshot ran at least once.
+      - name: productive_run_days
+        description: >
+          Distinct run-dates on which the snapshot table received at least one INSERT.
+          A run-day is "productive" when change capture actually added new versions.
+      - name: productive_run_pct
+        description: >
+          productive_run_days / total_run_days, as a decimal (0.0–1.0). Headline
+          metric for the over-frequency recommendation — values below the
+          snapshot_candidates_low_productivity_threshold (default 0.25) trigger
+          a 'Reduce run frequency' recommendation.
+      - name: mb_scanned_per_new_version
+        description: >
+          total_bytes_scanned (in MB) / total_new_versions. Quantifies the scan
+          cost per new SCD-2 version captured. High values indicate the snapshot
+          is doing a lot of work for very little change capture.
+
+      # ---------------------------------------------------------------------------
+      # Strategy fit (Tier 2)
+      # ---------------------------------------------------------------------------
+      - name: source_has_updated_at
+        description: >
+          True when the snapshot's primary parent (first FQN in parent_models)
+          has a column matching common updated_at naming patterns
+          (updated_at, modified_at, loaded_at, synced_at, etc.) of timestamp or
+          date type.
+      - name: suggested_updated_at_column
+        description: >
+          Top-ranked candidate column on the source table that could power a
+          timestamp strategy. Ranking prefers explicit updated_at / modified_at
+          names over loaded_at / ingested_at over event-time-style columns.
+      - name: could_switch_to_timestamp
+        description: True when strategy = 'check' AND source_has_updated_at is true. Drives the 'Switch to timestamp strategy' recommendation.
+
+      # ---------------------------------------------------------------------------
+      # Recommendation
+      # ---------------------------------------------------------------------------
+      - name: recommendation
+        description: "One of: 'Pause snapshot', 'Reduce run frequency', 'Switch to timestamp strategy', 'No runs in lookback window', 'Healthy'."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Pause snapshot', 'Reduce run frequency', 'Switch to timestamp strategy', 'No runs in lookback window', 'Healthy']
+      - name: recommendation_reason
+        description: Human-readable rationale, citing the specific metrics that triggered the recommendation (run count, productive_run_pct, scan totals, MB per new version, or source updated_at column name).
+      - name: estimated_monthly_savings_gb
+        description: >
+          Approximate GB of scan that could be eliminated per month if the
+          recommendation is implemented. Null when no recommendation applies.
+          For 'Pause snapshot': scales total scan to a 30-day month. For
+          'Reduce run frequency': scales (total scan × (1 - productive_run_pct))
+          to a 30-day month — i.e. the share of scan attributable to unproductive
+          runs.

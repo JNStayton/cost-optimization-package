@@ -54,6 +54,69 @@ models:
         description: Fully-qualified relation name (database.schema.table)
 
   # ===========================================================================
+  # int_dbt__snapshots
+  # ===========================================================================
+  - name: int_dbt__snapshots
+    description: >
+      Vendor-neutral graph metadata for dbt snapshot nodes. Mirrors the shape of
+      int_dbt__relations but exposes snapshot-specific config (strategy, check_cols,
+      updated_at, unique_key, invalidate_hard_deletes) plus parent and child FQN
+      arrays. Compiled from the dbt manifest at parse time — does not require a
+      warehouse round-trip.
+    config:
+      materialized: table
+    columns:
+      - name: platform
+        description: Active adapter platform (snowflake, bigquery, redshift, databricks).
+      - name: database_name
+        description: Database / catalog where the snapshot table lives (uppercased).
+      - name: schema_name
+        description: Schema where the snapshot table lives (uppercased).
+      - name: table_name
+        description: Snapshot relation identifier (alias if present, otherwise the snapshot name) — uppercased.
+      - name: table_fqn
+        description: Fully-qualified snapshot identifier in DATABASE.SCHEMA.TABLE format (uppercased).
+      - name: dbt_snapshot
+        description: dbt unique_id for the snapshot node (e.g. snapshot.my_project.orders_snapshot).
+        tests:
+          - not_null
+          - unique
+      - name: snapshot_name
+        description: Snapshot file name (before alias resolution).
+      - name: alias
+        description: Configured dbt alias used for the relation name.
+      - name: package_name
+        description: dbt package where the snapshot is defined.
+      - name: strategy
+        description: "Snapshot strategy as configured. One of: 'timestamp' or 'check'."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['timestamp', 'check']
+      - name: updated_at
+        description: >
+          Column used by the timestamp strategy to detect changes. Empty string
+          when the snapshot uses the check strategy.
+      - name: check_cols
+        description: >
+          Array of columns compared by the check strategy. Contains the single
+          element 'all' when the snapshot was configured with the sentinel value
+          to compare every column. Empty array when the snapshot uses the
+          timestamp strategy.
+      - name: unique_key
+        description: >
+          Configured unique key. Composite keys (list values in dbt config) are
+          joined with commas into a single string.
+      - name: invalidate_hard_deletes
+        description: Boolean flag from the snapshot config. When true, dbt closes valid_to on rows missing from the source.
+      - name: parent_models
+        description: Array of fully-qualified names for each upstream dependency (sources, models, seeds).
+      - name: child_models
+        description: Array of fully-qualified names for each downstream model or snapshot that refs this snapshot.
+      - name: downstream_model_count
+        description: Count of downstream nodes that depend on this snapshot. Useful for prioritizing optimization work on snapshots with broader blast radius.
+
+  # ===========================================================================
   # int_snowflake__table_inventory
   # ===========================================================================
   - name: int_snowflake__table_inventory
