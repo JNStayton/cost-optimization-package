@@ -1,4 +1,4 @@
-{% macro suggest_clustering_keys(model_name, preview_only=true) %}
+{% macro suggest_clustering_keys(model_name, include_boolean_cols=false, preview_only=true) %}
 
   {#--
     Orchestrates all macros to suggest a clustering key for a given model.
@@ -11,8 +11,19 @@
     4. Prints the top 3 recommendations.
     5. [TODO] Creates/updates a model with the information.
 
+    Args:
+      model_name: name of the dbt model to analyze (ref-able).
+      include_boolean_cols (default false): when true, lowers the cardinality
+        floor from > 10 distinct values to >= 2 so booleans and small enums are
+        considered as candidates. Useful when query patterns are dominated by
+        filters on small categorical columns or flag columns.
+      preview_only (default true): print to log without persisting.
+
     How to run:
     dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name}'
+
+    With low-cardinality columns included:
+    dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name, include_boolean_cols: true}'
   --#}
 
   {% if execute %}
@@ -21,7 +32,7 @@
 
     {{ log("--- Step 1: Analyzing column cardinality for '" ~ model_relation ~ "' ---", info=true) }}
 
-    {% set cardinality_results = get_clustering_cardinality_stats(model_relation) %}
+    {% set cardinality_results = get_clustering_cardinality_stats(model_relation, include_boolean_cols=include_boolean_cols) %}
 
     {% if not cardinality_results or cardinality_results | length == 0 %}
       {{ log("Could not generate any cardinality suggestions. All columns may have very low (<10) or very high (unique) cardinality.", warning=true) }}
@@ -80,11 +91,15 @@
 
 
 
-{% macro get_clustering_cardinality_stats(model_relation) %}
+{% macro get_clustering_cardinality_stats(model_relation, include_boolean_cols=false) %}
   {#--
     Queries the given relation to get cardinality statistics for each column.
     Filters out columns that are poor clustering candidates (e.g., unique keys
     or very low cardinality keys).
+
+    When include_boolean_cols=true, the cardinality floor drops from > 10 to >= 2,
+    allowing booleans and small enums through. Default behavior excludes those
+    since they often produce too-coarse pruning on average workloads.
 
     Returns an Agate table with:
     - column_name
@@ -114,7 +129,11 @@
     from column_stats cs
     cross join table_stats ts
     where cs.distinct_values < ts.total_rows -- Exclude unique keys
+      {% if include_boolean_cols %}
+      and cs.distinct_values >= 2 -- Include boolean and small-enum columns (include_boolean_cols=true)
+      {% else %}
       and cs.distinct_values > 10 -- Exclude very low cardinality columns
+      {% endif %}
     order by distinct_values desc
   {% endset %}
 
