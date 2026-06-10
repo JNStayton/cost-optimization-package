@@ -100,7 +100,7 @@
 
                 {% set actual_partitions = avg_total_parts | int %}
                 {% if actual_partitions == 0 %}
-                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | int %}
+                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
                 {% endif %}
 
                 {# --- 4. V3 Scoring --- #}
@@ -131,16 +131,17 @@
                 {% endif %}
 
                 {# Avg rows per partition #}
-                {% set total_rows = row['ROW_COUNT'] | int %}
+                {% set total_rows = row['ROW_COUNT'] | string | int %}
                 {% set avg_rows_per_partition = 0 %}
                 {% if actual_partitions > 0 %}
                     {% set avg_rows_per_partition = total_rows / actual_partitions %}
                 {% endif %}
 
                 {# Recommendation reason #}
+                {% set _scan_pct = (scan_ratio * 100) | int %}
                 {% set reason = '' %}
                 {% if is_candidate %}
-                    {% set reason = 'Queries scan ' ~ (scan_ratio * 100) | round(0) ~ '% of ' ~ actual_partitions ~ ' micropartitions. ' ~ select_count ~ ' reads at ' ~ avg_exec_sec | round(1) ~ 's avg. Ratio: ' ~ query_ratio | round(1) ~ ':1. Clustering on filtered columns would reduce scan overhead.' %}
+                    {% set reason = 'Queries scan ' ~ _scan_pct ~ '% of ' ~ actual_partitions ~ ' micropartitions. ' ~ select_count ~ ' reads at ' ~ avg_exec_sec ~ 's avg. Ratio: ' ~ query_ratio ~ ':1. Clustering on filtered columns would reduce scan overhead.' %}
                 {% elif select_count == 0 %}
                     {% set reason = 'No read activity in lookback window.' %}
                 {% elif query_ratio <= 1 %}
@@ -161,14 +162,14 @@
                         "size_gb": row["SIZE_GB"],
                         "row_count": total_rows,
                         "micropartitions": actual_partitions,
-                        "avg_rows_per_partition": avg_rows_per_partition | round(2),
+                        "avg_rows_per_partition": avg_rows_per_partition,
                         "avg_partitions_scanned": avg_scanned,
-                        "scan_ratio_pct": (scan_ratio * 100) | round(1),
+                        "scan_ratio_pct": (scan_ratio * 100),
                         "select_count": select_count,
                         "dml_count": dml_count,
-                        "query_ratio": query_ratio | round(2),
-                        "avg_exec_sec": avg_exec_sec | round(2),
-                        "read_boost": read_boost | round(2),
+                        "query_ratio": query_ratio,
+                        "avg_exec_sec": avg_exec_sec,
+                        "read_boost": read_boost,
                         "reason": reason,
                     }
                 ) %}
@@ -178,7 +179,8 @@
 
         {% if preview_only %}
         {# --- 5. Output Results --- #}
-        {% set sorted_candidates = candidates | sort(attribute="score", reverse=true) %}
+        {# SQL already orders by score desc — preserve that order #}
+        {% set sorted_candidates = candidates %}
 
         {{ log("\n--- Top 10 Clustering Candidates ---", info=true) }}
         {% for c in sorted_candidates %}

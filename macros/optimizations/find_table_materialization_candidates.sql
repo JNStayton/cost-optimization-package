@@ -118,9 +118,9 @@
             'fqn': fqn_key,
             'dbt_materialization': current_materialization,
             'total_queries': row["TOTAL_QUERIES_LAST_" ~ lookback_days ~ "_DAYS"],
-            'avg_elapsed_sec': (row["AVG_ELAPSED_SECONDS"] | round(2)),
-            'total_gb_scanned': (row["TOTAL_GB_SCANNED"] | round(2)),
-            'materialization_score': (row["MATERIALIZATION_SCORE"] | round(0)),
+            'avg_elapsed_sec': row["AVG_ELAPSED_SECONDS"],
+            'total_gb_scanned': row["TOTAL_GB_SCANNED"],
+            'materialization_score': row["MATERIALIZATION_SCORE"],
             'recommendation': recommendation,
             'recommendation_reason': recommendation_reason
         }) %}
@@ -128,7 +128,8 @@
     {% endfor %}
 
     {# --- results --- #}
-    {% set sorted_candidates = candidates | sort(attribute="materialization_score", reverse=true) %}
+    {# SQL already orders by materialization_score desc — preserve that order #}
+    {% set sorted_candidates = candidates %}
 
     {{ log("\n--- Top VIEWS that should be materialized as TABLEs ---", info=true) }}
     {{ log("-----------------------------------------------------------------------", info=true) }}

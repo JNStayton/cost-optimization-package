@@ -76,7 +76,7 @@
         {% endset %}
 
         {% set probe_result = run_query(probe_sql) %}
-        {% set total_rows = probe_result.rows[0][0] | int %}
+        {% set total_rows = probe_result.rows[0][0] | string | int %}
 
         {# Walk candidates in rank order; stop at the first likely-unique column.
            namespace() is required to mutate a variable inside a Jinja for loop. #}
@@ -84,7 +84,7 @@
 
         {% for col in candidate_cols %}
           {% if ns.confirmed_key is none %}
-            {% set approx_distinct = probe_result.rows[0][loop.index] | int %}
+            {% set approx_distinct = probe_result.rows[0][loop.index] | string | int %}
             {% if total_rows > 0 and (approx_distinct / total_rows) >= threshold %}
               {% set ns.confirmed_key = col | lower %}
             {% endif %}

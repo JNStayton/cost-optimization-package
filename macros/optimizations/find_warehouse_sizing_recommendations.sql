@@ -165,8 +165,8 @@
         {% endfor %}
 
         {# warns first, then by total dbt queries desc within each severity bucket #}
-        {% set warns = recommendations | selectattr('severity', 'equalto', 'warn') | list | sort(attribute='total_queries', reverse=true) %}
-        {% set infos = recommendations | selectattr('severity', 'equalto', 'info') | list | sort(attribute='total_queries', reverse=true) %}
+        {% set warns = recommendations | selectattr('severity', 'equalto', 'warn') | list %}
+        {% set infos = recommendations | selectattr('severity', 'equalto', 'info') | list %}
         {% set sorted_recs = warns + infos %}
 
         {{ log("--- Recommendations ---", info=true) }}

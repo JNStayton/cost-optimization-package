@@ -96,7 +96,7 @@
 
                 {% set actual_partitions = avg_total_parts | int %}
                 {% if actual_partitions == 0 %}
-                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | int %}
+                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
                 {% endif %}
 
                 {# --- 4. Scoring & Logic --- #}
@@ -118,7 +118,7 @@
                 {% endif %}
 
                 {# Calculate Avg Rows Per Parition #}
-                {% set total_rows = row['ROW_COUNT'] | int %}
+                {% set total_rows = row['ROW_COUNT'] | string | int %}
                 {% set avg_rows_per_partition = 0 %}
                 {% if actual_partitions > 0 %}
                     {% set avg_rows_per_partition = total_rows / actual_partitions %}
@@ -153,11 +153,11 @@
                         "size_gb": row["SIZE_GB"],
                         'row_count': total_rows,
                         "micropartitions": actual_partitions,
-                        "avg_rows_per_partition": avg_rows_per_partition | round(2),
+                        "avg_rows_per_partition": avg_rows_per_partition,
                         "avg_partitions_scanned": avg_scanned,
                         "select_count": select_count,
                         "dml_count": dml_count,
-                        "avg_exec_sec": (avg_exec_ms / 1000) | round(2),
+                        "avg_exec_sec": (avg_exec_ms / 1000),
                     }
                 ) %}
             
@@ -167,7 +167,8 @@
 
         {% if preview_only %}
         {# --- 5. Output Results --- #}
-        {% set sorted_candidates = candidates | sort(attribute="score", reverse=true) %}
+        {# SQL already orders by score desc — preserve that order #}
+        {% set sorted_candidates = candidates %}
 
         {{ log("\n--- Top 10 Clustering Candidates ---", info=true) }}
         {% for c in sorted_candidates %}
@@ -182,7 +183,7 @@
                 {{ log("Current Micropartitions: " ~ c.micropartitions, info=true) }}
                 {{ log("Average Rows per Micropartition: " ~ c.avg_rows_per_partition, info=true)}}
                 {{log("Average Partitions Scanned: " ~ c.avg_partitions_scanned, info=true) }}
-                {{log("Usage: " ~ c.select_count ~ " SELECTs | " ~ c.dml_count ~ " DMLs (Ratio: " ~ (c.select_count / (c.dml_count + 1)) | round(1) ~ ")", info=true) }}
+                {{log("Usage: " ~ c.select_count ~ " SELECTs | " ~ c.dml_count ~ " DMLs (Ratio: " ~ (c.select_count / (c.dml_count + 1)) ~ ")", info=true) }}
                 {{ log("Average Query Duration: " ~ c.avg_exec_sec ~ "s", info=true) }}
                 {% if c.is_candidate and c.dbt_model %}
                     {{ log("Next step: run `dbt run-operation suggest_clustering_keys --args '{model_name: <your_model_name>}'` for column-level clustering key recommendations.", info=true) }}

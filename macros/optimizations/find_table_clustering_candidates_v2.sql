@@ -109,7 +109,7 @@
 
                 {% set actual_partitions = avg_total_parts | int %}
                 {% if actual_partitions == 0 %}
-                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | int %}
+                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
                 {% endif %}
 
                 {# --- 4. v2 Scoring & Candidacy --- #}
@@ -126,7 +126,7 @@
                     {% endif %}
                 {% endif %}
 
-                {% set total_rows = row['ROW_COUNT'] | int %}
+                {% set total_rows = row['ROW_COUNT'] | string | int %}
                 {% set avg_rows_per_partition = 0 %}
                 {% if actual_partitions > 0 %}
                     {% set avg_rows_per_partition = total_rows / actual_partitions %}
@@ -148,13 +148,13 @@
                         "size_gb": row["SIZE_GB"],
                         'row_count': total_rows,
                         "micropartitions": actual_partitions,
-                        "avg_rows_per_partition": avg_rows_per_partition | round(2),
+                        "avg_rows_per_partition": avg_rows_per_partition,
                         "avg_partitions_scanned": avg_scanned,
-                        "partition_ratio_pct": partition_ratio_pct | round(4),
+                        "partition_ratio_pct": partition_ratio_pct,
                         "select_count": select_count,
                         "dml_count": dml_count,
-                        "query_ratio": query_ratio | round(2),
-                        "avg_exec_sec": (avg_exec_ms / 1000) | round(2),
+                        "query_ratio": query_ratio,
+                        "avg_exec_sec": (avg_exec_ms / 1000),
                     }
                 ) %}
 
@@ -164,7 +164,8 @@
 
         {% if preview_only %}
         {# --- 5. Output Results --- #}
-        {% set sorted_candidates = candidates | sort(attribute="score", reverse=true) %}
+        {# SQL already orders by score desc — preserve that order #}
+        {% set sorted_candidates = candidates %}
 
         {{ log("\n--- Top 10 Clustering Candidates (v2) ---", info=true) }}
         {% for c in sorted_candidates %}

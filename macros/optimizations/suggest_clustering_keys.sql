@@ -39,7 +39,7 @@
       {{ return('') }}
     {% endif %}
 
-    {% set total_rows = cardinality_results[0]['TOTAL_ROWS'] | int %}
+    {% set total_rows = cardinality_results[0]['TOTAL_ROWS'] | string | int %}
     {{ log(model_relation ~ " has a total row count of " ~ total_rows, info=true )}}
     {{ log("--- Step 2: Analyzing column usage from Snowflake's query history (last 7 days) ---", info=true) }}
 
@@ -74,7 +74,7 @@
 
     {% for rec in sorted_recommendations %}
       {% if loop.index <= 3 %}
-        {{ log("  - Candidate " ~ loop.index ~ ": " ~ rec.column_name ~ " (Score: " ~ (rec.score | round(2)) ~ ", Distinct: " ~ rec.distinct_values ~ ", Uses: " ~ rec.usage_count ~ ")", info=true) }}
+        {{ log("  - Candidate " ~ loop.index ~ ": " ~ rec.column_name ~ " (Score: " ~ rec.score ~ ", Distinct: " ~ rec.distinct_values ~ ", Uses: " ~ rec.usage_count ~ ")", info=true) }}
       {% endif %}
     {% endfor %}
 
@@ -170,7 +170,7 @@
 
   {% set usage_count = usage_results.columns[0].values()[0] if usage_results else 0 %}
 
-  {{ return(usage_count | int) }}
+  {{ return(usage_count | string | int) }}
 
 {% endmacro %}
 
@@ -182,9 +182,9 @@
     Gives a heavy weighting to columns that are actually used in queries.
   --#}
   {% set recommendation_score = 0 %}
-  {% set avg_rows = avg_rows | float %}
-  {% set total_rows = total_rows | float %}
-  {% set usage_count = usage_count | int %}
+  {% set avg_rows = avg_rows | string | float %}
+  {% set total_rows = total_rows | string | float %}
+  {% set usage_count = usage_count | string | int %}
 
   {% if total_rows > 0 %}
       {# Calculate cardinality score as a percentage of total rows #}
