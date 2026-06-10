@@ -50,9 +50,32 @@ models:
         warehouse:
           +enabled: "{{ target.type == 'snowflake' }}"
           +tags: ['warehouse']
+        ai:
+          +enabled: "{{ target.type == 'snowflake' }}"
+          +tags: ['ai_spend']
       bigquery:
         +enabled: "{{ target.type == 'bigquery' }}"
       databricks:
         +enabled: "{{ target.type == 'databricks' }}"
       redshift:
         +enabled: "{{ target.type == 'redshift' }}"
+
+# Package variables — override in consuming project's dbt_project.yml
+vars:
+  # --- Snowflake: Warehouse optimization ---
+  use_access_history_attribution: true
+  use_query_attribution: true
+  table_query_stats_full_account: false
+
+  # --- Snowflake: AI/Cortex spend optimization ---
+  ai_spend_lookback_days: 30
+  ai_spend_initial_lookback_days: 30
+  ai_credit_rate_usd: 2
+  ai_model_downgrade_output_token_threshold: 100
+  ai_prompt_bloat_input_token_threshold: 10000
+  ai_batch_opportunity_min_daily_calls: 100
+  ai_user_spike_threshold_pct: 200
+  ai_user_concentration_threshold_pct: 50
+  ai_min_credits_for_recommendation: 1
+  ai_min_queries_for_recommendation: 10
+  ai_rest_api_enabled: true

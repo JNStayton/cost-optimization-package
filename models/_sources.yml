@@ -15,6 +15,13 @@ sources:
       - name: table_storage_metrics
       - name: views
       - name: warehouse_metering_history
+      - name: query_attribution_history
+      - name: metering_history
+      - name: cortex_ai_functions_usage_history
+      - name: cortex_agent_usage_history
+      - name: cortex_search_serving_usage_history
+      - name: cortex_rest_api_usage_history
+      - name: users
 
   - name: redshift_usage
     database: "{{ target.database }}" 
