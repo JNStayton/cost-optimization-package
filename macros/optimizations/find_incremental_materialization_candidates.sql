@@ -185,22 +185,37 @@
     {{ log("\n--- Top TABLEs that should be materialized as INCREMENTAL ---", info=true) }}
     {{ log("-----------------------------------------------------------------------", info=true) }}
 
-    {% for c in sorted_candidates %}
+    {% set table_candidates = sorted_candidates | selectattr('dbt_materialization', 'equalto', 'table') | list %}
+
+    {% if table_candidates | length == 0 %}
+        {{ log("No active recommendations for this project.", info=true) }}
+        {{ log("", info=true) }}
+        {{ log("This means no dbt TABLE models in the current project exceeded the", info=true) }}
+        {{ log("build-time threshold (" ~ max_build_time_sec ~ "s) on tables >= " ~ min_table_size_gb ~ " GB", info=true) }}
+        {{ log("in the last " ~ lookback_days ~ " days.", info=true) }}
+        {{ log("", info=true) }}
+        {{ log("Suggestions:", info=true) }}
+        {{ log("  - Try extending lookback_days (e.g., --args '{lookback_days: 60}')", info=true) }}
+        {{ log("  - Try lowering min_table_size_gb (e.g., --args '{min_table_size_gb: 1}')", info=true) }}
+        {{ log("  - Try lowering max_build_time_sec (e.g., --args '{max_build_time_sec: 10}')", info=true) }}
+    {% else %}
+
+    {% for c in table_candidates %}
         {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
 
-        {% if c.dbt_materialization == 'table' or not preview_only %}
-            {{ log("[" ~ c.priority ~ "] Model: " ~ c.fqn, info=true) }}
-            {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}
-            {{ log("  - Table Size: " ~ c.size_gb ~ " GB", info=true) }}
-            {{ log("  - Avg Build Time: " ~ c.avg_build_time_sec ~ "s (Max: " ~ c.max_build_time_sec ~ "s, Slow Runs: " ~ c.total_slow_runs ~ ")", info=true) }}
-            {{ log("  - Recommendation: " ~ c.recommendation, info=true) }}
-            {% if c.recommendation == 'Materialize as INCREMENTAL' %}
-                {{ log("  - Suggested Key(s) to Test: " ~ c.suitable_keys, info=true) }}
-                {{ log("  - Tip: run the materialization-analysis DAG for full incremental strategy + key recommendations and template code.", info=true) }}
-            {% endif %}
-            {{ log("---", info=true) }}
+        {{ log("[" ~ c.priority ~ "] Model: " ~ c.fqn, info=true) }}
+        {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}
+        {{ log("  - Table Size: " ~ c.size_gb ~ " GB", info=true) }}
+        {{ log("  - Avg Build Time: " ~ c.avg_build_time_sec ~ "s (Max: " ~ c.max_build_time_sec ~ "s, Slow Runs: " ~ c.total_slow_runs ~ ")", info=true) }}
+        {{ log("  - Recommendation: " ~ c.recommendation, info=true) }}
+        {% if c.recommendation == 'Materialize as INCREMENTAL' %}
+            {{ log("  - Suggested Key(s) to Test: " ~ c.suitable_keys, info=true) }}
+            {{ log("  - Tip: run the materialization-analysis DAG for full incremental strategy + key recommendations and template code.", info=true) }}
         {% endif %}
+        {{ log("---", info=true) }}
     {% endfor %}
+
+    {% endif %}
 
   {% endif %}
 
