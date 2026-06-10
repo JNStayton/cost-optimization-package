@@ -108,6 +108,7 @@
         {% set sc = row["SCHEMA_NAME"] %}
         {% set tb = row["TABLE_NAME"] %}
         {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
+        {{ log("DEBUG loop: " ~ fqn_key ~ " | max_build=" ~ row["MAX_BUILD_TIME_SEC"] ~ " | avg_build=" ~ row["AVG_BUILD_TIME_SEC"] ~ " | size=" ~ row["SIZE_GB"], info=true) }}
         
         {# check dbt materialization #}
         {% set model_node = none %}
@@ -138,6 +139,7 @@
             {% endset %}
 
             {% set key_results = run_query(column_check_sql) %}
+            {{ log("DEBUG keys query returned for " ~ fqn_key, info=true) }}
             {% set suitable_keys = key_results.columns[0].values()[0] if key_results.columns[0].values() else none %}
 
             {% if suitable_keys %}
@@ -154,7 +156,7 @@
         {% endif %}
 
 
-        {{ log("DEBUG " ~ fqn_key ~ " | max_build=" ~ row["MAX_BUILD_TIME_SEC"] ~ " (type: " ~ row["MAX_BUILD_TIME_SEC"].__class__.__name__ ~ ") | avg_build=" ~ row["AVG_BUILD_TIME_SEC"] ~ " (type: " ~ row["AVG_BUILD_TIME_SEC"].__class__.__name__ ~ ") | size_gb=" ~ row["SIZE_GB"], info=true) }}
+        {{ log("DEBUG pre-append: " ~ fqn_key ~ " | recommendation=" ~ recommendation, info=true) }}
 
         {% do candidates.append({
             'fqn': fqn_key,
