@@ -147,15 +147,18 @@
 
             {% set fqn_key = database_name ~ "." ~ schema_name ~ "." ~ table_name %}
 
-            {# attach dbt graph node so we can surface current materialization #}
+{# attach dbt graph node so we can surface current materialization #}
             {% set model_node = none %}
             {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
-                {% if node.relation_name %}
-                    {% set node_relation = node.relation_name | replace('"', '') %}
-                    {% if node_relation | upper == fqn_key | upper %}
-                        {% set model_node = node %}
-                        {% break %}
-                    {% endif %}
+                {% set node_identifier = node.alias if node.alias else node.name %}
+                {% if node.database
+                      and node.schema
+                      and node_identifier
+                      and node.database | upper == database_name | upper
+                      and node.schema | upper == schema_name | upper
+                      and node_identifier | upper == table_name | upper %}
+                    {% set model_node = node %}
+                    {% break %}
                 {% endif %}
             {% endfor %}
 
