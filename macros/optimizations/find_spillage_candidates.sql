@@ -147,16 +147,33 @@
 
             {% set fqn_key = database_name ~ "." ~ schema_name ~ "." ~ table_name %}
 
-{# attach dbt graph node so we can surface current materialization #}
+            {# attach dbt graph node so we can surface current materialization #}
             {% set model_node = none %}
+            {{ log("DEBUG target fqn: " ~ fqn_key, info=true) }}
             {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
                 {% set node_identifier = node.alias if node.alias else node.name %}
+                {% set node_relation = node.relation_name | replace('"', '') if node.relation_name else 'NONE' %}
+
+                {% if node_identifier | upper in ['FCT_ORDER_ITEMS', 'INT_ORDER_ITEMS', 'INT_CUSTOMER_ORDERS'] %}
+                    {{ log(
+                        "DEBUG node => unique_id=" ~ node.unique_id
+                        ~ " | database=" ~ (node.database or 'NONE')
+                        ~ " | schema=" ~ (node.schema or 'NONE')
+                        ~ " | alias=" ~ (node.alias or 'NONE')
+                        ~ " | name=" ~ (node.name or 'NONE')
+                        ~ " | identifier=" ~ node_identifier
+                        ~ " | relation_name=" ~ node_relation,
+                        info=true
+                    ) }}
+                {% endif %}
+
                 {% if node.database
                       and node.schema
                       and node_identifier
                       and node.database | upper == database_name | upper
                       and node.schema | upper == schema_name | upper
                       and node_identifier | upper == table_name | upper %}
+                    {{ log("DEBUG matched node: " ~ node.unique_id, info=true) }}
                     {% set model_node = node %}
                     {% break %}
                 {% endif %}
