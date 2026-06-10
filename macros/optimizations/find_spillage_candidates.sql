@@ -148,7 +148,7 @@
             {% set fqn_key = database_name ~ "." ~ schema_name ~ "." ~ table_name %}
 
             {# attach dbt graph node so we can surface current materialization #}
-            {% set model_node = none %}
+            {% set ns = namespace(model_node=none) %}
             {{ log("DEBUG target fqn: " ~ fqn_key, info=true) }}
             {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
                 {% set node_identifier = node.alias if node.alias else node.name %}
@@ -174,13 +174,12 @@
                       and node.schema | upper == schema_name | upper
                       and node_identifier | upper == table_name | upper %}
                     {{ log("DEBUG matched node: " ~ node.unique_id, info=true) }}
-                    {% set model_node = node %}
+                    {% set ns.model_node = node %}
                     {% break %}
                 {% endif %}
             {% endfor %}
 
-            {% set current_materialization = model_node.config.materialized if model_node else 'N/A (not in dbt project)' %}
-
+            {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A (not in dbt project)' %}
             {% set recommendation = none %}
             {% set reason = none %}
             {% set severity = 'info' %}
