@@ -157,10 +157,10 @@
         {% do candidates.append({
             'fqn': fqn_key,
             'dbt_materialization': current_materialization,
-            'size_gb': row["SIZE_GB"],
-            'max_build_time_sec': (row["MAX_BUILD_TIME_SEC"] | round(0)),
-            'avg_build_time_sec': (row["AVG_BUILD_TIME_SEC"] | round(0)),
-            'total_slow_runs': row["TOTAL_SLOW_RUNS"],
+            'size_gb': row["SIZE_GB"] | float,
+            'max_build_time_sec': (row["MAX_BUILD_TIME_SEC"] | float | round(0)),
+            'avg_build_time_sec': (row["AVG_BUILD_TIME_SEC"] | float | round(0)),
+            'total_slow_runs': row["TOTAL_SLOW_RUNS"] | int,
             'suitable_keys': incremental_key_suggestion,
             'priority': row["PRIORITY_KEY"],
             'recommendation': recommendation
