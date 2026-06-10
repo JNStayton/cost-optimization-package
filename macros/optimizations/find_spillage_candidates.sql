@@ -150,10 +150,12 @@
             {# attach dbt graph node so we can surface current materialization #}
             {% set model_node = none %}
             {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
-                {% set node_fqn = node.database ~ "." ~ node.schema ~ "." ~ node.alias | default(node.name) %}
-                {% if node_fqn | upper == fqn_key | upper %}
-                    {% set model_node = node %}
-                    {% break %}
+                {% if node.relation_name %}
+                    {% set node_relation = node.relation_name | replace('"', '') %}
+                    {% if node_relation | upper == fqn_key | upper %}
+                        {% set model_node = node %}
+                        {% break %}
+                    {% endif %}
                 {% endif %}
             {% endfor %}
 
