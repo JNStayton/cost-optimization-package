@@ -1,26 +1,36 @@
 {% macro find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30, preview_only=true) %}
 
   {#--
-    Identifies dbt models currently configured as TABLEs that are large, slow to build, 
+    Identifies dbt models currently configured as TABLEs that are large, slow to build,
     and contain suitable columns for conversion to incremental materialization.
 
     1. Finds large, slow-building tables via Snowflake ACCOUNT_USAGE.
     2. Joins with the dbt graph to ensure model is currently 'table'.
     3. Checks the table structure for suitable date/timestamp keys for the microbatch strategy.
-    4. [TODO] Creates/updates a model with the information.
+    4. Assigns a priority tier based on size and avg build time.
+    5. [TODO] Creates/updates a model with the information.
+
+    Priority tiers:
+      HIGH:   size > 100 GB AND avg build > 30 min
+      MEDIUM: size > 50 GB OR avg build > 15 min (and not HIGH)
+      LOW:    above the qualifying floor but below MEDIUM
+
+    For full incremental strategy + key recommendations and template code, run the
+    materialization-analysis DAG bundled with this package.
 
     How to run:
-    dbt run-operation find_incremental_candidates
+    dbt run-operation find_incremental_materialization_candidates
 
     How to run with custom args:
 
-    dbt run-operation find_incremental_candidates --args '{min_table_size_gb: 100, max_build_time_sec: 6000, lookback_days: 7}'
+    dbt run-operation find_incremental_materialization_candidates --args '{min_table_size_gb: 100, max_build_time_sec: 6000, lookback_days: 7}'
   --#}
 
   {% if execute %}
     
     {{ log("--- Starting Incremental Candidate Analysis ---", info=true) }}
     {{ log("Criteria: Table > " ~ min_table_size_gb ~ " GB & Build Time > " ~ max_build_time_sec ~ "s in last " ~ lookback_days ~ " days.", info=true) }}
+    {{ log("Priority tiers: HIGH (size > 100 GB AND avg build > 30 min), MEDIUM (size > 50 GB OR avg build > 15 min), LOW (above floor but below MEDIUM).", info=true) }}
 
     {# --- snowflake performance and size query --- #}
     {% set incremental_sql %}
@@ -66,14 +76,24 @@
           ts.size_gb,
           count(mp.query_id) as total_slow_runs,
           max(mp.total_elapsed_time / 1000) as max_build_time_sec,
-          avg(mp.total_elapsed_time / 1000) as avg_build_time_sec
+          avg(mp.total_elapsed_time / 1000) as avg_build_time_sec,
+          case
+              when ts.size_gb > 100 and avg(mp.total_elapsed_time / 1000) > 1800 then 'HIGH'
+              when ts.size_gb > 50 or avg(mp.total_elapsed_time / 1000) > 900 then 'MEDIUM'
+              else 'LOW'
+          end as priority_key,
+          case
+              when ts.size_gb > 100 and avg(mp.total_elapsed_time / 1000) > 1800 then 3
+              when ts.size_gb > 50 or avg(mp.total_elapsed_time / 1000) > 900 then 2
+              else 1
+          end as priority_rank
       from
           model_performance mp
       inner join
-          table_size ts on 
+          table_size ts on
               mp.database_name = ts.database_name and mp.schema_name = ts.schema_name and mp.table_name = ts.table_name
       group by 1, 2, 3, 4
-      order by max_build_time_sec desc
+      order by priority_rank desc, max_build_time_sec desc
       limit 100
     {% endset %}
 
@@ -142,13 +162,14 @@
             'avg_build_time_sec': (row["AVG_BUILD_TIME_SEC"] | round(0)),
             'total_slow_runs': row["TOTAL_SLOW_RUNS"],
             'suitable_keys': incremental_key_suggestion,
+            'priority': row["PRIORITY_KEY"],
             'recommendation': recommendation
         }) %}
         
     {% endfor %}
 
-    {# --- results --- #}
-    {% set sorted_candidates = candidates | sort(attribute="max_build_time_sec", reverse=true) %}
+    {# --- results — SQL already ordered by priority_rank desc, max_build_time_sec desc --- #}
+    {% set sorted_candidates = candidates %}
 
     {{ log("\n--- Top TABLEs that should be materialized as INCREMENTAL ---", info=true) }}
     {{ log("-----------------------------------------------------------------------", info=true) }}
@@ -157,13 +178,14 @@
         {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
 
         {% if c.dbt_materialization == 'table' or not preview_only %}
-            {{ log("Model: " ~ c.fqn, info=true) }}
+            {{ log("[" ~ c.priority ~ "] Model: " ~ c.fqn, info=true) }}
             {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}
             {{ log("  - Table Size: " ~ c.size_gb ~ " GB", info=true) }}
-            {{ log("  - Max Build Time: " ~ c.max_build_time_sec ~ "s (Slow Runs: " ~ c.total_slow_runs ~ ")", info=true) }}
+            {{ log("  - Avg Build Time: " ~ c.avg_build_time_sec ~ "s (Max: " ~ c.max_build_time_sec ~ "s, Slow Runs: " ~ c.total_slow_runs ~ ")", info=true) }}
             {{ log("  - Recommendation: " ~ c.recommendation, info=true) }}
-            {% if c.recommendation == 'Change to INCREMENTAL' %}
+            {% if c.recommendation == 'Materialize as INCREMENTAL' %}
                 {{ log("  - Suggested Key(s) to Test: " ~ c.suitable_keys, info=true) }}
+                {{ log("  - Tip: run the materialization-analysis DAG for full incremental strategy + key recommendations and template code.", info=true) }}
             {% endif %}
             {{ log("---", info=true) }}
         {% endif %}

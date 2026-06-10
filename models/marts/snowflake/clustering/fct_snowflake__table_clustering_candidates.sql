@@ -126,18 +126,18 @@ final as (
         table_fqn,
         dbt_model,
         table_type,
-        -- recommendation
+        -- recommendation (V3 scoring)
         (
             case
                 when select_count > 0 then
-                    (select_count * (avg_execution_time_ms / 1000))
-                    + ((select_count / iff(dml_count = 0, 1, dml_count)) * 10)
+                    (select_count * (avg_execution_time_ms / 1000.0))
+                    * coalesce(
+                        nullif(avg_partitions_scanned / nullif(avg_partitions_total, 0), 0),
+                        0.5
+                    )
+                    * (1 + log(2, (select_count / iff(dml_count = 0, 1, dml_count)) + 1))
                 else 0
             end
-        )
-        * coalesce(
-            nullif(avg_partitions_scanned / nullif(avg_partitions_total, 0), 0),
-            0.5
         ) as score,
         case
             when
@@ -148,6 +148,31 @@ final as (
             then true
             else false
         end as is_candidate,
+        case
+            when select_count > 0
+                and (select_count / iff(dml_count = 0, 1, dml_count)) > 1
+                and size_gb >= {{ min_size_gb }}
+                and (avg_partitions_scanned / nullif(avg_partitions_total, 0)) > 0.5
+            then
+                'Queries scan '
+                || round(avg_partitions_scanned / nullif(avg_partitions_total, 0) * 100, 0)
+                || '% of ' || coalesce(nullif(coalesce(avg_partitions_total, 0)::int, 0), micropartitions)
+                || ' micropartitions on average. '
+                || select_count || ' reads over the lookback window at '
+                || round(avg_execution_time_ms / 1000, 1) || 's average. '
+                || 'Read/write ratio: ' || round(select_count / (dml_count + 1), 1) || ':1. '
+                || 'Clustering on frequently-filtered columns would reduce scan overhead.'
+            else
+                case
+                    when select_count = 0
+                        then 'No read activity in lookback window.'
+                    when (select_count / iff(dml_count = 0, 1, dml_count)) <= 1
+                        then 'Write-heavy workload — clustering ROI unclear due to reclustering churn.'
+                    when coalesce(avg_partitions_scanned / nullif(avg_partitions_total, 0), 0) <= 0.5
+                        then 'Pruning already effective (scanning <50% of partitions on average).'
+                    else 'Below size threshold or insufficient data for recommendation.'
+                end
+        end as recommendation_reason,
         -- clustering state
         is_already_clustered,
         clustering_key,
@@ -189,6 +214,7 @@ select
     -- recommendation
     is_candidate,
     score,
+    recommendation_reason,
     -- clustering state
     is_already_clustered,
     clustering_key,

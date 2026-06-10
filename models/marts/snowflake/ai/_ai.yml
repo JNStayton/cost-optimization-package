@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: fct_snowflake__ai_spend_overview
+    description: >
+      Executive-level summary of AI credit consumption across all Cortex service
+      types (AI_SERVICES, CORTEX_AGENTS, CORTEX_CODE_CLI, CORTEX_CODE_SNOWSIGHT,
+      SNOWFLAKE_INTELLIGENCE) with week-over-week trend analysis and projected
+      annual costs.
+
+      Grain: one row per service_type (aggregated over the lookback window).
+
+      Controlled by:
+        - ai_spend_lookback_days (default 30)
+        - ai_credit_rate_usd    (default 2)
+    config:
+      materialized: table
+
+  - name: fct_snowflake__ai_model_cost_recommendations
+    description: >
+      Model cost recommendations: identifies opportunities to use cheaper models,
+      trim prompts, or batch repeated high-frequency calls. Each row represents a
+      unique (model_name, function_name) combination with an actionable recommendation.
+
+      Recommendation tiers:
+        - Model downgrade: low output token count suggests a cheaper model suffices
+        - Prompt optimization: high input token count indicates over-contextualized prompts
+        - Batch/cache opportunity: high daily call frequency with repetitive patterns
+
+      Controlled by:
+        - ai_spend_lookback_days                        (default 30)
+        - ai_credit_rate_usd                            (default 2)
+        - ai_model_downgrade_output_token_threshold     (default 100)
+        - ai_prompt_bloat_input_token_threshold          (default 10000)
+        - ai_batch_opportunity_min_daily_calls           (default 100)
+        - ai_min_credits_for_recommendation             (default 1)
+    config:
+      materialized: table
+
+  - name: fct_snowflake__ai_user_spend_recommendations
+    description: >
+      Per-user AI spend recommendations: identifies top consumers, detects usage
+      spikes, flags governance gaps (missing QUERY_TAG attribution), and suggests
+      per-user budget thresholds based on historical patterns.
+
+      Recommendation tiers:
+        - Spike: recent 7-day spend significantly exceeds 30-day baseline
+        - Concentration: single user dominates total AI spend (governance risk)
+        - No attribution: majority of queries lack QUERY_TAG (cannot attribute by project)
+        - Healthy: usage within normal parameters
+
+      Controlled by:
+        - ai_spend_lookback_days                (default 30)
+        - ai_credit_rate_usd                    (default 2)
+        - ai_user_spike_threshold_pct           (default 200)
+        - ai_user_concentration_threshold_pct   (default 50)
+        - ai_min_credits_for_recommendation     (default 1)
+    config:
+      materialized: table
+
+  - name: fct_snowflake__ai_token_efficiency_recommendations
+    description: >
+      Token-level efficiency recommendations: identifies prompt bloat, repeated
+      queries (caching opportunities), high failure/cancellation rates, and
+      extreme input:output ratio patterns.
+
+      Grain: one row per (model_name, function_name, query_tag) grouping.
+
+      Recommendation tiers:
+        - High failure rate: >20% of queries incomplete/cancelled (wasted tokens)
+        - Prompt bloat: average input tokens exceed threshold (trim context)
+        - Cache candidate: high daily call frequency with high input:output ratio
+        - Extreme ratio: input:output > 50:1 (context far exceeds needed output)
+
+      Controlled by:
+        - ai_spend_lookback_days                    (default 30)
+        - ai_credit_rate_usd                        (default 2)
+        - ai_prompt_bloat_input_token_threshold     (default 10000)
+        - ai_batch_opportunity_min_daily_calls      (default 100)
+        - ai_min_queries_for_recommendation         (default 10)
+    config:
+      materialized: table

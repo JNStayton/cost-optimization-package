@@ -38,3 +38,9 @@ ENV/
 integration_tests/profiles.yml
 integration_tests/.user.yml
 
+dbt_internal_packages/
+
+archived/
+
+.claude/
+.snowflake/

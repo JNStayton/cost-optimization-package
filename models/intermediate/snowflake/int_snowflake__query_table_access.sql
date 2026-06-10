@@ -34,7 +34,7 @@ access_modified as (
 
 unioned as (
     select query_id, query_start_time, obj, access_type from access_base
-    union
+    union all
     select query_id, query_start_time, obj, access_type from access_modified
 ),
 

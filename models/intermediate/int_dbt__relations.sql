@@ -66,6 +66,7 @@ with dbt_relations as (
                 '{{ node.package_name }}' as package_name,
                 '{{ node.config.materialized if node.config and node.config.materialized else "" }}' as materialized,
                 '{{ (node.database or "") }}.{{ (node.schema or "") }}.{{ (node.alias if node.alias else node.name) }}' as relation_fqn,
+                '{{ node.config.snowflake_warehouse if node.config and node.config.snowflake_warehouse else "" }}' as warehouse_name,
                 array_construct({% for fqn in parent_fqns %}'{{ fqn }}'{% if not loop.last %}, {% endif %}{% endfor %}) as parent_models,
                 array_construct({% for fqn in child_fqns %}'{{ fqn }}'{% if not loop.last %}, {% endif %}{% endfor %}) as child_models
             {% if not loop.last %}union all{% endif %}
@@ -83,6 +84,7 @@ with dbt_relations as (
             cast(null as string) as package_name,
             cast(null as string) as materialized,
             cast(null as string) as relation_fqn,
+            cast(null as string) as warehouse_name,
             array_construct() as parent_models,
             array_construct() as child_models
         where 1 = 0

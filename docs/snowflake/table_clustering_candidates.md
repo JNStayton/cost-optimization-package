@@ -73,6 +73,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 | `clustering_candidates_dbt_project_only` | `true` | When `true`, only tables that match a dbt model in the current project are included in the output. Set to `false` to include all tables that meet the size threshold. |
 | `clustering_candidates_target_databases` | `[]` | Optional list of database names to restrict evaluation to. Empty = no restriction. |
 | `clustering_candidates_target_schemas` | `[]` | Optional list of schema names to restrict evaluation to. Empty = no restriction. |
+| `clustering_key_cardinality_table_limit` | `10` | Maximum number of top candidate tables (by score) to evaluate for column-level clustering key recommendations in `fct_snowflake__clustering_key_candidates`. |
 
 ### Example configuration
 
@@ -103,8 +104,9 @@ vars:
 | `table_fqn` | Fully qualified name (`DATABASE.SCHEMA.TABLE`) |
 | `dbt_model` | dbt `unique_id` if the table is a dbt model, otherwise `null` |
 | `table_type` | Human-readable type: Permanent Table, Transient Table, or Materialized View |
-| `score` | Composite score combining query volume, execution time, read/write ratio, and partition skew. Higher = more potential benefit from clustering. |
-| `is_candidate` | Whether the table meets all three criteria for clustering (see below) |
+| `score` | V3 composite score. Higher = more potential benefit from clustering. See [Scoring Logic](#scoring-logic) below. |
+| `is_candidate` | Whether the table meets all four criteria for clustering (see [Understanding `is_candidate`](#understanding-is_candidate) below) |
+| `recommendation_reason` | Human-readable explanation of why the table was or was not flagged. States the partition scan %, read count, duration, and ratio for candidates; states which criterion was not met for non-candidates. |
 | `table_size_gb` | Table size in GB |
 | `total_rows` | Approximate row count |
 | `current_micropartitions` | Current micropartition count (from query stats or estimated from storage) |
@@ -117,15 +119,60 @@ vars:
 
 ---
 
+## Scoring Logic
+
+### V3 formula (current)
+
+```
+score = total_read_time * partition_scan_ratio * read_heaviness_boost
+```
+
+Where:
+- **total_read_time** = `select_count * avg_query_duration_s` — total seconds spent reading the table in the lookback window
+- **partition_scan_ratio** = `avg_partitions_scanned / avg_partitions_total` — fraction of micropartitions scanned per query (0 to 1). Falls back to 0.5 (neutral) when no query history is available.
+- **read_heaviness_boost** = `1 + log2(query_to_dml_ratio + 1)` — bounded multiplier (~1 to ~8) that rewards read-heavy tables where clustering ROI is highest
+
+### Why each component
+
+| Factor | What it captures | Why it belongs |
+|--------|-----------------|----------------|
+| `total_read_time` | Absolute pain: how many seconds were spent reading this table | Tables nobody queries don't need clustering regardless of condition |
+| `partition_scan_ratio` | Scan efficiency: what fraction of the table is actually scanned per query | If queries already prune to 5% of partitions, clustering won't help. If they scan 80%, clustering has huge upside. **Independent of warehouse size.** |
+| `read_heaviness_boost` | ROI multiplier: read-heavy tables recoup clustering cost faster | A 100:1 read/write table amortizes reclustering cost over 100 reads. Logarithmic dampening prevents extreme ratios from dominating. |
+
+### Properties
+
+- **Warehouse-size independent** — `partition_scan_ratio` measures physical scan behavior, not wall-clock time
+- **Bounded** — no component is unbounded (scan ratio is 0-1, read_heaviness is log-bounded)
+- **Explainable** — the `recommendation_reason` column templates the score components into natural language
+
+### Scoring evolution
+
+| Version | Formula | Rationale | Status |
+|---------|---------|-----------|--------|
+| V1 | `(select_count * avg_exec_sec) + (query_ratio * 10)` multiplied by `partition_ratio_pct` | First attempt: combined signals additively + unbounded multiplier | Historical (`find_table_clustering_candidates.sql`) |
+| V2 | `select_count * avg_exec_sec` | Simplified: removed invisible additive term and unbounded multiplier; surfaced signals as display metrics only | Historical (`find_table_clustering_candidates_v2.sql`) |
+| V3 | `total_read_time * scan_ratio * (1 + log2(ratio + 1))` | Best of both: retains scan inefficiency signal (bounded 0-1), adds read-heaviness as a log-bounded multiplier, warehouse-size independent | Current (fact model + `find_table_clustering_candidates_v3.sql`) |
+
+V1's issues: the additive `query_ratio * 10` was orders of magnitude smaller than the first term in practice (invisible in ranking). The partition_ratio_pct multiplier was unbounded and could produce extreme scores for fragmented but unqueried tables.
+
+V2's issues: lost the scan efficiency signal entirely — a table scanned at 90% of partitions ranked the same as one scanned at 5% if query counts and durations were similar. Also not warehouse-size independent (upscaled compute masks slow scans).
+
+V3 addresses both: the scan ratio directly measures pruning effectiveness (independent of warehouse size), and the read-heaviness boost is meaningful but bounded.
+
+---
+
 ## Understanding `is_candidate`
 
-A table is flagged as `is_candidate = true` only when **all three** conditions are met:
+A table is flagged as `is_candidate = true` only when **all four** conditions are met:
 
 1. **The table is actively read.** `select_count > 0` — at least one SELECT query was executed against the table during the lookback window.
 
 2. **Reads outnumber writes.** `query_to_dml_ratio > 1` — the table receives more SELECT queries than DML operations (INSERT, UPDATE, DELETE, MERGE). Clustering reorganizes data on disk to improve read performance, but every write operation can disrupt that organization. Tables with heavy write activity will see clustering benefits eroded quickly, increasing automatic reclustering costs.
 
 3. **The table meets the minimum size threshold.** `table_size_gb >= clustering_candidates_min_size_gb` — clustering overhead (compute cost for automatic reclustering, metadata management) is typically not justified for small tables. The default threshold is 100 GB.
+
+4. **Poor partition pruning.** `partition_scan_ratio > 0.5` — queries scan more than half of all micropartitions on average, indicating that Snowflake is not effectively pruning partitions for this table's query patterns. This is the signal that clustering would directly improve.
 
 ### When `is_candidate` is `false` but the data is still useful
 
@@ -145,7 +192,7 @@ Use the full set of columns (not just `is_candidate`) to make informed decisions
 
 ## Sample Queries
 
-### Top clustering candidates by score
+### Top clustering candidates with explanations
 
 ```sql
 select
@@ -153,6 +200,7 @@ select
     dbt_model,
     score,
     is_candidate,
+    recommendation_reason,
     table_size_gb,
     select_count,
     dml_count,

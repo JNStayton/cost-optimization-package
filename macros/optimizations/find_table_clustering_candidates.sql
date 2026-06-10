@@ -184,6 +184,9 @@
                 {{log("Average Partitions Scanned: " ~ c.avg_partitions_scanned, info=true) }}
                 {{log("Usage: " ~ c.select_count ~ " SELECTs | " ~ c.dml_count ~ " DMLs (Ratio: " ~ (c.select_count / (c.dml_count + 1)) | round(1) ~ ")", info=true) }}
                 {{ log("Average Query Duration: " ~ c.avg_exec_sec ~ "s", info=true) }}
+                {% if c.is_candidate and c.dbt_model %}
+                    {{ log("Next step: run `dbt run-operation suggest_clustering_keys --args '{model_name: <your_model_name>}'` for column-level clustering key recommendations.", info=true) }}
+                {% endif %}
             {% endif %}
         {% endfor %}
         {% else %}
@@ -206,13 +209,12 @@
         sm.active_bytes as size_bytes,
         sm.active_bytes / power(1024, 3) as size_gb,
         t.row_count,
-        t.clustering_key is not null as is_already_clustered,
         -- Calculate approximate partitions based on size if history is missing
         (sm.active_bytes / (16 * 1024 * 1024)) as approx_micropartitions,
-        case 
+        case
             when t.table_type = 'MATERIALIZED VIEW' then 'Materialized View'
             when t.is_transient = 'YES' then 'Transient Table'
-            else 'Permanent Table' 
+            else 'Permanent Table'
         end as table_type
     from snowflake.account_usage.tables t
     join snowflake.account_usage.table_storage_metrics sm
@@ -223,6 +225,7 @@
     and t.table_type in ('BASE TABLE', 'MATERIALIZED VIEW')
     and t.deleted is null -- Crucial: ACCOUNT_USAGE contains history of dropped tables
     and sm.deleted = FALSE
+    and t.clustering_key is null -- Exclude tables that are already clustered
     
     {# --- Dynamic Database Filtering --- #}
     {% if target_databases and target_databases | length > 0 %}
