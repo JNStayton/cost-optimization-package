@@ -171,6 +171,19 @@
         {% set sorted_candidates = candidates %}
 
         {{ log("\n--- Top 10 Clustering Candidates ---", info=true) }}
+
+        {% if sorted_candidates | length == 0 %}
+            {{ log("No clustering candidates found.", info=true) }}
+            {{ log("", info=true) }}
+            {{ log("Large tables were found but none qualified as candidates.", info=true) }}
+            {{ log("Candidate criteria: read activity > 0, query metrics above threshold.", info=true) }}
+            {{ log("", info=true) }}
+            {{ log("Suggestions:", info=true) }}
+            {{ log("  - Try extending lookback_days (e.g., --args '{lookback_days: 14}')", info=true) }}
+            {{ log("  - Set ignore_table_size: true to include smaller tables", info=true) }}
+            {{ log("  - Set dbt_project_only: false to scan all tables, not just dbt models", info=true) }}
+        {% endif %}
+
         {% for c in sorted_candidates %}
             {% if loop.index <= 10 %}
                 {{ log("------------------------------------------------", info=true) }}

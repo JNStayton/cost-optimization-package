@@ -102,20 +102,12 @@
     {% set candidates = [] %}
 
     {{ log("--- Joining with dbt graph and checking table structure ---", info=true) }}
-    {{ log("DEBUG: query returned " ~ performance_results.rows | length ~ " rows", info=true) }}
-    {{ log("DEBUG: columns = " ~ performance_results.column_names, info=true) }}
-
-    {% if performance_results.rows | length > 0 %}
-        {% set first_row = performance_results.rows[0] %}
-        {{ log("DEBUG first row: " ~ first_row["DATABASE_NAME"] ~ "." ~ first_row["SCHEMA_NAME"] ~ "." ~ first_row["TABLE_NAME"], info=true) }}
-    {% endif %}
 
     {% for row in performance_results.rows %}
         {% set db = row["DATABASE_NAME"] %}
         {% set sc = row["SCHEMA_NAME"] %}
         {% set tb = row["TABLE_NAME"] %}
         {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
-        {{ log("DEBUG loop: " ~ fqn_key ~ " | max_build=" ~ row["MAX_BUILD_TIME_SEC"] ~ " | avg_build=" ~ row["AVG_BUILD_TIME_SEC"] ~ " | size=" ~ row["SIZE_GB"], info=true) }}
         
         {# check dbt materialization #}
         {% set model_node = none %}
@@ -146,7 +138,7 @@
             {% endset %}
 
             {% set key_results = run_query(column_check_sql) %}
-            {{ log("DEBUG keys query returned for " ~ fqn_key, info=true) }}
+
             {% set suitable_keys = key_results.columns[0].values()[0] if key_results.columns[0].values() else none %}
 
             {% if suitable_keys %}
@@ -162,8 +154,6 @@
             {% set recommendation = 'Verify keys (Manual Check)' %}
         {% endif %}
 
-
-        {{ log("DEBUG pre-append: " ~ fqn_key ~ " | recommendation=" ~ recommendation, info=true) }}
 
         {% do candidates.append({
             'fqn': fqn_key,

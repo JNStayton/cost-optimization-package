@@ -134,6 +134,18 @@
     {{ log("\n--- Top VIEWS that should be materialized as TABLEs ---", info=true) }}
     {{ log("-----------------------------------------------------------------------", info=true) }}
 
+    {% if sorted_candidates | length == 0 %}
+        {{ log("No materialization candidates found.", info=true) }}
+        {{ log("", info=true) }}
+        {{ log("This means no views in the current project exceeded " ~ min_query_count ~ " queries", info=true) }}
+        {{ log("in the last " ~ lookback_days ~ " days.", info=true) }}
+        {{ log("", info=true) }}
+        {{ log("Suggestions:", info=true) }}
+        {{ log("  - Try extending lookback_days (e.g., --args '{lookback_days: 30}')", info=true) }}
+        {{ log("  - Try lowering min_query_count (e.g., --args '{min_query_count: 5}')", info=true) }}
+        {{ log("  - Verify IMPORTED PRIVILEGES is granted on the SNOWFLAKE database", info=true) }}
+    {% endif %}
+
     {% for c in sorted_candidates %}
         {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
 
