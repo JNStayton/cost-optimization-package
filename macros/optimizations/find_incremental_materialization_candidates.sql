@@ -102,6 +102,13 @@
     {% set candidates = [] %}
 
     {{ log("--- Joining with dbt graph and checking table structure ---", info=true) }}
+    {{ log("DEBUG: query returned " ~ performance_results.rows | length ~ " rows", info=true) }}
+    {{ log("DEBUG: columns = " ~ performance_results.column_names, info=true) }}
+
+    {% if performance_results.rows | length > 0 %}
+        {% set first_row = performance_results.rows[0] %}
+        {{ log("DEBUG first row: " ~ first_row["DATABASE_NAME"] ~ "." ~ first_row["SCHEMA_NAME"] ~ "." ~ first_row["TABLE_NAME"], info=true) }}
+    {% endif %}
 
     {% for row in performance_results.rows %}
         {% set db = row["DATABASE_NAME"] %}
