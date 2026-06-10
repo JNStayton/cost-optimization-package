@@ -158,13 +158,18 @@
 
         {{ log("DEBUG pre-append: " ~ fqn_key ~ " | recommendation=" ~ recommendation, info=true) }}
 
+        {% set _size_gb = (row["SIZE_GB"] or 0) | float %}
+        {% set _max_build = (row["MAX_BUILD_TIME_SEC"] or 0) | float %}
+        {% set _avg_build = (row["AVG_BUILD_TIME_SEC"] or 0) | float %}
+        {% set _slow_runs = (row["TOTAL_SLOW_RUNS"] or 0) | int %}
+
         {% do candidates.append({
             'fqn': fqn_key,
             'dbt_materialization': current_materialization,
-            'size_gb': (row["SIZE_GB"] or 0) | float,
-            'max_build_time_sec': ((row["MAX_BUILD_TIME_SEC"] or 0) | float | round(0)),
-            'avg_build_time_sec': ((row["AVG_BUILD_TIME_SEC"] or 0) | float | round(0)),
-            'total_slow_runs': (row["TOTAL_SLOW_RUNS"] or 0) | int,
+            'size_gb': _size_gb,
+            'max_build_time_sec': _max_build,
+            'avg_build_time_sec': _avg_build,
+            'total_slow_runs': _slow_runs,
             'suitable_keys': incremental_key_suggestion,
             'priority': row["PRIORITY_KEY"],
             'recommendation': recommendation
