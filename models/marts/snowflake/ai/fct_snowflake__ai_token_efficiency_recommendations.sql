@@ -144,18 +144,18 @@ select
                 || 'reduce few-shot examples. '
                 || 'Projected annual cost: $' || projected_annual_cost_usd || '.'
         when recommendation_key = 'cache_candidate'
-            then avg_daily_calls || ' calls/day with ' || input_output_ratio
+            then avg_daily_calls || ' calls/day with ' || coalesce(input_output_ratio, 0)
                 || ':1 input:output ratio. '
                 || 'High-frequency calls with heavy context suggest cacheable responses. '
                 || 'Implement application-level response caching. '
                 || 'Projected annual cost: $' || projected_annual_cost_usd || '.'
         when recommendation_key = 'extreme_ratio'
-            then 'Input:output ratio of ' || input_output_ratio || ':1 ('
-                || avg_input_tokens || ' in / ' || avg_output_tokens || ' out). '
+            then 'Input:output ratio of ' || coalesce(input_output_ratio, 0) || ':1 ('
+                || avg_input_tokens || ' in / ' || coalesce(avg_output_tokens, 0) || ' out). '
                 || 'Sending far more context than needed for the output. '
                 || 'Evaluate whether full context is necessary or if summarization/RAG would suffice. '
                 || 'Projected annual cost: $' || projected_annual_cost_usd || '.'
-        else model_name || ' / ' || function_name || ' (' || query_pattern || ') — '
+        else coalesce(model_name, 'unknown') || ' / ' || coalesce(function_name, 'unknown') || ' (' || query_pattern || ') — '
             || 'efficient usage. ' || total_queries || ' queries over ' || active_days || ' days.'
     end                                                             as recommendation_reason
 from scored

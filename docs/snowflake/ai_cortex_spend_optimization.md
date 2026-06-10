@@ -193,6 +193,151 @@ vars:
 
 ---
 
+## Scoring Formulas
+
+### `fct_snowflake__ai_spend_overview`
+
+No scoring — this is a summary model. Key computed columns:
+- `projected_annual_cost_usd = (total_credits / active_days) * 365 * credit_rate_usd`
+- `pct_of_total_ai_spend = service_type_credits / sum(all_service_credits) * 100`
+- `wow_trend` = week-over-week comparison (Growing/Declining/Stable/New)
+
+### `fct_snowflake__ai_model_cost_recommendations`
+
+```
+projected_annual_cost_usd = (total_credits / lookback_days) * 365 * credit_rate_usd
+cost_per_1k_output_tokens = total_credits / total_output_tokens * 1000
+```
+
+Decision logic:
+```
+if avg_output_tokens < 100 AND total_credits > 5:     → model_downgrade
+elif avg_input_tokens > 10000:                        → prompt_bloat
+elif avg_daily_calls > 100:                           → batch_opportunity
+else:                                                 → monitor
+```
+
+### `fct_snowflake__ai_user_spend_recommendations`
+
+```
+projected_annual_cost_usd = avg_daily_credits * 365 * credit_rate_usd
+pct_of_account_spend = user_credits / total_account_credits * 100
+```
+
+Decision logic:
+```
+if 7d_avg_daily > 30d_avg_daily * (spike_threshold/100):  → spike
+elif user_credits / total > concentration_threshold:       → concentration
+elif untagged_queries > tagged_queries:                    → no_attribution
+else:                                                      → healthy
+```
+
+### `fct_snowflake__ai_token_efficiency_recommendations`
+
+```
+projected_annual_cost_usd = (total_credits / lookback_days) * 365 * credit_rate_usd
+input_output_ratio = avg_input_tokens / avg_output_tokens
+```
+
+Decision logic (priority order):
+```
+if incomplete_pct > 20% AND total_credits > 5:            → high_failure_rate
+elif avg_input_tokens > 10000:                            → prompt_bloat
+elif avg_daily_calls > 100 AND input_output_ratio > 5:   → cache_candidate
+elif input_output_ratio > 50:                             → extreme_ratio
+else:                                                     → efficient
+```
+
+---
+
+## Sample Queries
+
+### AI spend by service type (executive summary)
+
+```sql
+select
+    service_type,
+    total_credits,
+    projected_annual_cost_usd,
+    pct_of_total_ai_spend,
+    wow_trend,
+    credits_last_7d,
+    credits_prior_7d
+from <your_schema>.fct_snowflake__ai_spend_overview
+order by total_credits desc;
+```
+
+### Models to downgrade or optimize
+
+```sql
+select
+    model_name,
+    function_name,
+    avg_output_tokens,
+    avg_input_tokens,
+    projected_annual_cost_usd,
+    cost_per_1k_output_tokens,
+    recommendation,
+    recommendation_reason
+from <your_schema>.fct_snowflake__ai_model_cost_recommendations
+where recommendation != 'Monitor — no immediate action'
+order by projected_annual_cost_usd desc;
+```
+
+### Users with spending spikes
+
+```sql
+select
+    user_name,
+    email,
+    default_role,
+    total_credits_30d,
+    avg_daily_credits_7d,
+    avg_daily_credits,
+    pct_of_account_spend,
+    projected_annual_cost_usd,
+    recommendation,
+    recommendation_reason
+from <your_schema>.fct_snowflake__ai_user_spend_recommendations
+where recommendation like 'Investigate%' or recommendation like 'High%'
+order by total_credits_30d desc;
+```
+
+### Prompt bloat and caching opportunities
+
+```sql
+select
+    model_name,
+    function_name,
+    query_pattern,
+    avg_input_tokens,
+    avg_output_tokens,
+    input_output_ratio,
+    avg_daily_calls,
+    projected_annual_cost_usd,
+    recommendation,
+    recommendation_reason
+from <your_schema>.fct_snowflake__ai_token_efficiency_recommendations
+where recommendation != 'Efficient — no action needed'
+order by projected_annual_cost_usd desc;
+```
+
+### Governance gaps (untagged queries)
+
+```sql
+select
+    user_name,
+    untagged_queries,
+    tagged_queries,
+    round(untagged_queries * 100.0 / nullif(tagged_queries + untagged_queries, 0), 1) as pct_untagged,
+    total_credits_30d
+from <your_schema>.fct_snowflake__ai_user_spend_recommendations
+where recommendation like 'Governance%'
+order by total_credits_30d desc;
+```
+
+---
+
 ## Key Optimization Levers (Summary)
 
 | Lever | Source Signal | Expected Impact |

@@ -57,7 +57,7 @@ account_total as (
 ),
 
 users as (
-    select user_id, name as user_name, email, default_role
+    select user_id::string as user_id, name as user_name, email, default_role
     from {{ source('snowflake_usage', 'users') }}
 ),
 
@@ -74,9 +74,12 @@ scored as (
         u30.untagged_queries,
         u30.tagged_queries,
         coalesce(u7.total_credits_7d, 0)                            as total_credits_7d,
-        round(
-            coalesce(u7.total_credits_7d, 0) / nullif(u7.active_days_7d, 0),
-            4
+        coalesce(
+            round(
+                coalesce(u7.total_credits_7d, 0) / nullif(u7.active_days_7d, 0),
+                4
+            ),
+            0
         )                                                           as avg_daily_credits_7d,
         round(u30.total_credits_30d / nullif(at.total_account_credits, 0) * 100, 1)
                                                                     as pct_of_account_spend,
@@ -128,20 +131,20 @@ select
     end                                                             as recommendation,
     case
         when recommendation_key = 'spike'
-            then 'Recent 7-day average (' || round(avg_daily_credits_7d, 2) || ' credits/day) is '
-                || round(avg_daily_credits_7d / nullif(avg_daily_credits, 0) * 100, 0)
+            then 'Recent 7-day average (' || coalesce(round(avg_daily_credits_7d, 2), 0) || ' credits/day) is '
+                || coalesce(round(avg_daily_credits_7d / nullif(avg_daily_credits, 0) * 100, 0), 0)
                 || '% of the ' || {{ lookback_days }} || '-day baseline ('
                 || round(avg_daily_credits, 2) || ' credits/day). '
                 || 'Investigate for runaway queries or unexpected usage patterns.'
         when recommendation_key = 'concentration'
-            then user_name || ' accounts for ' || pct_of_account_spend
+            then coalesce(user_name, 'User ' || user_id) || ' accounts for ' || pct_of_account_spend
                 || '% of total AI spend (' || round(total_credits_30d, 2) || ' credits). '
                 || 'Consider per-user budget caps or distributing AI workloads across roles.'
         when recommendation_key = 'no_attribution'
             then untagged_queries || ' of ' || (tagged_queries + untagged_queries)
                 || ' queries lack a QUERY_TAG. '
                 || 'Set session-level QUERY_TAG for cost attribution by project/team.'
-        else user_name || ' — ' || round(total_credits_30d, 2) || ' credits over '
+        else coalesce(user_name, 'User ' || user_id) || ' — ' || round(total_credits_30d, 2) || ' credits over '
             || active_days || ' days. Usage is stable and within normal range.'
     end                                                             as recommendation_reason
 from scored

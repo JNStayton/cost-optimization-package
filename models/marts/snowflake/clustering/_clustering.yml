@@ -82,18 +82,28 @@ models:
 
       - name: score
         description: >
-          Composite priority score for clustering candidacy. Higher values indicate
+          V3 composite priority score for clustering candidacy. Higher values indicate
           tables where clustering is more likely to improve query performance.
 
-          Formula: (query activity factor) * (scan inefficiency multiplier)
+          Formula: total_read_time * scan_inefficiency * read_heaviness_boost
 
-          Query activity factor: (select_count * avg_query_duration_s) + (read/write ratio * 10)
-          Scan inefficiency multiplier: avg_partitions_scanned / avg_partitions_total when
-          query history is available; 0.5 (neutral) when no query history exists in the
-          lookback window.
+          - total_read_time: select_count * avg_query_duration_s (seconds spent reading)
+          - scan_inefficiency: avg_partitions_scanned / avg_partitions_total (0-1 ratio;
+            0.5 neutral fallback when no query history exists)
+          - read_heaviness_boost: 1 + log2(query_to_dml_ratio + 1) (bounded multiplier;
+            rewards read-heavy tables where clustering ROI is higher)
 
-          Scores are not normalized and should be used for relative ranking within a
-          single snapshot_date, not compared across snapshots.
+          This formula is warehouse-size independent: the scan ratio measures physical
+          pruning behavior, not wall-clock time. Scores are not normalized and should
+          be used for relative ranking within a single snapshot_date.
+
+      - name: recommendation_reason
+        description: >
+          Human-readable explanation of why this table was or was not flagged as a
+          clustering candidate. For candidates, states the partition scan percentage,
+          read count, average query duration, and read/write ratio. For non-candidates,
+          states which criterion was not met (no reads, write-heavy, pruning already
+          effective, or below size threshold).
 
       # ---------------------------------------------------------------------------
       # Clustering state

@@ -38,6 +38,7 @@ with dbt_queries as (
     inner join {{ ref('int_snowflake__dbt_sessions') }} as s
         on qh.session_id = s.session_id
     where qh.warehouse_name is not null
+        and coalesce(qh.warehouse_size, '') != 'ADAPTIVE'
     {% if is_incremental() %}
         and qh.query_start_time >= dateadd(
             day,
