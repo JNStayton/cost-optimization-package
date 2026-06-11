@@ -40,6 +40,7 @@
               qh.total_elapsed_time,
               qh.start_time,
               qh.query_text,
+              qh.query_type,
               t.table_catalog as database_name,
               t.table_schema as schema_name,
               t.table_name as table_name
@@ -55,8 +56,9 @@
               and qh.start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
               and qh.execution_status = 'SUCCESS'
               and (
-                  qh.query_text ilike 'CREATE TABLE%AS%SELECT%'
-                  or qh.query_text ilike 'CREATE OR REPLACE TABLE%'
+                  qh.query_type in ('CREATE_TABLE', 'CREATE_TABLE_AS_SELECT')
+                  or qh.query_text ilike 'create%table%as%select%'
+                  or qh.query_text ilike 'create or replace%table%'
               )
       ),
       
@@ -80,6 +82,7 @@
           count(mp.query_id) as total_slow_runs,
           max(mp.total_elapsed_time / 1000) as max_build_time_sec,
           avg(mp.total_elapsed_time / 1000) as avg_build_time_sec,
+          min(mp.query_type) as sample_query_type,
           case
               when ts.size_gb > 100 and avg(mp.total_elapsed_time / 1000) > 1800 then 'HIGH'
               when ts.size_gb > 50 or avg(mp.total_elapsed_time / 1000) > 900 then 'MEDIUM'
@@ -131,7 +134,7 @@
         {% endfor %}
 
         {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A' %}
-        {{ log("DEBUG candidate: " ~ fqn_key ~ " | materialization=" ~ current_materialization, info=true) }}
+        {{ log("DEBUG candidate: " ~ fqn_key ~ " | query_type=" ~ row["SAMPLE_QUERY_TYPE"] ~ " | materialization=" ~ current_materialization, info=true) }}
         
         {% set is_incremental_candidate = false %}
         {% set incremental_key_suggestion = 'N/A' %}
@@ -172,6 +175,7 @@
             'max_build_time_sec': row["MAX_BUILD_TIME_SEC"],
             'avg_build_time_sec': row["AVG_BUILD_TIME_SEC"],
             'total_slow_runs': row["TOTAL_SLOW_RUNS"],
+            'sample_query_type': row["SAMPLE_QUERY_TYPE"],
             'suitable_keys': incremental_key_suggestion,
             'priority': row["PRIORITY_KEY"],
             'recommendation': recommendation
@@ -195,7 +199,7 @@
         {{ log("", info=true) }}
         {% if performance_results.rows | length == 0 %}
             {{ log("No Snowflake table builds met the warehouse criteria.", info=true) }}
-            {{ log("This means no CREATE TABLE / CREATE OR REPLACE TABLE builds exceeded the", info=true) }}
+            {{ log("This means no successful table-build statements exceeded the", info=true) }}
             {{ log("build-time threshold (" ~ max_build_time_sec ~ "s) on tables >= " ~ min_table_size_gb ~ " GB", info=true) }}
             {{ log("in the last " ~ lookback_days ~ " days.", info=true) }}
         {% else %}
@@ -216,6 +220,7 @@
 
         {{ log("[" ~ c.priority ~ "] Model: " ~ c.fqn, info=true) }}
         {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}
+        {{ log("  - Sample Query Type: " ~ c.sample_query_type, info=true) }}
         {{ log("  - Table Size: " ~ c.size_gb ~ " GB", info=true) }}
         {{ log("  - Avg Build Time: " ~ c.avg_build_time_sec ~ "s (Max: " ~ c.max_build_time_sec ~ "s, Slow Runs: " ~ c.total_slow_runs ~ ")", info=true) }}
         {{ log("  - Recommendation: " ~ c.recommendation, info=true) }}
