@@ -138,6 +138,219 @@ Interactive warehouses are designed for low-latency, high-concurrency dashboard 
 - Identifying workloads that are paying standard warehouse rates but have interactive-warehouse characteristics (many short queries, low latency requirements)
 - Recommending conversion to interactive when the workload profile matches
 
+
+---
+
+## Recommendation Interface + Cross-Domain Prioritization (Package v2 Direction)
+
+**Status:** Planned  
+**Priority:** High  
+**Scope:** Package-wide design evolution across Snowflake optimization marts
+
+### Why This Matters
+
+The current package produces useful domain-specific recommendation facts — for example:
+- warehouse sizing
+- expensive queries
+- spillage
+- incremental materialization candidates
+- table materialization candidates
+- clustering candidates
+- AI usage / spend
+
+That is the right foundation, but it is still oriented primarily around individual optimization domains. The next step is to make the package easier to consume in three distinct ways:
+
+1. **Humans** need clear, ranked, current action items rather than raw fact tables.
+2. **Agents** need explicit structured signals instead of relying on long-form prose alone.
+3. **Dashboards / downstream marts** need normalized fields across domains so recommendations can be compared and prioritized together.
+
+The long-term goal is to make every optimization fact table usable as both:
+- a human-readable recommendation source
+- a machine-readable decision interface
+
+### Proposed Standard Recommendation Fields
+
+Add a common recommendation interface to optimization fact models where applicable:
+
+- `recommendation_state`
+  - Examples: `candidate`, `monitor`, `review_manually`, `insufficient_evidence`, `not_applicable`
+  - Purpose: normalize recommendation status across optimization domains
+
+- `recommendation_confidence`
+  - Examples: `high`, `medium`, `low`
+  - Purpose: communicate how robust the recommendation is given the available evidence
+
+- `priority_score`
+  - Numeric score used for cross-domain ranking and dashboard ordering
+  - Should be relative within a domain first, then normalized where needed for package-level ranking
+
+- `estimated_impact`
+  - Human- and agent-readable impact summary
+  - Examples: estimated GB scanned avoided, credits reduced, queue time reduced, downstream recomputation eliminated
+
+- `recommended_next_action`
+  - Concrete next step rather than only descriptive prose
+  - Examples:
+    - `materialize_as_table`
+    - `evaluate_incremental_strategy`
+    - `review_clustering_keys`
+    - `scale_up_warehouse`
+    - `investigate_query_refactor`
+    - `monitor_only`
+
+- `recommendation_reason`
+  - Human-readable explanation of why the recommendation fired
+  - Should remain narrative, but be supported by the structured fields above
+
+### Design Principle: Useful for Humans *and* Agents
+
+This package should evolve toward recommendation outputs that are immediately useful for:
+
+#### Human analytics / platform engineers
+- triaging the top current issues
+- building dashboards that answer “what should we fix next?”
+- reviewing evidence before acting on a recommendation
+
+#### Agents and automation systems
+- selecting which optimization opportunities to investigate first
+- deciding when evidence is strong enough to act automatically vs escalate for manual review
+- chaining together follow-up analysis based on `recommended_next_action`
+
+This means future models should avoid relying only on long explanatory strings. Narrative reasoning is still useful, but it should be paired with explicit status, confidence, impact, and action fields.
+
+### Proposed New Layer: Cross-Domain Prioritization
+
+After domain-specific marts are mature, add a package-level prioritization layer that unifies optimization opportunities across domains.
+
+#### Proposed mart
+- `fct_snowflake__optimization_recommendations`
+
+#### Purpose
+Create one current-state recommendation surface that unions and normalizes recommendations from multiple domains, such as:
+- warehouse sizing
+- expensive queries
+- spillage
+- table materialization
+- incremental materialization
+- clustering
+- AI cost / usage anomalies
+- future storage recommendations
+
+#### Proposed outputs
+- recommendation domain (`warehouse`, `query`, `materialization`, `clustering`, `ai`, `storage`)
+- recommendation_state
+- recommendation_confidence
+- priority_score
+- estimated_impact
+- recommended_next_action
+- owning object (`warehouse`, `table_fqn`, `dbt_model`, `query_id`, etc.)
+- recommendation_reason
+
+### Proposed Consumption Layer / “Current Action Items” Views
+
+On top of the domain marts and cross-domain fact, add lightweight current-state views for immediate use.
+
+Examples:
+- `vw_snowflake__top_clustering_candidates`
+- `vw_snowflake__top_incremental_opportunities`
+- `vw_snowflake__top_expensive_queries`
+- `vw_snowflake__current_optimization_actions`
+
+These views should answer questions like:
+- What are the top 10 highest-confidence optimization opportunities right now?
+- Which dbt models show multiple overlapping issues?
+- Which recommendations have the highest likely impact?
+- Which recommendations need manual review before implementation?
+
+This layer is especially useful for dashboards, executive rollups, and agent-driven triage.
+
+### Notes on Implementation Strategy
+
+- Keep domain-specific recommendation logic inside the domain marts.
+- Normalize only the output interface across domains.
+- Prefer explicit structured fields over parsing narrative text downstream.
+- Preserve domain-specific scoring, but add a package-level normalization strategy later for cross-domain ranking.
+- Roll out incrementally rather than trying to standardize every model at once.
+
+A practical first step would be to add `recommendation_state`, `recommendation_confidence`, and `recommended_next_action` to the highest-value Snowflake marts first.
+
+---
+
+## Storage Optimization Path
+
+**Status:** Planned  
+**Priority:** Medium  
+**Scope:** New Snowflake optimization domain
+
+### Why This Matters
+
+The current package focuses primarily on compute and query-performance optimization. A future optimization path should also target **storage efficiency** and **storage-related spend**, especially for mature dbt projects that accumulate large historical tables, low-value retained data, and expensive storage patterns over time.
+
+This would broaden the package from compute optimization into a more complete Snowflake cost optimization surface.
+
+### Potential Recommendation Areas
+
+#### Stale or low-value tables
+Identify large relations that:
+- have not been queried recently
+- are not downstream dependencies of actively used models
+- continue to incur storage cost without meaningful analytical value
+
+Potential actions:
+- archive
+- drop after retention review
+- move to cheaper long-term storage patterns outside the active analytics environment
+
+#### Time Travel / Fail-safe heavy storage overhead
+Highlight objects where retained history materially increases storage cost relative to active table value.
+
+Potential actions:
+- reduce retention where safe and governance permits
+- move transient/ephemeral workloads to more appropriate table types
+
+#### Transient vs permanent storage fit
+Identify dbt-managed tables where the current durability choice may not align with the workload.
+
+Potential actions:
+- recommend transient materialization for rebuildable intermediate data
+- preserve permanent tables for curated / business-critical marts
+
+#### Large tables with low read value
+Identify relations that are large but rarely queried.
+
+Potential actions:
+- archive
+- compress usage windows
+- re-evaluate whether the model should continue to be materialized
+
+#### Historical accumulation from incremental models
+Identify incrementals where storage growth is outpacing usage value.
+
+Potential actions:
+- partition or prune old data
+- add retention windows
+- split hot vs cold data
+- archive closed periods
+
+### Proposed Future Models
+
+Possible Snowflake marts/intermediates:
+- `int_snowflake__storage_inventory_daily`
+- `int_snowflake__table_storage_retention_signals`
+- `fct_snowflake__storage_optimization_recommendations`
+
+### Design Notes
+
+Storage recommendations should follow the same long-term interface as other optimization domains:
+- recommendation_state
+- recommendation_confidence
+- priority_score
+- estimated_impact
+- recommended_next_action
+- recommendation_reason
+
+This makes storage optimization easy to fold into the broader cross-domain prioritization layer once implemented.
+
 ---
 
 ## References

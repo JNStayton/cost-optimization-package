@@ -3,6 +3,9 @@
   {#--
     V2 of find_table_clustering_candidates with a simplified scoring formula.
 
+    WARNING: This macro performs Jinja arithmetic on run_query results (| int, | float).
+    This may fail under dbt Fusion. Use find_table_clustering_candidates_v3 instead.
+
     Differences from v1:
       v1 score: (select_count * avg_exec_sec) + (query_ratio * 10), multiplied by
                 partition_ratio_pct when > 0.0001.

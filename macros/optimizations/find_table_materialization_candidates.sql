@@ -67,7 +67,12 @@
           total_queries_last_{{ lookback_days }}_days,
           avg_elapsed_seconds,
           total_gb_scanned,
-          materialization_score
+          materialization_score,
+          case
+              when materialization_score > 500 and total_gb_scanned > 10 then 'large_scan'
+              when avg_elapsed_seconds > 10 and total_queries_last_{{ lookback_days }}_days > 50 then 'slow_frequent'
+              else 'monitor'
+          end as recommendation_key
       from
           view_performance_summary
       where
@@ -90,25 +95,32 @@
         {% set tb = row["VIEW_NAME"] %}
         {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
         
-        {% set model_node = none %}
+        {# namespace() avoids Jinja loop-scoping bug #}
+        {% set ns = namespace(model_node=none) %}
         {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
-            {% set node_fqn = node.database ~ "." ~ node.schema ~ "." ~ node.alias | default(node.name) %}
-            {% if node_fqn | upper == fqn_key | upper %}
-                {% set model_node = node %}
+            {% set node_identifier = node.alias if node.alias else node.name %}
+            {% if node.database
+                  and node.schema
+                  and node_identifier
+                  and node.database | upper == db | upper
+                  and node.schema | upper == sc | upper
+                  and node_identifier | upper == tb | upper %}
+                {% set ns.model_node = node %}
                 {% break %}
             {% endif %}
         {% endfor %}
 
-        {% set current_materialization = model_node.config.materialized if model_node else 'N/A (Not in dbt project)' %}
+        {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A (Not in dbt project)' %}
         {% set recommendation = 'Monitor' %}
-        {% set recommendation_reason = 'Low Priority'%}
-        
-        {# scoring logic #}
+        {% set recommendation_reason = 'Low Priority' %}
+
+        {# recommendation logic — thresholds computed in SQL as recommendation_key #}
+        {% set recommendation_key = row['RECOMMENDATION_KEY'] %}
         {% if current_materialization != 'N/A (Not in dbt project)' %}
-            {% if row['MATERIALIZATION_SCORE'] > 500 and row['TOTAL_GB_SCANNED'] > 10 %}
+            {% if recommendation_key == 'large_scan' %}
                 {% set recommendation = 'Materialize as TABLE' %}
                 {% set recommendation_reason = 'Large Scan' %}
-            {% elif row['AVG_ELAPSED_SECONDS'] > 10 and row['TOTAL_QUERIES_LAST_' ~ lookback_days ~ '_DAYS'] > 50 %}
+            {% elif recommendation_key == 'slow_frequent' %}
                 {% set recommendation = 'Materialize as TABLE' %}
                 {% set recommendation_reason = 'Slow performance, frequently queried' %}
             {% endif %}

@@ -3,6 +3,9 @@
   {#--
     Orchestrates all macros to suggest tables in project that might benefit from clustering.
 
+    WARNING: This macro performs Jinja arithmetic on run_query results (| int, | float).
+    This may fail under dbt Fusion. Use find_table_clustering_candidates_v3 instead.
+
     This will log the top 10 candidates for clustering. Start here, implement the fixes where applicable, and then run again.
 
     You can optionally pass in a list of target databases/schemas to scan, or set to scan the entire account.

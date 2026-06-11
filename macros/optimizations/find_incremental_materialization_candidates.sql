@@ -109,17 +109,22 @@
         {% set tb = row["TABLE_NAME"] %}
         {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
         
-        {# check dbt materialization #}
-        {% set model_node = none %}
+        {# check dbt materialization — namespace() avoids Jinja loop-scoping bug #}
+        {% set ns = namespace(model_node=none) %}
         {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
-            {% set node_fqn = node.database ~ "." ~ node.schema ~ "." ~ node.alias | default(node.name) %}
-            {% if node_fqn | upper == fqn_key | upper %}
-                {% set model_node = node %}
+            {% set node_identifier = node.alias if node.alias else node.name %}
+            {% if node.database
+                  and node.schema
+                  and node_identifier
+                  and node.database | upper == db | upper
+                  and node.schema | upper == sc | upper
+                  and node_identifier | upper == tb | upper %}
+                {% set ns.model_node = node %}
                 {% break %}
             {% endif %}
         {% endfor %}
 
-        {% set current_materialization = model_node.config.materialized if model_node else 'N/A' %}
+        {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A' %}
         
         {% set is_incremental_candidate = false %}
         {% set incremental_key_suggestion = 'N/A' %}

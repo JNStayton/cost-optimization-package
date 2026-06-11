@@ -471,3 +471,125 @@ models:
           the post-hook to use likely_unique_key when confirmed. Replace the existing
           config() block at the top of your model file. For microbatch, set the begin
           date manually. Placeholders (<unique_key>) appear when no candidate was confirmed.
+
+  - name: fct_snowflake__table_materialization_candidates_v2
+    description: >
+      V2 of the table materialization recommendation model. Preserves the original
+      recommendation logic while making query-text attribution more transparent via
+      attribution tiers and adding recommendation confidence based on the quantity
+      of corroborating signals.
+
+      Attribution tiers are assigned per matched query in descending priority:
+        - high: query text contains DATABASE.SCHEMA.OBJECT
+        - medium: query text contains SCHEMA.OBJECT
+        - low: query text contains OBJECT name only
+
+      recommendation_confidence is then derived from both attribution confidence and
+      the number of strong supporting signals present (scan cost, duration, query volume,
+      and/or downstream chain impact).
+
+      Controlled by the following dbt variables:
+        - table_materialization_lookback_days   (default 14)
+        - table_materialization_min_query_count (default 10)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: table_fqn
+        description: Fully-qualified view name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the view.
+
+      - name: schema_name
+        description: Snowflake schema containing the view.
+
+      - name: table_name
+        description: Name of the evaluated view.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this view.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: materialized
+        description: Current materialization type of the model. One of view, ephemeral.
+
+      - name: select_count
+        description: Number of distinct SELECT queries attributed to this view over the lookback window.
+
+      - name: avg_query_duration_s
+        description: Average execution time in seconds for attributed SELECT queries.
+
+      - name: relative_duration_ratio
+        description: This view's avg_query_duration_s divided by the project-wide average.
+
+      - name: total_gb_scanned
+        description: Total gigabytes scanned by attributed SELECT queries over the lookback window.
+
+      - name: avg_gb_scanned_per_query
+        description: Average gigabytes scanned per attributed SELECT query.
+
+      - name: materialization_score
+        description: Composite priority score for isolated views - select_count * avg_query_duration_s.
+
+      - name: is_in_view_chain
+        description: True when this view is part of a chain that leads to at least one downstream TABLE.
+
+      - name: min_hops_to_table
+        description: Minimum number of hops from this view to the nearest downstream TABLE materialization.
+
+      - name: downstream_table_count
+        description: Number of distinct downstream TABLE materializations reachable from this view.
+
+      - name: composite_chain_score
+        description: Chain-aware priority score used for ranking views that amplify downstream recomputation.
+
+      - name: downstream_build_time_s
+        description: Average build time in seconds of downstream TABLE materializations reachable from this view.
+
+      - name: attribution_method
+        description: Highest-confidence query-text match pattern observed for this view.
+
+      - name: attribution_confidence
+        description: >
+          Attribution confidence tier based on the strongest query-text match pattern observed.
+          One of: high, medium, low.
+
+      - name: high_confidence_query_count
+        description: Count of queries matched via DATABASE.SCHEMA.OBJECT text.
+
+      - name: medium_confidence_query_count
+        description: Count of queries matched via SCHEMA.OBJECT text.
+
+      - name: low_confidence_query_count
+        description: Count of queries matched via OBJECT name only.
+
+      - name: strong_signal_count
+        description: >
+          Count of strong corroborating signals present for this recommendation.
+          Current signals include high scan cost, high average duration, high query volume,
+          and downstream chain impact.
+
+      - name: recommendation
+        description: >
+          Materialize as TABLE when the view meets the existing threshold logic;
+          Monitor otherwise.
+
+      - name: recommendation_confidence
+        description: >
+          Confidence in the recommendation based on attribution confidence plus the quantity
+          of corroborating signals. One of: high, medium, low.
+
+      - name: recommendation_reason
+        description: Human-readable explanation of the recommendation and the metrics that triggered it.
+
