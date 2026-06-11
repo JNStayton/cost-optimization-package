@@ -67,11 +67,12 @@
               table_catalog as database_name,
               table_schema as schema_name,
               table_name,
-              round(active_bytes / power(1024, 3), 2) as size_gb
+              round(max(active_bytes) / power(1024, 3), 2) as size_gb
           from
               snowflake.account_usage.table_storage_metrics
           where
               active_bytes / power(1024, 3) >= {{ min_table_size_gb }}
+          group by 1, 2, 3
       )
       
       select
@@ -82,7 +83,6 @@
           count(mp.query_id) as total_slow_runs,
           max(mp.total_elapsed_time / 1000) as max_build_time_sec,
           avg(mp.total_elapsed_time / 1000) as avg_build_time_sec,
-          min(mp.query_type) as sample_query_type,
           case
               when ts.size_gb > 100 and avg(mp.total_elapsed_time / 1000) > 1800 then 'HIGH'
               when ts.size_gb > 50 or avg(mp.total_elapsed_time / 1000) > 900 then 'MEDIUM'
@@ -110,7 +110,6 @@
     {% set candidates = [] %}
 
     {{ log("--- Joining with dbt graph and checking table structure ---", info=true) }}
-    {{ log("Initial warehouse candidates: " ~ (performance_results.rows | length), info=true) }}
 
     {% for row in performance_results.rows %}
         {% set db = row["DATABASE_NAME"] %}
@@ -134,8 +133,6 @@
         {% endfor %}
 
         {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A' %}
-        {{ log("DEBUG candidate: " ~ fqn_key ~ " | query_type=" ~ row["SAMPLE_QUERY_TYPE"] ~ " | materialization=" ~ current_materialization, info=true) }}
-        
         {% set is_incremental_candidate = false %}
         {% set incremental_key_suggestion = 'N/A' %}
 
@@ -175,7 +172,6 @@
             'max_build_time_sec': row["MAX_BUILD_TIME_SEC"],
             'avg_build_time_sec': row["AVG_BUILD_TIME_SEC"],
             'total_slow_runs': row["TOTAL_SLOW_RUNS"],
-            'sample_query_type': row["SAMPLE_QUERY_TYPE"],
             'suitable_keys': incremental_key_suggestion,
             'priority': row["PRIORITY_KEY"],
             'recommendation': recommendation
@@ -190,9 +186,6 @@
     {{ log("-----------------------------------------------------------------------", info=true) }}
 
     {% set table_candidates = sorted_candidates | selectattr('dbt_materialization', 'equalto', 'table') | list %}
-
-    {{ log("Candidates after dbt graph join: " ~ (candidates | length), info=true) }}
-    {{ log("dbt table matches: " ~ (table_candidates | length), info=true) }}
 
     {% if table_candidates | length == 0 %}
         {{ log("No active recommendations for this project.", info=true) }}
@@ -220,7 +213,6 @@
 
         {{ log("[" ~ c.priority ~ "] Model: " ~ c.fqn, info=true) }}
         {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}
-        {{ log("  - Sample Query Type: " ~ c.sample_query_type, info=true) }}
         {{ log("  - Table Size: " ~ c.size_gb ~ " GB", info=true) }}
         {{ log("  - Avg Build Time: " ~ c.avg_build_time_sec ~ "s (Max: " ~ c.max_build_time_sec ~ "s, Slow Runs: " ~ c.total_slow_runs ~ ")", info=true) }}
         {{ log("  - Recommendation: " ~ c.recommendation, info=true) }}
