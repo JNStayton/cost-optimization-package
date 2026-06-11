@@ -127,7 +127,7 @@ select
     count(distinct query_id)                                        as total_runs,
     round(avg(total_elapsed_time_ms) / 1000.0, 2)                  as avg_elapsed_sec,
     round(sum(credits_attributed_compute), 6)                       as total_credits,
-    bool_or(credits_from_attribution)                               as credits_from_attribution
+    boolor_agg(credits_from_attribution)                               as credits_from_attribution
 from query_credits
 where credits_attributed_compute > 0
 group by stats_date, query_hash
