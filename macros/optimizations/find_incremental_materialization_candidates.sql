@@ -54,7 +54,10 @@
               qh.total_elapsed_time / 1000 > {{ max_build_time_sec }}
               and qh.start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
               and qh.execution_status = 'SUCCESS'
-              and (qh.query_text ilike 'CREATE TABLE%AS%SELECT%' or qh.query_text ilike 'CREATE OR REPLACE TABLE%')
+              and (
+                  qh.query_text ilike 'CREATE TABLE%AS%SELECT%'
+                  or qh.query_text ilike 'CREATE OR REPLACE TABLE%'
+              )
       ),
       
       table_size as (
@@ -90,8 +93,10 @@
       from
           model_performance mp
       inner join
-          table_size ts on
-              mp.database_name = ts.database_name and mp.schema_name = ts.schema_name and mp.table_name = ts.table_name
+          table_size ts
+          on mp.database_name = ts.database_name
+         and mp.schema_name = ts.schema_name
+         and mp.table_name = ts.table_name
       group by 1, 2, 3, 4
       order by priority_rank desc, max_build_time_sec desc
       limit 100
@@ -102,6 +107,7 @@
     {% set candidates = [] %}
 
     {{ log("--- Joining with dbt graph and checking table structure ---", info=true) }}
+    {{ log("Initial warehouse candidates: " ~ (performance_results.rows | length), info=true) }}
 
     {% for row in performance_results.rows %}
         {% set db = row["DATABASE_NAME"] %}
@@ -109,7 +115,7 @@
         {% set tb = row["TABLE_NAME"] %}
         {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
         
-        {# check dbt materialization — namespace() avoids Jinja loop-scoping bug #}
+        {# check dbt materialization #}
         {% set ns = namespace(model_node=none) %}
         {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
             {% set node_identifier = node.alias if node.alias else node.name %}
@@ -125,6 +131,7 @@
         {% endfor %}
 
         {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A' %}
+        {{ log("DEBUG candidate: " ~ fqn_key ~ " | materialization=" ~ current_materialization, info=true) }}
         
         {% set is_incremental_candidate = false %}
         {% set incremental_key_suggestion = 'N/A' %}
@@ -143,7 +150,6 @@
             {% endset %}
 
             {% set key_results = run_query(column_check_sql) %}
-
             {% set suitable_keys = key_results.columns[0].values()[0] if key_results.columns[0].values() else none %}
 
             {% if suitable_keys %}
@@ -158,7 +164,6 @@
         {% elif current_materialization == 'table' %}
             {% set recommendation = 'Verify keys (Manual Check)' %}
         {% endif %}
-
 
         {% do candidates.append({
             'fqn': fqn_key,
@@ -182,12 +187,23 @@
 
     {% set table_candidates = sorted_candidates | selectattr('dbt_materialization', 'equalto', 'table') | list %}
 
+    {{ log("Candidates after dbt graph join: " ~ (candidates | length), info=true) }}
+    {{ log("dbt table matches: " ~ (table_candidates | length), info=true) }}
+
     {% if table_candidates | length == 0 %}
         {{ log("No active recommendations for this project.", info=true) }}
         {{ log("", info=true) }}
-        {{ log("This means no dbt TABLE models in the current project exceeded the", info=true) }}
-        {{ log("build-time threshold (" ~ max_build_time_sec ~ "s) on tables >= " ~ min_table_size_gb ~ " GB", info=true) }}
-        {{ log("in the last " ~ lookback_days ~ " days.", info=true) }}
+        {% if performance_results.rows | length == 0 %}
+            {{ log("No Snowflake table builds met the warehouse criteria.", info=true) }}
+            {{ log("This means no CREATE TABLE / CREATE OR REPLACE TABLE builds exceeded the", info=true) }}
+            {{ log("build-time threshold (" ~ max_build_time_sec ~ "s) on tables >= " ~ min_table_size_gb ~ " GB", info=true) }}
+            {{ log("in the last " ~ lookback_days ~ " days.", info=true) }}
+        {% else %}
+            {{ log("Snowflake candidates were found, but none mapped to current dbt TABLE models in this project.", info=true) }}
+            {{ log("This usually means either:", info=true) }}
+            {{ log("  - the matched relations are not current dbt models in this target, or", info=true) }}
+            {{ log("  - the dbt graph relation/database/schema/identifier mapping did not line up.", info=true) }}
+        {% endif %}
         {{ log("", info=true) }}
         {{ log("Suggestions:", info=true) }}
         {{ log("  - Try extending lookback_days (e.g., --args '{lookback_days: 60}')", info=true) }}
