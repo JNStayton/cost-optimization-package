@@ -154,7 +154,7 @@ Where:
 |---------|---------|-----------|--------|
 | V1 | `(select_count * avg_exec_sec) + (query_ratio * 10)` multiplied by `partition_ratio_pct` | First attempt: combined signals additively + unbounded multiplier | Historical (`find_table_clustering_candidates.sql`) |
 | V2 | `select_count * avg_exec_sec` | Simplified: removed invisible additive term and unbounded multiplier; surfaced signals as display metrics only | Historical (`find_table_clustering_candidates_v2.sql`) |
-| V3 | `total_read_time * scan_ratio * stepped_read_boost` | Best of both: retains scan inefficiency signal (bounded 0-1), adds read-heaviness as a stepped multiplier, warehouse-size independent, uses per-table pruning data from TABLE_QUERY_PRUNING_HISTORY | Current (fact model + `find_table_clustering_candidates_v3.sql`) |
+| V3 | `total_read_time * scan_ratio * stepped_read_boost` | Best of both: retains scan inefficiency signal (bounded 0-1), adds read-heaviness as a stepped multiplier, warehouse-size independent, uses per-table pruning data from TABLE_QUERY_PRUNING_HISTORY | Current (fact model + `find_table_clustering_candidates.sql`) |
 
 V1's issues: the additive `query_ratio * 10` was orders of magnitude smaller than the first term in practice (invisible in ranking). The partition_ratio_pct multiplier was unbounded and could produce extreme scores for fragmented but unqueried tables.
 
@@ -169,7 +169,7 @@ The V3 scoring formula is implemented in two places with slightly different `rea
 | Implementation | read_heaviness_boost | Why |
 |---------------|---------------------|-----|
 | **DAG** (`fct_snowflake__table_clustering_candidates`) | `1 + log(2, query_to_dml_ratio + 1)` | SQL-native, continuous, produces smooth rankings across the full ratio spectrum |
-| **Macro** (`find_table_clustering_candidates_v3`) | Stepped multiplier: ratio >= 20 = 5x, >= 10 = 4x, >= 5 = 3x, >= 2 = 2x, else 1x | Fusion-safe (avoids Jinja `| log` on query results), discrete tiers |
+| **Macro** (`find_table_clustering_candidates`) | Stepped multiplier: ratio >= 20 = 5x, >= 10 = 4x, >= 5 = 3x, >= 2 = 2x, else 1x | Fusion-safe (avoids Jinja `| log` on query results), discrete tiers |
 
 Both produce the same directional rankings — tables with higher read:write ratios score higher. However, the absolute score magnitudes will not match exactly between a macro run and the fact model for the same table.
 

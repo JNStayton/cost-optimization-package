@@ -125,11 +125,11 @@ Some package features use views that are only available on Enterprise edition or
 | View | Required By | Edition |
 |------|-------------|---------|
 | `ACCESS_HISTORY` | Table-level spillage attribution, precise query-to-table mapping | Enterprise+ |
-| `QUERY_ATTRIBUTION_HISTORY` | Exact per-query credit attribution | Enterprise+ |
+
+Note: `QUERY_ATTRIBUTION_HISTORY` is available on all editions (data starts Aug 2024). The package automatically uses it when available and falls back to elapsed-time proration when a query has no attribution row.
 
 When these views are unavailable (Standard edition), the package gracefully falls back:
 - Spillage recommendations produce no rows (with an explanatory message)
-- Credit attribution uses elapsed-time proration (approximate, flagged in output)
 - Query-to-table attribution falls back to `query_text ILIKE` matching
 
 Set `snowflake_enterprise_edition: false` in your `dbt_project.yml` if you're on Standard edition.
@@ -187,7 +187,7 @@ dbt run --select tag:ai_spend
 
 ```bash
 # Find tables that should be clustered
-dbt run-operation find_table_clustering_candidates_v3
+dbt run-operation find_table_clustering_candidates
 
 # Find views that should be materialized
 dbt run-operation find_table_materialization_candidates
@@ -290,13 +290,13 @@ vars:
 
 ## Documentation
 
-Detailed documentation for each optimization path is in `docs/snowflake/`:
+Detailed documentation for each optimization path:
 
 | Doc | Covers |
 |-----|--------|
-| [Table Clustering Candidates](docs/snowflake/table_clustering_candidates.md) | Clustering candidate scoring (V3), key recommendations |
-| [Materialization Recommendations](docs/snowflake/materialization_recommendations.md) | View→table, table→incremental candidates |
-| [Incremental Config Deep Dive](docs/snowflake/incremental_config_recommendations.md) | Strategy selection, key detection, implementation guide |
-| [Warehouse Recommendations](docs/snowflake/warehouse_recommendations.md) | Sizing, spillage, expensive queries |
-| [AI/Cortex Spend Optimization](docs/snowflake/ai_cortex_spend_optimization.md) | Token monitoring, model cost, user attribution |
-| [Future Optimizations](docs/snowflake/future_optimizations.md) | Adaptive Compute, Gen2 changes, roadmap |
+| [Table Clustering Candidates](table_clustering_candidates.md) | Clustering candidate scoring (V3), key recommendations |
+| [Materialization Recommendations](materialization_recommendations.md) | View→table, table→incremental candidates |
+| [Incremental Config Deep Dive](incremental_config_recommendations.md) | Strategy selection, key detection, implementation guide |
+| [Warehouse Recommendations](warehouse_recommendations.md) | Sizing, spillage, expensive queries |
+| [AI/Cortex Spend Optimization](ai_cortex_spend_optimization.md) | Token monitoring, model cost, user attribution |
+| [Future Optimizations](future_optimizations.md) | Adaptive Compute, Gen2 changes, roadmap |
