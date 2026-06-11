@@ -17,7 +17,7 @@
       3. Run APPROX_COUNT_DISTINCT only against pre-filtered columns.
       4. Merge results into int_snowflake__column_cardinality.
 
-    When use_access_history_attribution = false (Standard edition), the pre-filter
+    When snowflake_enterprise_edition = false (Standard edition), the pre-filter
     step is skipped and cardinality is calculated for all eligible columns per table
     (those present in int_snowflake__table_columns, which already excludes unsupported
     data types like VARIANT/ARRAY/OBJECT).
@@ -31,7 +31,7 @@
 
     {% set cardinality_limit = var('clustering_key_cardinality_table_limit', 10) %}
     {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
-    {% set use_access_history = var('use_access_history_attribution', true) %}
+    {% set is_enterprise = var('snowflake_enterprise_edition', true) %}
 
     {# Resolve table references once #}
     {% set candidates_table = ref('fct_snowflake__table_clustering_candidates') %}
@@ -67,7 +67,7 @@
         {{ log("refresh_column_cardinality: scanning cardinality for " ~ table_fqn, info=true) }}
 
         {# Step 2: get columns to scan #}
-        {% if use_access_history %}
+        {% if is_enterprise %}
 
           {# Enterprise+: only columns with actual query access in the lookback window #}
           {% set columns_sql %}

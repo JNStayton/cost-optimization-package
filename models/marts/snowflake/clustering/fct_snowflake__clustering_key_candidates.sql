@@ -15,7 +15,7 @@
 
 {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
 {% set cardinality_limit = var('clustering_key_cardinality_table_limit', 10) %}
-{% set use_access_history = var('use_access_history_attribution', true) %}
+{% set is_enterprise = var('snowflake_enterprise_edition', true) %}
 
 with candidates as (
     select
@@ -56,7 +56,7 @@ table_columns as (
         )
 ),
 
-{% if use_access_history %}
+{% if is_enterprise %}
 column_usage as (
     -- Enterprise+: ACCESS_HISTORY provides precise column→query attribution;
     -- query_text matching is scoped to only queries that actually accessed the column.

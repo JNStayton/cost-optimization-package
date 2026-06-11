@@ -26,8 +26,33 @@
 
   {% if execute %}
 
+    {% set is_enterprise = var('snowflake_enterprise_edition', true) %}
+
     {{ log("--- Starting Warehouse Sizing Recommendation Analysis ---", info=true) }}
     {{ log("Criteria: warehouses with >= " ~ min_query_count ~ " successful dbt queries in last " ~ lookback_days ~ " days.", info=true) }}
+    {{ log("Edition: " ~ ('Enterprise+' if is_enterprise else 'Standard') ~ " | Config-aware: yes", info=true) }}
+
+    {# --- Fetch current warehouse config for gating --- #}
+    {% set config_sql %}
+        select
+            warehouse_name,
+            coalesce(resource_constraint, '') = 'STANDARD_GEN_2' as is_gen2,
+            coalesce(cluster_count, 1) > 1 as is_multicluster,
+            coalesce(warehouse_type, '') = 'ADAPTIVE' as is_adaptive
+        from snowflake.account_usage.warehouse_events_history
+        where event_name = 'WAREHOUSE_CONSISTENT'
+            and timestamp >= dateadd('day', -90, current_timestamp())
+        qualify row_number() over (partition by warehouse_name order by timestamp desc) = 1
+    {% endset %}
+    {% set config_results = run_query(config_sql) %}
+    {% set wh_config = {} %}
+    {% for row in config_results.rows %}
+        {% do wh_config.update({row["WAREHOUSE_NAME"]: {
+            "is_gen2": row["IS_GEN2"],
+            "is_multicluster": row["IS_MULTICLUSTER"],
+            "is_adaptive": row["IS_ADAPTIVE"]
+        }}) %}
+    {% endfor %}
 
     {% set performance_sql %}
       with dbt_sessions as (
@@ -132,13 +157,30 @@
             {% set reason = none %}
             {% set severity = 'info' %}
 
-            {% if recommendation_key == 'gen2' %}
+            {# Look up current config for this warehouse #}
+            {% set wh_cfg = wh_config.get(warehouse_name, {"is_gen2": false, "is_multicluster": false, "is_adaptive": false}) %}
+
+            {% if wh_cfg.is_adaptive %}
+                {% set recommendation = 'Stable — adaptive warehouse (self-optimizing)' %}
+                {% set reason = 'Adaptive warehouses auto-scale per query. No manual sizing action needed.' %}
+            {% elif recommendation_key == 'gen2' and wh_cfg.is_gen2 %}
+                {% set recommendation = 'Already on Gen2 — DML workload detected but Gen2 is active' %}
+                {% set reason = 'DML ratio of ' ~ dml_percentage ~ '% exceeds threshold but Gen2 is already enabled. Consider query optimization or workload splitting.' %}
+            {% elif recommendation_key == 'gen2' %}
                 {% set recommendation = 'Enable Gen2 warehouse (DML-heavy workload)' %}
                 {% set reason = 'DML ratio of ' ~ dml_percentage ~ '% exceeds the ' ~ dml_threshold_pct ~ '% threshold; Gen2 is optimized for DML.' %}
                 {% set severity = 'warn' %}
-            {% elif recommendation_key == 'mcw' %}
+            {% elif recommendation_key == 'mcw' and wh_cfg.is_multicluster %}
+                {% set recommendation = 'Already multi-cluster — review scaling policy or increase max_cluster_count' %}
+                {% set reason = 'Median overload of ' ~ median_overload_sec ~ 's exceeds 5s but warehouse is already multi-cluster. Review scaling policy or increase max clusters.' %}
+                {% set severity = 'warn' %}
+            {% elif recommendation_key == 'mcw' and is_enterprise %}
                 {% set recommendation = 'Enable multi-cluster (Enterprise+) or split workload across warehouses' %}
                 {% set reason = 'Median overload of ' ~ median_overload_sec ~ 's exceeds 5s and is >10% of median execution time (' ~ median_execution_sec ~ 's).' %}
+                {% set severity = 'warn' %}
+            {% elif recommendation_key == 'mcw' and not is_enterprise %}
+                {% set recommendation = 'Split workload across dedicated warehouses (Standard edition)' %}
+                {% set reason = 'Median overload of ' ~ median_overload_sec ~ 's exceeds 5s. Multi-cluster not available on Standard edition — split by workload type.' %}
                 {% set severity = 'warn' %}
             {% elif recommendation_key == 'scale_up' %}
                 {% set recommendation = 'Scale up single cluster' %}

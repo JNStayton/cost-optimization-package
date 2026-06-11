@@ -62,9 +62,8 @@ models:
 
 # Package variables — override in consuming project's dbt_project.yml
 vars:
-  # --- Snowflake: Shared ---
-  use_access_history_attribution: true
-  use_query_attribution: true
+  # --- Snowflake: Edition and shared settings ---
+  snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
   table_query_stats_full_account: false
 
   # --- Snowflake: Table clustering ---

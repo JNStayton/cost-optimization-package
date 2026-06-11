@@ -17,7 +17,8 @@
   Annual cost is projected from the lookback-window credit consumption
   multiplied by credit_rate_usd. Tune credit_rate_usd to your contract rate.
 
-  When use_query_attribution = false (Standard edition), credits are estimated
+  When QUERY_ATTRIBUTION_HISTORY has no data for a query (e.g., very short queries),
+  credits are estimated
   from warehouse_metering_history prorated by elapsed time share. The
   credits_from_attribution column flags which method was used.
 
@@ -142,7 +143,7 @@ select
                 || case
                     when not credits_from_attribution
                         then 'Note: credit estimate is approximate (Standard edition — '
-                            || 'set use_query_attribution = true for precise attribution).'
+                            || 'credits_from_attribution = false indicates estimated cost).'
                     else ''
                    end
         else

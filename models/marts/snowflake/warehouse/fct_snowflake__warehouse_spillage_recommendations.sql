@@ -20,8 +20,8 @@
     Improving  — recent 15-day spill < prior 15-day spill by more than 20%
     Stable     — within 20% of prior period
 
-  Requires Snowflake Enterprise Edition (use_access_history_attribution = true).
-  When use_access_history_attribution = false, table-level attribution is not
+  Requires Snowflake Enterprise Edition (snowflake_enterprise_edition = true).
+  When snowflake_enterprise_edition = false, table-level attribution is not
   available and this model will produce no rows.
 
   Controlled by the following dbt variables:
@@ -30,13 +30,13 @@
     - spillage_min_runs               (default 1)
 --#}
 
-{% set use_access_history  = var('use_access_history_attribution', true) %}
+{% set is_enterprise  = var('snowflake_enterprise_edition', true) %}
 {% set lookback_days       = var('spillage_lookback_days', 30) %}
 {% set min_total_gb        = var('spillage_min_total_gb', 0.05) %}
 {% set min_runs            = var('spillage_min_runs', 1) %}
 {% set trend_split_days    = (lookback_days / 2) | int %}
 
-{% if use_access_history %}
+{% if is_enterprise %}
 
 with table_spillage as (
     select
@@ -263,10 +263,10 @@ select
     null::string            as spill_trend,
     null::int               as warehouse_spill_days_30d,
     null::float             as warehouse_total_gb_spilled_30d,
-    'Not available — set use_access_history_attribution = true (Enterprise+)'
+    'Not available — requires Enterprise edition (snowflake_enterprise_edition = true)'
                             as recommendation,
     'ACCESS_HISTORY is required for table-level spillage attribution. '
-    || 'Set use_access_history_attribution = true in dbt_project.yml vars '
+    || 'Set snowflake_enterprise_edition = true in dbt_project.yml vars '
     || 'to enable this model (requires Snowflake Enterprise Edition or higher).'
                             as recommendation_reason
 where false

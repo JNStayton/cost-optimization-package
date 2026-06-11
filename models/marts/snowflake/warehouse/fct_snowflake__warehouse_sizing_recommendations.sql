@@ -36,6 +36,7 @@
 {% set lookback_days       = var('warehouse_sizing_lookback_days', 30) %}
 {% set dml_threshold       = var('warehouse_sizing_dml_threshold', 0.35) %}
 {% set min_query_count     = var('warehouse_sizing_min_query_count', 20) %}
+{% set is_enterprise       = var('snowflake_enterprise_edition', true) %}
 
 with window_30d as (
     select
@@ -97,15 +98,45 @@ scored as (
         coalesce(id.avg_idle_credit_pct_30d, 0)                     as avg_idle_credit_pct_30d,
         coalesce(id.total_idle_credits_30d, 0)                      as total_idle_credits_30d,
         coalesce(id.total_credits_30d, 0)                           as total_credits_30d,
+        -- Warehouse config state
+        coalesce(wc.is_gen2, false)                                  as is_gen2,
+        coalesce(wc.is_multicluster, false)                          as is_multicluster,
+        coalesce(wc.is_adaptive, false)                              as is_adaptive,
+        coalesce(wc.current_warehouse_type, 'STANDARD')              as current_warehouse_type,
         case
+            -- Adaptive warehouses self-optimize — skip all recs
+            when coalesce(wc.is_adaptive, false)
+                then 'stable'
+            -- Gen2: available on ALL editions, but only if not already Gen2
             when w30.dml_ratio_30d > {{ dml_threshold }}
+                 and not coalesce(wc.is_gen2, false)
                 then 'gen2'
+            -- Already Gen2 but DML-heavy
+            when w30.dml_ratio_30d > {{ dml_threshold }}
+                 and coalesce(wc.is_gen2, false)
+                then 'already_gen2'
+            -- MCW: Enterprise+ only, and not already multi-cluster
             when w30.median_overload_sec_30d > 5
                  and w30.overload_to_elapsed_ratio_30d > 0.1
+                 and not coalesce(wc.is_multicluster, false)
+                 and {{ is_enterprise }}
                 then 'mcw'
+            -- Would recommend MCW but Standard edition
+            when w30.median_overload_sec_30d > 5
+                 and w30.overload_to_elapsed_ratio_30d > 0.1
+                 and not coalesce(wc.is_multicluster, false)
+                 and not {{ is_enterprise }}
+                then 'split_workload'
+            -- Already MCW but still overloaded
+            when w30.median_overload_sec_30d > 5
+                 and w30.overload_to_elapsed_ratio_30d > 0.1
+                 and coalesce(wc.is_multicluster, false)
+                then 'review_scaling_policy'
+            -- Scale up (moderate overload)
             when w30.median_overload_sec_30d > 1
                  and w30.median_overload_sec_30d <= 5
                 then 'scale_up'
+            -- Scale down (oversized)
             when w30.median_execution_sec_30d < 5
                  and w30.median_overload_sec_30d < 0.5
                 then 'scale_down'
@@ -121,6 +152,8 @@ scored as (
     from window_30d as w30
     left join window_7d  as w7  on w7.warehouse_name  = w30.warehouse_name
     left join idle_30d   as id  on id.warehouse_name  = w30.warehouse_name
+    left join {{ ref('int_snowflake__warehouse_config') }} as wc
+        on w30.warehouse_name = wc.warehouse_name
 )
 
 select
@@ -146,8 +179,14 @@ select
     case
         when recommendation_key = 'gen2'
             then 'Enable Gen2 warehouse (DML-heavy workload)'
+        when recommendation_key = 'already_gen2'
+            then 'Already on Gen2 — DML workload detected but Gen2 is active'
         when recommendation_key = 'mcw'
             then 'Enable multi-cluster (Enterprise+) or split workload across warehouses'
+        when recommendation_key = 'split_workload'
+            then 'Split workload across dedicated warehouses (Standard edition — multi-cluster not available)'
+        when recommendation_key = 'review_scaling_policy'
+            then 'Already multi-cluster — review scaling policy or increase max_cluster_count'
         when recommendation_key = 'scale_up'
             then 'Scale up single cluster (moderate concurrency bottleneck)'
         when recommendation_key = 'scale_down'
@@ -162,6 +201,10 @@ select
                 || round({{ dml_threshold }} * 100, 0) || '%). '
                 || 'Gen2 warehouses are optimized for DML-heavy workloads. '
                 || 'Trend: ' || overload_trend || '.'
+        when recommendation_key = 'already_gen2'
+            then dml_pct_30d || '% of dbt queries are DML over the last '
+                || {{ lookback_days }} || ' days, but Gen2 is already enabled. '
+                || 'Consider query-level optimization or workload splitting if DML performance remains a concern.'
         when recommendation_key = 'mcw'
             then 'Median overload queue of ' || median_overload_sec_30d
                 || 's over the last ' || {{ lookback_days }} || ' days exceeds 5s '
@@ -170,6 +213,20 @@ select
                 || 'Trend: ' || overload_trend || '. '
                 || 'Consider multi-cluster (Enterprise+) or splitting the workload '
                 || 'across dedicated warehouses.'
+        when recommendation_key = 'split_workload'
+            then 'Median overload queue of ' || median_overload_sec_30d
+                || 's over the last ' || {{ lookback_days }} || ' days exceeds 5s '
+                || 'and is ' || round(overload_to_elapsed_ratio_30d * 100, 1)
+                || '% of median elapsed time — high concurrency bottleneck. '
+                || 'Trend: ' || overload_trend || '. '
+                || 'Multi-cluster is not available on Standard edition. '
+                || 'Split workload across dedicated warehouses by workload type.'
+        when recommendation_key = 'review_scaling_policy'
+            then 'Median overload queue of ' || median_overload_sec_30d
+                || 's over the last ' || {{ lookback_days }} || ' days — warehouse '
+                || 'is already multi-cluster but still experiencing concurrency pressure. '
+                || 'Trend: ' || overload_trend || '. '
+                || 'Review scaling policy, increase max_cluster_count, or split heavy workloads.'
         when recommendation_key = 'scale_up'
             then 'Median overload queue of ' || median_overload_sec_30d
                 || 's over the last ' || {{ lookback_days }} || ' days indicates '
@@ -199,7 +256,12 @@ select
                         || ' credits) — consider tightening auto-suspend settings.'
                 else 'Consider SQL-level optimization or schedule tuning if performance is unexpected.'
                end
-    end                                                             as recommendation_reason
+    end                                                             as recommendation_reason,
+    -- Warehouse config context
+    is_gen2,
+    is_multicluster,
+    is_adaptive,
+    current_warehouse_type
 from scored
 order by
     case recommendation_key

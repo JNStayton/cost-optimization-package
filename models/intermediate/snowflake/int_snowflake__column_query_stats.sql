@@ -4,7 +4,7 @@
     incremental_strategy='merge',
     unique_key='column_query_stats_daily_key',
     on_schema_change='append_new_columns',
-    enabled=(target.type == 'snowflake' and var('use_access_history_attribution', true))
+    enabled=(target.type == 'snowflake' and var('snowflake_enterprise_edition', true))
   )
 }}
 
@@ -27,7 +27,7 @@
   Also used by refresh_column_cardinality to pre-filter which columns are
   worth running APPROX_COUNT_DISTINCT against (query_count, any access).
 
-  Enterprise+ only. Disabled when use_access_history_attribution = false.
+  Enterprise+ only. Disabled when snowflake_enterprise_edition = false.
   Initial lookback: 30 days. Override with column_query_stats_initial_lookback_days.
 --#}
 

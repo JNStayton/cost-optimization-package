@@ -76,7 +76,7 @@ models:
       base_objects_accessed and objects_modified for exact object-level attribution
       without query_text scan. Used by table_query_stats_daily and recommendation marts.
     config:
-      enabled: "{{ target.type == 'snowflake' and var('use_access_history_attribution', true) }}"
+      enabled: "{{ target.type == 'snowflake' and var('snowflake_enterprise_edition', true) }}"
     columns:
       - name: query_id
         description: Snowflake query identifier (joins to query_history)
@@ -163,9 +163,9 @@ models:
       One row per (query_id, table_fqn, column_name) from Snowflake ACCESS_HISTORY.
       Extends int_snowflake__query_table_access by flattening the columns[] array within
       each accessed object, providing exact engine-reported column-level read attribution.
-      Enterprise+ only — disabled when use_access_history_attribution = false.
+      Enterprise+ only — disabled when snowflake_enterprise_edition = false.
     config:
-      enabled: "{{ target.type == 'snowflake' and var('use_access_history_attribution', true) }}"
+      enabled: "{{ target.type == 'snowflake' and var('snowflake_enterprise_edition', true) }}"
     columns:
       - name: query_id
         description: Snowflake query identifier
@@ -195,10 +195,10 @@ models:
       Used by fct_snowflake__clustering_key_candidates for WHERE/JOIN usage scoring.
       query_count (any access) is also used by refresh_column_cardinality to pre-filter
       which columns are worth running APPROX_COUNT_DISTINCT against.
-      Enterprise+ only — disabled when use_access_history_attribution = false.
+      Enterprise+ only — disabled when snowflake_enterprise_edition = false.
     config:
       materialized: incremental
-      enabled: "{{ target.type == 'snowflake' and var('use_access_history_attribution', true) }}"
+      enabled: "{{ target.type == 'snowflake' and var('snowflake_enterprise_edition', true) }}"
     columns:
       - name: column_query_stats_daily_key
         description: Surrogate key derived from md5(access_date || table_fqn || column_name)

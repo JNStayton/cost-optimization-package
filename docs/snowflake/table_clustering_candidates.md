@@ -56,7 +56,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `use_access_history_attribution` | `true` | Set to `false` for Snowflake Standard edition (no ACCESS_HISTORY view). When `false`, query-to-table attribution falls back to `query_text` matching. |
+| `snowflake_enterprise_edition` | `true` | Set to `false` for Snowflake Standard edition (no ACCESS_HISTORY view). When `false`, query-to-table attribution falls back to `query_text` matching. |
 
 ### Query stats scope and performance
 
@@ -82,7 +82,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 # dbt_project.yml
 vars:
   # Standard edition Snowflake
-  use_access_history_attribution: false
+  snowflake_enterprise_edition: false
 
   # Include smaller tables for testing
   clustering_candidates_min_size_gb: 1

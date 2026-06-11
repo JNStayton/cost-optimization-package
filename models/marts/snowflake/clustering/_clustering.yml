@@ -240,7 +240,7 @@ models:
       Controlled by the following dbt variables:
         - clustering_key_cardinality_table_limit (default 10)
         - clustering_candidates_lookback_days    (default 7)
-        - use_access_history_attribution         (default true)
+        - snowflake_enterprise_edition         (default true)
     config:
       materialized: incremental
     columns:

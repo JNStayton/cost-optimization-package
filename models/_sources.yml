@@ -23,6 +23,7 @@ sources:
       - name: cortex_rest_api_usage_history
       - name: users
       - name: table_query_pruning_history
+      - name: warehouse_events_history
 
   - name: redshift_usage
     database: "{{ target.database }}" 

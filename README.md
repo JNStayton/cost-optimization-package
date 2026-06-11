@@ -145,7 +145,7 @@ When these views are unavailable (Standard edition), the package gracefully fall
 - Credit attribution uses elapsed-time proration (approximate, flagged in output)
 - Query-to-table attribution falls back to `query_text ILIKE` matching
 
-Set `use_access_history_attribution: false` in your `dbt_project.yml` if you're on Standard edition.
+Set `snowflake_enterprise_edition: false` in your `dbt_project.yml` if you're on Standard edition.
 
 ### ACCOUNT_USAGE Latency
 
@@ -222,28 +222,82 @@ dbt run-operation suggest_clustering_keys --args '{model_name: my_model}'
 
 ## Configuration
 
-All package variables can be overridden in your `dbt_project.yml`:
+All package variables can be overridden in your `dbt_project.yml` under `vars:`.
+
+### Edition and shared settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `snowflake_enterprise_edition` | `true` | Set to `false` for Standard edition. Controls ACCESS_HISTORY availability and multi-cluster recommendations. |
+| `table_query_stats_full_account` | `false` | When `true`, collects query stats for ALL tables in the account. When `false`, only dbt models in the current project. |
+
+### Table clustering
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `clustering_candidates_min_size_gb` | `100` | Minimum table size in GB to evaluate. Lower for dev environments. |
+| `clustering_candidates_lookback_days` | `7` | Days of query stats to aggregate when scoring. |
+| `clustering_candidates_dbt_project_only` | `true` | When `true`, only tables matching dbt models are included. |
+| `clustering_candidates_target_databases` | `[]` | Restrict evaluation to specific databases. Empty = no restriction. |
+| `clustering_candidates_target_schemas` | `[]` | Restrict evaluation to specific schemas. Empty = no restriction. |
+| `clustering_key_cardinality_table_limit` | `10` | Max tables to evaluate for column-level clustering key recommendations. |
+
+### Materialization
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `table_materialization_lookback_days` | `14` | Lookback window for view query history. |
+| `table_materialization_min_query_count` | `10` | Minimum queries for a view to appear in results. |
+| `incremental_candidates_lookback_days` | `60` | Lookback window for table rebuild history. |
+| `incremental_candidates_min_build_time_sec` | `300` | Min max build time for build-time trigger. |
+| `incremental_candidates_min_size_gb` | `2` | Min table size for size trigger. |
+| `incremental_candidates_min_compute_waste_score` | `5` | Min waste score for compute-waste trigger. |
+| `incremental_candidates_min_qualified_build_days` | `3` | Min CTAS days to trust growth signal. |
+| `incremental_candidates_min_compute_waste_avg_build_sec` | `30` | Min avg build time alongside waste trigger. |
+| `incremental_large_table_row_threshold` | `10000000` | Row count above which `delete+insert` preferred over `merge`. |
+| `incremental_large_table_gb_threshold` | `10` | Size in GB above which `delete+insert` preferred over `merge`. |
+
+### Warehouse optimization
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `warehouse_sizing_lookback_days` | `30` | Analysis window for sizing recommendations. |
+| `warehouse_sizing_dml_threshold` | `0.35` | DML ratio above which Gen2 is recommended. |
+| `warehouse_sizing_min_query_count` | `20` | Minimum dbt queries to evaluate a warehouse. |
+| `spillage_lookback_days` | `30` | Analysis window for spillage recommendations. |
+| `spillage_min_total_gb` | `0.05` | Minimum total spillage (GB) to appear in results. |
+| `spillage_min_runs` | `1` | Minimum DML/CTAS runs to appear in results. |
+| `expensive_query_lookback_days` | `30` | Analysis window for expensive queries. |
+| `expensive_query_credit_rate_usd` | `2` | Credit-to-dollar conversion rate (your contract rate). |
+| `expensive_query_high_cost_threshold` | `10000` | Annual projected cost threshold for "High Cost" tier. |
+| `expensive_query_min_total_credits` | `0.1` | Minimum credits consumed to appear in results. |
+| `expensive_query_top_n` | `50` | Maximum rows in expensive query output. |
+
+### AI/Cortex spend
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ai_spend_lookback_days` | `30` | Analysis window for AI spend models. |
+| `ai_spend_initial_lookback_days` | `30` | Initial backfill window on first build. |
+| `ai_credit_rate_usd` | `2` | Credit-to-dollar conversion rate for AI services. |
+| `ai_model_downgrade_output_token_threshold` | `100` | Avg output tokens below which a cheaper model is suggested. |
+| `ai_prompt_bloat_input_token_threshold` | `10000` | Avg input tokens above which prompt trimming is suggested. |
+| `ai_batch_opportunity_min_daily_calls` | `100` | Min daily calls for batch processing recommendation. |
+| `ai_user_spike_threshold_pct` | `200` | Percentage of baseline that triggers a user spike alert. |
+| `ai_user_concentration_threshold_pct` | `50` | % of total spend from one user that triggers concentration alert. |
+| `ai_min_credits_for_recommendation` | `1` | Min credits for a model to produce recommendations. |
+| `ai_min_queries_for_recommendation` | `10` | Min queries for a model to produce recommendations. |
+| `ai_rest_api_enabled` | `true` | Set to `false` to exclude REST API (dollar-billed) from AI analysis. |
+
+### Example: Standard edition configuration
 
 ```yaml
 vars:
-  # Edition settings
-  use_access_history_attribution: true   # Set to false for Standard edition
-  use_query_attribution: true            # Set to false for Standard edition
-
-  # Clustering
-  clustering_candidates_min_size_gb: 100
-  clustering_candidates_lookback_days: 7
-
-  # Warehouse
-  warehouse_sizing_lookback_days: 30
-  expensive_query_credit_rate_usd: 2     # Your contract rate
-
-  # AI/Cortex
-  ai_spend_lookback_days: 30
-  ai_credit_rate_usd: 2
+  snowflake_enterprise_edition: false
+  clustering_candidates_min_size_gb: 1    # Lower for testing
+  warehouse_sizing_lookback_days: 14
+  expensive_query_credit_rate_usd: 3.5    # Your contract rate
 ```
-
-See the documentation in `docs/snowflake/` for the full variable reference for each optimization path.
 
 ---
 

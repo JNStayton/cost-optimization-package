@@ -1,6 +1,6 @@
 {#--
   Daily query stats per table. Attribution uses either access_history (Enterprise+)
-  or query_text ILIKE (Standard). Set vars.use_access_history_attribution = false
+  or query_text ILIKE (Standard). Set vars.snowflake_enterprise_edition = false
   in dbt_project.yml for Standard edition (no ACCESS_HISTORY view).
 
   Scope:
@@ -22,9 +22,9 @@
   )
 }}
 
-{% set use_access_history = var('use_access_history_attribution', true) %}
+{% set is_enterprise = var('snowflake_enterprise_edition', true) %}
 {% set full_account = var('table_query_stats_full_account', false) %}
-{% set default_lookback = 30 if use_access_history else 7 %}
+{% set default_lookback = 30 if is_enterprise else 7 %}
 {% set initial_lookback_days = var('table_query_stats_initial_lookback_days', default_lookback) %}
 
 with candidate_tables as (
@@ -76,7 +76,7 @@ query_history as (
     {% endif %}
 ),
 
-{% if use_access_history %}
+{% if is_enterprise %}
 query_table_access as (
     select
         query_id,

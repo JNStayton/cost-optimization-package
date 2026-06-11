@@ -144,8 +144,8 @@ models:
       recent half: Worsening / Improving / Stable (20% threshold). The split point
       is dynamically calculated as lookback_days / 2.
 
-      Requires Snowflake Enterprise Edition (use_access_history_attribution = true).
-      When use_access_history_attribution = false, this model produces no rows.
+      Requires Snowflake Enterprise Edition (snowflake_enterprise_edition = true).
+      When snowflake_enterprise_edition = false, this model produces no rows.
 
       Controlled by the following dbt variables:
         - spillage_lookback_days          (default 30)
@@ -265,7 +265,7 @@ models:
       Annual cost is projected from the lookback-window credit consumption multiplied
       by credit_rate_usd. Tune credit_rate_usd to your contract rate (default $2/credit).
 
-      When use_query_attribution = false (Standard edition), credits are estimated from
+      When QUERY_ATTRIBUTION_HISTORY has no data for a query (short queries <= ~100ms), credits are estimated from
       warehouse_metering_history prorated by elapsed time share. The credits_from_attribution
       column flags which method was used.
 
