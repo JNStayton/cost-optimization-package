@@ -8,14 +8,21 @@
       score = total_read_time * partition_scan_ratio * read_heaviness_boost
 
       - total_read_time:       select_count * avg_exec_sec
-      - partition_scan_ratio:  avg_partitions_scanned / avg_partitions_total (0-1)
-                               Falls back to 0.5 when no partition stats available.
-      - read_heaviness_boost:  tiered multiplier based on query_to_dml_ratio
-                               to reward read-heavy tables without relying on
-                               unsupported Jinja math filters.
+      - partition_scan_ratio:  partitions_scanned / (partitions_scanned + partitions_pruned)
+                               From TABLE_QUERY_PRUNING_HISTORY (per-table, not per-query).
+                               Falls back to 0.5 when no pruning data available.
+      - read_heaviness_boost:  Stepped multiplier (1-5x) based on read:write ratio.
 
     This formula is warehouse-size independent: the scan ratio measures physical
-    pruning behavior, not wall-clock time on a particular warehouse size.
+    pruning behavior per table, not wall-clock time on a particular warehouse size.
+
+    Output tiers (recommendation_tier):
+      - High impact:     scan_ratio >= 0.5 AND score >= 1000
+      - Moderate impact: scan_ratio >= 0.5 AND score < 1000
+      - Low impact:      scan_ratio 0.2 - 0.5
+      - Healthy:         scan_ratio < 0.2 (pruning effective)
+      - Write-heavy:     query_ratio <= 1
+      - No read activity: select_count = 0
 
     A table is flagged as is_candidate when ALL of:
       1. select_count > 0 (actively read)
@@ -80,35 +87,44 @@
                 {# Skip — not a dbt model #}
             {% else %}
 
-                {% set stats_table = get_table_performance_stats(
+                {# --- Get per-table pruning stats --- #}
+                {% set pruning_table = get_table_pruning_stats(
                     db, sc, tb, lookback_days
                 ) %}
-                {% set stats = stats_table.rows[0] %}
+                {% set pruning = pruning_table.rows[0] %}
 
-                {% set select_count = ((stats["SELECT_COUNT"] or 0) | string) | int %}
-                {% set dml_count = ((stats["DML_COUNT"] or 0) | string) | int %}
-                {% set avg_exec_ms = (((stats["AVG_EXECUTION_TIME_MS"] or 0) | string) | float) %}
-                {% set avg_scanned = (((stats["AVG_PARTITIONS_SCANNED"] or 0) | string) | float) %}
-                {% set avg_total_parts = (((stats["AVG_PARTITIONS_TOTAL"] or 0) | string) | float) %}
+                {% set total_scanned = ((pruning["TOTAL_PARTITIONS_SCANNED"] or 0) | string) | int %}
+                {% set total_pruned = ((pruning["TOTAL_PARTITIONS_PRUNED"] or 0) | string) | int %}
+                {% set select_count = ((pruning["TOTAL_QUERY_COUNT"] or 0) | string) | int %}
+                {% set avg_exec_ms = (
+                    (pruning["AVG_EXECUTION_TIME_MS"] or 0) | string
+                ) | float %}
 
-                {% set actual_partitions = avg_total_parts | int %}
+                {# --- Get DML count for read:write ratio --- #}
+                {% set dml_table = get_table_dml_count(
+                    db, sc, tb, lookback_days
+                ) %}
+                {% set dml_count = ((dml_table.rows[0]["DML_COUNT"] or 0) | string) | int %}
+
+                {# --- Micropartitions from pruning history or get_large_tables fallback --- #}
+                {% set approx_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
+                {% set actual_partitions = total_scanned + total_pruned %}
                 {% if actual_partitions == 0 %}
-                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
+                    {% set actual_partitions = approx_partitions %}
                 {% endif %}
 
-                {# --- 4. V3 Scoring --- #}
+                {# --- 4. V3 Scoring (using per-table pruning data) --- #}
                 {% set avg_exec_sec = avg_exec_ms / 1000 %}
                 {% set safe_dml = 1 if dml_count == 0 else dml_count %}
                 {% set query_ratio = select_count / safe_dml %}
 
-                {# Partition scan ratio: 0-1, fallback to 0.5 if no data #}
+                {# Per-table scan ratio: scanned / (scanned + pruned). Fallback 0.5 when no data #}
                 {% set scan_ratio = 0.5 %}
-                {% if avg_scanned > 0 and avg_total_parts > 0 %}
-                    {% set scan_ratio = avg_scanned / avg_total_parts %}
+                {% if (total_scanned + total_pruned) > 0 %}
+                    {% set scan_ratio = total_scanned / (total_scanned + total_pruned) %}
                 {% endif %}
 
-                {# Read-heaviness boost: stepped multiplier instead of log math.
-                   Keeps read-heavy tables ranked higher while staying Fusion-safe. #}
+                {# Read-heaviness boost: stepped multiplier #}
                 {% set read_boost = 1 %}
                 {% if query_ratio >= 20 %}
                     {% set read_boost = 5 %}
@@ -137,6 +153,20 @@
                     {% set avg_rows_per_partition = total_rows / actual_partitions %}
                 {% endif %}
 
+                {# Recommendation tier #}
+                {% set recommendation_tier = 'Healthy' %}
+                {% if select_count == 0 %}
+                    {% set recommendation_tier = 'No read activity' %}
+                {% elif query_ratio <= 1 %}
+                    {% set recommendation_tier = 'Write-heavy' %}
+                {% elif scan_ratio >= 0.5 and score >= 1000 %}
+                    {% set recommendation_tier = 'High impact' %}
+                {% elif scan_ratio >= 0.5 %}
+                    {% set recommendation_tier = 'Moderate impact' %}
+                {% elif scan_ratio >= 0.2 %}
+                    {% set recommendation_tier = 'Low impact' %}
+                {% endif %}
+
                 {# Recommendation reason #}
                 {% set _scan_pct = (scan_ratio * 100) | int %}
                 {% set reason = '' %}
@@ -147,7 +177,7 @@
                 {% elif query_ratio <= 1 %}
                     {% set reason = 'Write-heavy — clustering ROI unclear.' %}
                 {% elif scan_ratio <= 0.5 %}
-                    {% set reason = 'Pruning already effective (scanning <50% of partitions).' %}
+                    {% set reason = 'Pruning already effective (scanning ' ~ _scan_pct ~ '% of partitions).' %}
                 {% else %}
                     {% set reason = 'Below size threshold or insufficient data.' %}
                 {% endif %}
@@ -158,12 +188,12 @@
                         "dbt_model": dbt_model_id,
                         "table_type": row['TABLE_TYPE'],
                         "is_candidate": is_candidate,
+                        "recommendation_tier": recommendation_tier,
                         "score": score,
                         "size_gb": row["SIZE_GB"],
                         "row_count": total_rows,
                         "micropartitions": actual_partitions,
                         "avg_rows_per_partition": avg_rows_per_partition,
-                        "avg_partitions_scanned": avg_scanned,
                         "scan_ratio_pct": (scan_ratio * 100),
                         "select_count": select_count,
                         "dml_count": dml_count,
@@ -200,7 +230,7 @@
                 {{ log("", info=true) }}
                 {{ log_recommendation(
                     title="Table: " ~ c.fqn,
-                    recommendation="Candidate: " ~ c.is_candidate ~ " | Score: " ~ c.score | int,
+                    recommendation=c.recommendation_tier ~ " | Score: " ~ c.score | int,
                     reason=c.reason,
                     metrics={
                         "table_size_gb": c.size_gb | int,

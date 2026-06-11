@@ -156,6 +156,7 @@ Snowflake's ACCOUNT_USAGE views have data latency:
 | `QUERY_HISTORY` | 10-15 minutes | 45 minutes |
 | `ACCESS_HISTORY` | 30-90 minutes | 3 hours |
 | `TABLE_STORAGE_METRICS` | 30-90 minutes | 3 hours |
+| `TABLE_QUERY_PRUNING_HISTORY` | 1-2 hours | 4 hours |
 | `WAREHOUSE_METERING_HISTORY` | 30-90 minutes | 3 hours |
 | `CORTEX_AI_FUNCTIONS_USAGE_HISTORY` | 10-30 minutes | 60 minutes |
 

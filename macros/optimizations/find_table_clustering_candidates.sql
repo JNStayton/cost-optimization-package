@@ -301,3 +301,47 @@
 
     {{ return(run_query(sql)) }}
 {% endmacro %}
+
+
+{% macro get_table_pruning_stats(table_database, table_schema, table_name, lookback_days) %}
+  {#--
+    Returns per-table pruning statistics from TABLE_QUERY_PRUNING_HISTORY.
+    This gives accurate, table-specific partition scan/prune counts
+    (unlike QUERY_HISTORY which reports query-level totals across all tables).
+  --#}
+    {% set sql %}
+    select
+        coalesce(sum(partitions_scanned), 0) as total_partitions_scanned,
+        coalesce(sum(partitions_pruned), 0) as total_partitions_pruned,
+        coalesce(sum(num_queries), 0) as total_query_count,
+        iff(
+            sum(num_queries) > 0,
+            sum(aggregate_query_execution_time) / sum(num_queries),
+            0
+        ) as avg_execution_time_ms
+    from snowflake.account_usage.table_query_pruning_history
+    where interval_start_time >= dateadd('day', -{{ lookback_days }}, current_timestamp())
+        and database_name = '{{ table_database }}'
+        and schema_name = '{{ table_schema }}'
+        and table_name = '{{ table_name }}'
+    {% endset %}
+    {{ return(run_query(sql)) }}
+{% endmacro %}
+
+
+{% macro get_table_dml_count(table_database, table_schema, table_name, lookback_days) %}
+  {#--
+    Returns DML operation count for a table from QUERY_HISTORY via query_text matching.
+    Used alongside get_table_pruning_stats to compute read:write ratio.
+  --#}
+    {% set sql %}
+    select
+        count(*) as dml_count
+    from snowflake.account_usage.query_history
+    where start_time >= dateadd('day', -{{ lookback_days }}, current_timestamp())
+        and query_text ilike '%{{ table_name }}%'
+        and query_type in ('INSERT', 'UPDATE', 'DELETE', 'MERGE')
+        and execution_status = 'SUCCESS'
+    {% endset %}
+    {{ return(run_query(sql)) }}
+{% endmacro %}

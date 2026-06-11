@@ -77,25 +77,33 @@ models:
             - At least one SELECT query was executed in the lookback window
             - Read/write query ratio > 1 (more reads than writes)
             - Table size meets or exceeds clustering_candidates_min_size_gb
-            - Partition pruning ratio > 0.5 (Snowflake scanned more than half of all
-              micropartitions on average, indicating limited pruning effectiveness)
+            - Per-table scan ratio > 0.5 (from TABLE_QUERY_PRUNING_HISTORY; more than
+              half of micropartitions are scanned on average)
+
+      - name: recommendation_tier
+        description: >
+          Impact-based classification derived from scan ratio and score. One of:
+          High impact (scan_ratio >= 0.5 AND score >= 1000), Moderate impact
+          (scan_ratio >= 0.5), Low impact (scan_ratio 0.2-0.5), Healthy
+          (scan_ratio < 0.2), Write-heavy (query_to_dml_ratio <= 1),
+          No read activity (select_count = 0). Use this for filtering and
+          prioritizing tables — more intuitive than the boolean is_candidate.
 
       - name: score
         description: >
           V3 composite priority score for clustering candidacy. Higher values indicate
           tables where clustering is more likely to improve query performance.
 
-          Formula: total_read_time * scan_inefficiency * read_heaviness_boost
+          Formula: total_read_time * scan_ratio * read_heaviness_boost
 
           - total_read_time: select_count * avg_query_duration_s (seconds spent reading)
-          - scan_inefficiency: avg_partitions_scanned / avg_partitions_total (0-1 ratio;
-            0.5 neutral fallback when no query history exists)
-          - read_heaviness_boost: 1 + log2(query_to_dml_ratio + 1) (bounded multiplier;
-            rewards read-heavy tables where clustering ROI is higher)
+          - scan_ratio: partitions_scanned / (partitions_scanned + partitions_pruned)
+            from TABLE_QUERY_PRUNING_HISTORY (per-table, 0.5 neutral fallback)
+          - read_heaviness_boost: stepped multiplier (1-5x) based on query_to_dml_ratio
 
           This formula is warehouse-size independent: the scan ratio measures physical
-          pruning behavior, not wall-clock time. Scores are not normalized and should
-          be used for relative ranking within a single snapshot_date.
+          pruning behavior per table, not wall-clock time. Scores are not normalized and
+          should be used for relative ranking within a single snapshot_date.
 
       - name: recommendation_reason
         description: >
@@ -154,6 +162,14 @@ models:
           tables. When no query history is available in the lookback window (and the pruning
           ratio cannot be computed), this column is the best available indicator that a table
           may benefit from clustering or from a full recluster operation.
+
+      - name: scan_ratio_pct
+        description: >
+          Per-table scan ratio as a percentage (0-100). Derived from TABLE_QUERY_PRUNING_HISTORY:
+          partitions_scanned / (partitions_scanned + partitions_pruned) * 100.
+          A value of 50% means half of the table's micropartitions are scanned on average.
+          Values above 50% indicate poor pruning and are the primary signal for clustering.
+          Null or 50% (fallback) when no pruning data is available.
 
       - name: avg_partitions_scanned
         description: >

@@ -22,6 +22,7 @@ sources:
       - name: cortex_search_serving_usage_history
       - name: cortex_rest_api_usage_history
       - name: users
+      - name: table_query_pruning_history
 
   - name: redshift_usage
     database: "{{ target.database }}" 

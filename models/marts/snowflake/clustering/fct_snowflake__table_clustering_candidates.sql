@@ -60,6 +60,17 @@ table_query_stats as (
             coalesce(sum(tqs.select_execution_time_ms_sum), 0) / nullif(sum(tqs.select_count), 0),
             0
         ) as avg_execution_time_ms,
+        -- Per-table pruning stats from TABLE_QUERY_PRUNING_HISTORY
+        coalesce(sum(tqs.pruning_partitions_scanned_sum), 0) as pruning_partitions_scanned,
+        coalesce(sum(tqs.pruning_partitions_pruned_sum), 0) as pruning_partitions_pruned,
+        -- Derived scan ratio: scanned / (scanned + pruned). Null when no pruning data.
+        iff(
+            coalesce(sum(tqs.pruning_partitions_scanned_sum), 0) + coalesce(sum(tqs.pruning_partitions_pruned_sum), 0) > 0,
+            sum(tqs.pruning_partitions_scanned_sum)::float
+                / (sum(tqs.pruning_partitions_scanned_sum) + sum(tqs.pruning_partitions_pruned_sum)),
+            null
+        ) as scan_ratio,
+        -- Legacy query-level partition stats (retained for other DAGs)
         iff(
             coalesce(sum(tqs.select_count), 0) > 0,
             coalesce(sum(tqs.select_partitions_scanned_sum), 0) / nullif(sum(tqs.select_count), 0),
@@ -92,11 +103,17 @@ scored as (
         coalesce(tqs.select_count, 0) as select_count,
         coalesce(tqs.dml_count, 0) as dml_count,
         coalesce(tqs.avg_execution_time_ms, 0) as avg_execution_time_ms,
+        -- Per-table scan ratio from TABLE_QUERY_PRUNING_HISTORY (0.5 fallback)
+        coalesce(tqs.scan_ratio, 0.5) as scan_ratio,
+        coalesce(tqs.pruning_partitions_scanned, 0) as pruning_partitions_scanned,
+        coalesce(tqs.pruning_partitions_pruned, 0) as pruning_partitions_pruned,
+        -- Legacy query-level stats (retained for display)
         coalesce(tqs.avg_partitions_scanned, 0) as avg_partitions_scanned,
         coalesce(tqs.avg_partitions_total, 0) as avg_partitions_total,
         lt.size_gb,
         coalesce(lt.row_count, 0) as row_count,
         coalesce(
+            nullif(coalesce(tqs.pruning_partitions_scanned, 0) + coalesce(tqs.pruning_partitions_pruned, 0), 0),
             nullif(coalesce(tqs.avg_partitions_total, 0), 0),
             lt.approx_micropartitions
         ) as micropartitions
@@ -126,15 +143,12 @@ final as (
         table_fqn,
         dbt_model,
         table_type,
-        -- recommendation (V3 scoring)
+        -- recommendation (V3 scoring — uses per-table scan_ratio from TABLE_QUERY_PRUNING_HISTORY)
         (
             case
                 when select_count > 0 then
                     (select_count * (avg_execution_time_ms / 1000.0))
-                    * coalesce(
-                        nullif(avg_partitions_scanned / nullif(avg_partitions_total, 0), 0),
-                        0.5
-                    )
+                    * scan_ratio
                     * (1 + log(2, (select_count / iff(dml_count = 0, 1, dml_count)) + 1))
                 else 0
             end
@@ -144,19 +158,31 @@ final as (
                 select_count > 0
                 and (select_count / iff(dml_count = 0, 1, dml_count)) > 1
                 and size_gb >= {{ min_size_gb }}
-                and (avg_partitions_scanned / nullif(avg_partitions_total, 0)) > 0.5
+                and scan_ratio > 0.5
             then true
             else false
         end as is_candidate,
+        -- Impact tier (replaces boolean-only output)
+        case
+            when select_count = 0 then 'No read activity'
+            when (select_count / iff(dml_count = 0, 1, dml_count)) <= 1 then 'Write-heavy'
+            when scan_ratio >= 0.5 and (
+                (select_count * (avg_execution_time_ms / 1000.0)) * scan_ratio
+                * (1 + log(2, (select_count / iff(dml_count = 0, 1, dml_count)) + 1))
+            ) >= 1000 then 'High impact'
+            when scan_ratio >= 0.5 then 'Moderate impact'
+            when scan_ratio >= 0.2 then 'Low impact'
+            else 'Healthy'
+        end as recommendation_tier,
         case
             when select_count > 0
                 and (select_count / iff(dml_count = 0, 1, dml_count)) > 1
                 and size_gb >= {{ min_size_gb }}
-                and (avg_partitions_scanned / nullif(avg_partitions_total, 0)) > 0.5
+                and scan_ratio > 0.5
             then
                 'Queries scan '
-                || round(avg_partitions_scanned / nullif(avg_partitions_total, 0) * 100, 0)
-                || '% of ' || coalesce(nullif(coalesce(avg_partitions_total, 0)::int, 0), micropartitions)
+                || round(scan_ratio * 100, 0)
+                || '% of ' || micropartitions
                 || ' micropartitions on average. '
                 || select_count || ' reads over the lookback window at '
                 || round(avg_execution_time_ms / 1000, 1) || 's average. '
@@ -168,8 +194,8 @@ final as (
                         then 'No read activity in lookback window.'
                     when (select_count / iff(dml_count = 0, 1, dml_count)) <= 1
                         then 'Write-heavy workload — clustering ROI unclear due to reclustering churn.'
-                    when coalesce(avg_partitions_scanned / nullif(avg_partitions_total, 0), 0) <= 0.5
-                        then 'Pruning already effective (scanning <50% of partitions on average).'
+                    when scan_ratio <= 0.5
+                        then 'Pruning already effective (scanning ' || round(scan_ratio * 100, 0) || '% of partitions on average).'
                     else 'Below size threshold or insufficient data for recommendation.'
                 end
         end as recommendation_reason,
@@ -184,6 +210,7 @@ final as (
             when micropartitions > 0 then round(row_count / micropartitions, 2)
             else 0
         end as avg_rows_per_micropartition,
+        round(scan_ratio * 100, 2) as scan_ratio_pct,
         avg_partitions_scanned,
         -- query activity
         select_count,
@@ -213,6 +240,7 @@ select
     table_type,
     -- recommendation
     is_candidate,
+    recommendation_tier,
     score,
     recommendation_reason,
     -- clustering state
@@ -223,6 +251,7 @@ select
     total_rows,
     current_micropartitions,
     avg_rows_per_micropartition,
+    scan_ratio_pct,
     avg_partitions_scanned,
     -- query activity
     select_count,
