@@ -10,9 +10,9 @@
       - total_read_time:       select_count * avg_exec_sec
       - partition_scan_ratio:  avg_partitions_scanned / avg_partitions_total (0-1)
                                Falls back to 0.5 when no partition stats available.
-      - read_heaviness_boost:  1 + log2(query_to_dml_ratio + 1)
-                               Bounded multiplier (~1 to ~8) that rewards read-heavy
-                               tables where clustering ROI is highest.
+      - read_heaviness_boost:  tiered multiplier based on query_to_dml_ratio
+                               to reward read-heavy tables without relying on
+                               unsupported Jinja math filters.
 
     This formula is warehouse-size independent: the scan ratio measures physical
     pruning behavior, not wall-clock time on a particular warehouse size.
@@ -24,10 +24,10 @@
       4. partition_scan_ratio > 0.5 (scanning >50% of partitions — poor pruning)
 
     How to run:
-      dbt run-operation find_table_clustering_candidates
+      dbt run-operation find_table_clustering_candidates_v3
 
     With custom args:
-      dbt run-operation find_table_clustering_candidates --args '{lookback_days: 14, ignore_table_size: true}'
+      dbt run-operation find_table_clustering_candidates_v3 --args '{lookback_days: 14, ignore_table_size: true}'
   --#}
 
     {% if ignore_table_size %}
@@ -40,16 +40,15 @@
 
         {{ log("--- Clustering Candidate Analysis (V3 scoring) ---", info=true) }}
         {{ log("Criteria: Table >= " ~ min_size_gb ~ " GB | Lookback: " ~ lookback_days ~ " days | dbt models only: " ~ dbt_project_only, info=true) }}
-        {{ log("Score: total_read_time * partition_scan_ratio * (1 + log2(read_write_ratio + 1))", info=true) }}
+        {{ log("Score: total_read_time * partition_scan_ratio * tiered_read_heaviness_boost", info=true) }}
 
         {# --- 1. Build dbt Model List --- #}
         {% set model_list = {} %}
-        {% for node in graph.nodes.values() | selectattr(
-            "resource_type", "equalto", "model"
-        ) %}
+        {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
             {% set db = node.database | upper %}
             {% set sc = node.schema | upper %}
-            {% set tb = node.alias | upper if node.alias else node.name | upper %}
+            {% set node_identifier = node.alias if node.alias else node.name %}
+            {% set tb = node_identifier | upper %}
             {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
             {% do model_list.update({fqn_key: node.unique_id}) %}
         {% endfor %}
@@ -88,15 +87,9 @@
 
                 {% set select_count = ((stats["SELECT_COUNT"] or 0) | string) | int %}
                 {% set dml_count = ((stats["DML_COUNT"] or 0) | string) | int %}
-                {% set avg_exec_ms = (
-                    (stats["AVG_EXECUTION_TIME_MS"] or 0) | string
-                ) | float %}
-                {% set avg_scanned = (
-                    (stats["AVG_PARTITIONS_SCANNED"] or 0) | string
-                ) | float %}
-                {% set avg_total_parts = (
-                    (stats["AVG_PARTITIONS_TOTAL"] or 0) | string
-                ) | float %}
+                {% set avg_exec_ms = (((stats["AVG_EXECUTION_TIME_MS"] or 0) | string) | float) %}
+                {% set avg_scanned = (((stats["AVG_PARTITIONS_SCANNED"] or 0) | string) | float) %}
+                {% set avg_total_parts = (((stats["AVG_PARTITIONS_TOTAL"] or 0) | string) | float) %}
 
                 {% set actual_partitions = avg_total_parts | int %}
                 {% if actual_partitions == 0 %}
@@ -114,10 +107,17 @@
                     {% set scan_ratio = avg_scanned / avg_total_parts %}
                 {% endif %}
 
-                {# Read heaviness boost: 1 + log2(ratio + 1), bounded ~1 to ~8 #}
+                {# Read-heaviness boost: stepped multiplier instead of log math.
+                   Keeps read-heavy tables ranked higher while staying Fusion-safe. #}
                 {% set read_boost = 1 %}
-                {% if query_ratio > 0 %}
-                    {% set read_boost = 1 + (query_ratio + 1) | log / 0.693 %}
+                {% if query_ratio >= 20 %}
+                    {% set read_boost = 5 %}
+                {% elif query_ratio >= 10 %}
+                    {% set read_boost = 4 %}
+                {% elif query_ratio >= 5 %}
+                    {% set read_boost = 3 %}
+                {% elif query_ratio >= 2 %}
+                    {% set read_boost = 2 %}
                 {% endif %}
 
                 {# V3 score: total_read_time * scan_ratio * read_boost #}
@@ -179,8 +179,7 @@
 
         {% if preview_only %}
         {# --- 5. Output Results --- #}
-        {# SQL already orders by score desc — preserve that order #}
-        {% set sorted_candidates = candidates %}
+        {% set sorted_candidates = candidates | sort(attribute="score", reverse=true) %}
 
         {{ log("\n--- Top 10 Clustering Candidates ---", info=true) }}
 
