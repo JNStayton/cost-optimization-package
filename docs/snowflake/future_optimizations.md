@@ -276,6 +276,86 @@ A practical first step would be to add `recommendation_state`, `recommendation_c
 
 ---
 
+## Clustering Health Analysis (for already-clustered tables)
+
+**Status:** Planned  
+**Priority:** High  
+**Scope:** New model within the clustering optimization domain  
+**Prerequisites:** Existing `fct_snowflake__table_clustering_candidates` (V3 pruning-based scoring)
+
+### Why This Matters
+
+The current clustering DAG answers "which tables should be clustered?" But it does not answer "are already-clustered tables healthy?" — which is equally important.
+
+A table with `is_already_clustered = true` may still show poor pruning (high `scan_ratio_pct`) because:
+- The clustering key is misaligned with actual query filter patterns
+- High DML volume has degraded clustering depth faster than auto-reclustering can maintain it
+- Auto-reclustering is suspended (intentionally or accidentally)
+- The table exceeds the auto-reclustering throughput budget
+
+### Proposed Model
+
+**`fct_snowflake__clustering_health`**
+
+- Grain: one row per clustered table per snapshot_date
+- Only evaluates tables where `is_already_clustered = true`
+- Joins to `fct_snowflake__table_clustering_candidates` to correlate health with pruning behavior
+
+### Data Sources
+
+#### 1. `AUTOMATIC_CLUSTERING_HISTORY` (ACCOUNT_USAGE view)
+
+Standard ACCOUNT_USAGE view. Provides:
+- `credits_used` — reclustering compute cost per table per time window
+- `num_bytes_reclustered` — volume of data reorganized
+- `num_rows_reclustered` — rows touched by reclustering
+- Latency: up to 3 hours. Retention: 1 year.
+
+Proposed derived columns:
+- `reclustering_credits_30d`
+- `is_actively_reclustering` (boolean)
+- `avg_daily_reclustering_credits`
+
+#### 2. `SYSTEM$CLUSTERING_INFORMATION` (system function — real-time)
+
+Per-table function call (not a queryable view). Provides:
+- `average_depth` (lower = better, 1 = perfectly clustered)
+- `average_overlaps`
+- `total_partition_count` vs `total_constant_partition_count`
+- `clustering_errors` (e.g., "Clustering service has been disabled")
+
+Requires per-table iteration — macro-only or post-hook path. Cannot be a standard SQL model.
+
+Proposed derived columns:
+- `avg_clustering_depth`
+- `constant_partition_pct`
+- `clustering_health` (good/moderate/degraded based on depth thresholds)
+
+### Recommendations This Model Would Produce
+
+| Scenario | Recommendation |
+|----------|---------------|
+| High depth + high scan_ratio + active reclustering | Key misaligned with query patterns — review key choice |
+| High depth + high scan_ratio + NOT reclustering | Auto-clustering may be suspended — investigate |
+| Low depth + high scan_ratio | Key maintained but doesn't match filter columns — consider different key |
+| Low depth + low scan_ratio | Healthy — clustering working as intended |
+| High reclustering credits + low query volume | Over-clustered — cost may exceed benefit |
+
+### Implementation Path
+
+1. Start with `AUTOMATIC_CLUSTERING_HISTORY` in the DAG (standard staging + intermediate + fact)
+2. Add `SYSTEM$CLUSTERING_DEPTH` to the macro path for interactive checks
+3. Evaluate whether a post-hook or stored procedure is needed to bring depth data into the DAG
+
+### References
+
+- [SYSTEM$CLUSTERING_INFORMATION](https://docs.snowflake.com/en/sql-reference/functions/system_clustering_information)
+- [SYSTEM$CLUSTERING_DEPTH](https://docs.snowflake.com/en/sql-reference/functions/system_clustering_depth)
+- [AUTOMATIC_CLUSTERING_HISTORY](https://docs.snowflake.com/en/sql-reference/account-usage/automatic_clustering_history)
+- [Automatic Clustering](https://docs.snowflake.com/en/user-guide/tables-auto-reclustering)
+
+---
+
 ## Storage Optimization Path
 
 **Status:** Planned  

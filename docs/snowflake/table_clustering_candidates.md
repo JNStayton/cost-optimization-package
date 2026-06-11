@@ -162,6 +162,20 @@ V2's issues: lost the scan efficiency signal entirely — a table scanned at 90%
 
 V3 addresses both: the scan ratio directly measures pruning effectiveness (independent of warehouse size), and the read-heaviness boost is meaningful but bounded.
 
+### Scoring divergence: DAG vs macro
+
+The V3 scoring formula is implemented in two places with slightly different `read_heaviness_boost` calculations:
+
+| Implementation | read_heaviness_boost | Why |
+|---------------|---------------------|-----|
+| **DAG** (`fct_snowflake__table_clustering_candidates`) | `1 + log(2, query_to_dml_ratio + 1)` | SQL-native, continuous, produces smooth rankings across the full ratio spectrum |
+| **Macro** (`find_table_clustering_candidates_v3`) | Stepped multiplier: ratio >= 20 = 5x, >= 10 = 4x, >= 5 = 3x, >= 2 = 2x, else 1x | Fusion-safe (avoids Jinja `| log` on query results), discrete tiers |
+
+Both produce the same directional rankings — tables with higher read:write ratios score higher. However, the absolute score magnitudes will not match exactly between a macro run and the fact model for the same table.
+
+**Use the DAG** for persistent daily monitoring, trend analysis, and dashboards.
+**Use the macro** for one-off interactive checks and quick assessments.
+
 ---
 
 ## Understanding `is_candidate` and `recommendation_tier`

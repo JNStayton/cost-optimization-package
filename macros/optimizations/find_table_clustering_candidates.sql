@@ -1,53 +1,63 @@
 {% macro find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[], preview_only=true) %}
 
   {#--
-    Orchestrates all macros to suggest tables in project that might benefit from clustering.
+    Identifies Snowflake tables that may benefit from clustering, scored by
+    observed scan inefficiency, query volume, and read/write ratio.
 
-    WARNING: This macro performs Jinja arithmetic on run_query results (| int, | float).
-    This may fail under dbt Fusion. Use find_table_clustering_candidates_v3 instead.
+    V3 scoring formula:
+      score = total_read_time * partition_scan_ratio * read_heaviness_boost
 
-    This will log the top 10 candidates for clustering. Start here, implement the fixes where applicable, and then run again.
+      - total_read_time:       select_count * avg_exec_sec
+      - partition_scan_ratio:  partitions_scanned / (partitions_scanned + partitions_pruned)
+                               From TABLE_QUERY_PRUNING_HISTORY (per-table, not per-query).
+                               Falls back to 0.5 when no pruning data available.
+      - read_heaviness_boost:  Stepped multiplier (1-5x) based on read:write ratio.
 
-    You can optionally pass in a list of target databases/schemas to scan, or set to scan the entire account.
-    
-    By default, we are only evaluating tables that are at least 1TB in size, but you can set ignore_table_size to true to evaluate all tables regardless of size (useful for dev environments or if you want to find smaller candidates).
+    This formula is warehouse-size independent: the scan ratio measures physical
+    pruning behavior per table, not wall-clock time on a particular warehouse size.
 
-    [TODO] Creates/updates a model with the information for historical analysis. preview_only flag will just print the results in the logs without creating/updating the model. Right now the logic to create/update a model is not present, so this flag doesn't do anything... yet!
+    Output tiers (recommendation_tier):
+      - High impact:     scan_ratio >= 0.5 AND score >= 1000
+      - Moderate impact: scan_ratio >= 0.5 AND score < 1000
+      - Low impact:      scan_ratio 0.2 - 0.5
+      - Healthy:         scan_ratio < 0.2 (pruning effective)
+      - Write-heavy:     query_ratio <= 1
+      - No read activity: select_count = 0
+
+    A table is flagged as is_candidate when ALL of:
+      1. select_count > 0 (actively read)
+      2. query_to_dml_ratio > 1 (read-heavy)
+      3. table size >= min_size_gb
+      4. partition_scan_ratio > 0.5 (scanning >50% of partitions — poor pruning)
 
     How to run:
-    dbt run-operation find_table_clustering_candidates 
+      dbt run-operation find_table_clustering_candidates_v3
 
-    How to run with custom args:
-
-    dbt run-operation find_table_clustering_candidates --args '{lookback_days: 10, target_databases: ['db_1', 'db_2']}'
+    With custom args:
+      dbt run-operation find_table_clustering_candidates_v3 --args '{lookback_days: 14, ignore_table_size: true}'
   --#}
 
-    {% if ignore_table_size %} 
+    {% if ignore_table_size %}
         {% set min_size_gb = 1 %}
-    {% else %} 
+    {% else %}
         {% set min_size_gb = 100 %}
     {% endif %}
 
     {% if execute %}
 
-        {{ log("--- Starting Clustering Candidate Analysis ---", info=true) }}
-        {{ log("Criteria: Table > " ~ min_size_gb ~ " GB | Lookback: " ~ lookback_days ~ " days | Must be dbt model: " ~ dbt_project_only, info=true) }}
+        {{ log("--- Clustering Candidate Analysis (V3 scoring) ---", info=true) }}
+        {{ log("Criteria: Table >= " ~ min_size_gb ~ " GB | Lookback: " ~ lookback_days ~ " days | dbt models only: " ~ dbt_project_only, info=true) }}
+        {{ log("Score: total_read_time * partition_scan_ratio * tiered_read_heaviness_boost", info=true) }}
 
         {# --- 1. Build dbt Model List --- #}
         {% set model_list = {} %}
-        {% for node in graph.nodes.values() | selectattr(
-            "resource_type", "equalto", "model"
-        ) %}
+        {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
             {% set db = node.database | upper %}
             {% set sc = node.schema | upper %}
-            {% set tb = node.alias | upper if node.alias else node.name | upper %}
+            {% set node_identifier = node.alias if node.alias else node.name %}
+            {% set tb = node_identifier | upper %}
             {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
             {% do model_list.update({fqn_key: node.unique_id}) %}
-        {% endfor %}
-
-        {{ log("Models in dbt project: ", info=true) }}
-        {% for key, val in model_list.items() %}
-            {{ log(val, info=true) }}
         {% endfor %}
 
         {# --- 2. Get Large Tables --- #}
@@ -64,87 +74,113 @@
 
         {% set candidates = [] %}
 
-        {# --- 3. Deep Dive --- #}
+        {# --- 3. Evaluate Each Table --- #}
         {% for row in large_tables %}
             {% set db = row["TABLE_DATABASE"] %}
             {% set sc = row["TABLE_SCHEMA"] %}
             {% set tb = row["TABLE_NAME"] %}
             {% set fqn = db ~ "." ~ sc ~ "." ~ tb %}
 
-            {# Check if this table is managed by dbt #}
             {% set dbt_model_id = model_list.get(fqn, none) %}
 
-
             {% if dbt_project_only and dbt_model_id is none %}
-                {# Skip this iteration #}
+                {# Skip — not a dbt model #}
             {% else %}
 
-                {# Get Query Stats #}
-                {% set stats_table = get_table_performance_stats(
+                {# --- Get per-table pruning stats --- #}
+                {% set pruning_table = get_table_pruning_stats(
                     db, sc, tb, lookback_days
                 ) %}
-                {% set stats = stats_table.rows[0] %}
+                {% set pruning = pruning_table.rows[0] %}
 
-                {% set select_count = ((stats["SELECT_COUNT"] or 0) | string) | int %}
-                {% set dml_count = ((stats["DML_COUNT"] or 0) | string) | int %}
+                {% set total_scanned = ((pruning["TOTAL_PARTITIONS_SCANNED"] or 0) | string) | int %}
+                {% set total_pruned = ((pruning["TOTAL_PARTITIONS_PRUNED"] or 0) | string) | int %}
+                {% set select_count = ((pruning["TOTAL_QUERY_COUNT"] or 0) | string) | int %}
                 {% set avg_exec_ms = (
-                    (stats["AVG_EXECUTION_TIME_MS"] or 0) | string
-                ) | float %}
-                {% set avg_scanned = (
-                    (stats["AVG_PARTITIONS_SCANNED"] or 0) | string
-                ) | float %}
-                {% set avg_total_parts = (
-                    (stats["AVG_PARTITIONS_TOTAL"] or 0) | string
+                    (pruning["AVG_EXECUTION_TIME_MS"] or 0) | string
                 ) | float %}
 
-                {% set actual_partitions = avg_total_parts | int %}
+                {# --- Get DML count for read:write ratio --- #}
+                {% set dml_table = get_table_dml_count(
+                    db, sc, tb, lookback_days
+                ) %}
+                {% set dml_count = ((dml_table.rows[0]["DML_COUNT"] or 0) | string) | int %}
+
+                {# --- Micropartitions from pruning history or get_large_tables fallback --- #}
+                {% set approx_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
+                {% set actual_partitions = total_scanned + total_pruned %}
                 {% if actual_partitions == 0 %}
-                    {% set actual_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
+                    {% set actual_partitions = approx_partitions %}
                 {% endif %}
 
-                {# --- 4. Scoring & Logic --- #}
-                {% set is_candidate = false %}
-                {% set base_score = 0 %}
+                {# --- 4. V3 Scoring (using per-table pruning data) --- #}
+                {% set avg_exec_sec = avg_exec_ms / 1000 %}
                 {% set safe_dml = 1 if dml_count == 0 else dml_count %}
                 {% set query_ratio = select_count / safe_dml %}
 
-                {# Query Volume * Execution Time * (Query/DML Ratio) #}
-                {% if select_count > 0 %}
-                    {% set base_score = (select_count * (avg_exec_ms / 1000)) + (
-                        query_ratio * 10
-                    ) %}
+                {# Per-table scan ratio: scanned / (scanned + pruned). Fallback 0.5 when no data #}
+                {% set scan_ratio = 0.5 %}
+                {% if (total_scanned + total_pruned) > 0 %}
+                    {% set scan_ratio = total_scanned / (total_scanned + total_pruned) %}
+                {% endif %}
 
-                    {# High Reads vs Writes #}
-                    {% if query_ratio > 1 and row["SIZE_GB"] >= min_size_gb %}
+                {# Read-heaviness boost: stepped multiplier #}
+                {% set read_boost = 1 %}
+                {% if query_ratio >= 20 %}
+                    {% set read_boost = 5 %}
+                {% elif query_ratio >= 10 %}
+                    {% set read_boost = 4 %}
+                {% elif query_ratio >= 5 %}
+                    {% set read_boost = 3 %}
+                {% elif query_ratio >= 2 %}
+                    {% set read_boost = 2 %}
+                {% endif %}
+
+                {# V3 score: total_read_time * scan_ratio * read_boost #}
+                {% set score = 0 %}
+                {% set is_candidate = false %}
+                {% if select_count > 0 %}
+                    {% set score = select_count * avg_exec_sec * scan_ratio * read_boost %}
+                    {% if query_ratio > 1 and scan_ratio > 0.5 %}
                         {% set is_candidate = true %}
                     {% endif %}
                 {% endif %}
 
-                {# Calculate Avg Rows Per Parition #}
+                {# Avg rows per partition #}
                 {% set total_rows = row['ROW_COUNT'] | string | int %}
                 {% set avg_rows_per_partition = 0 %}
                 {% if actual_partitions > 0 %}
                     {% set avg_rows_per_partition = total_rows / actual_partitions %}
                 {% endif %}
 
-                {# 1. Calculate Ratio: Partitions vs Rows #}
-                {% set partition_ratio_pct = 0 %}
-                {% if total_rows > 0 %}
-                    {% set partition_ratio_pct = (actual_partitions / total_rows) * 100 %}
+                {# Recommendation tier #}
+                {% set recommendation_tier = 'Healthy' %}
+                {% if select_count == 0 %}
+                    {% set recommendation_tier = 'No read activity' %}
+                {% elif query_ratio <= 1 %}
+                    {% set recommendation_tier = 'Write-heavy' %}
+                {% elif scan_ratio >= 0.5 and score >= 1000 %}
+                    {% set recommendation_tier = 'High impact' %}
+                {% elif scan_ratio >= 0.5 %}
+                    {% set recommendation_tier = 'Moderate impact' %}
+                {% elif scan_ratio >= 0.2 %}
+                    {% set recommendation_tier = 'Low impact' %}
                 {% endif %}
 
-                {# 2. Calculate Multiplier Based on Partition Percentage #}
-                {# Ideally, this number is < 0.001%. If it rises above this, we multiply the score. #}
-                
-                {% set multiplier = 1 %}
-                
-                {# If partitions represent more than 0.01% of rows, start penalizing #}
-                {% if partition_ratio_pct > 0.0001 %}
-                    {# Use the ratio as the multiplier. e.g. 10% ratio = 10x score boost #}
-                    {% set multiplier = partition_ratio_pct %}
+                {# Recommendation reason #}
+                {% set _scan_pct = (scan_ratio * 100) | int %}
+                {% set reason = '' %}
+                {% if is_candidate %}
+                    {% set reason = 'Queries scan ' ~ _scan_pct ~ '% of ' ~ actual_partitions ~ ' micropartitions. ' ~ select_count ~ ' reads at ' ~ avg_exec_sec ~ 's avg. Ratio: ' ~ query_ratio ~ ':1. Clustering on filtered columns would reduce scan overhead.' %}
+                {% elif select_count == 0 %}
+                    {% set reason = 'No read activity in lookback window.' %}
+                {% elif query_ratio <= 1 %}
+                    {% set reason = 'Write-heavy — clustering ROI unclear.' %}
+                {% elif scan_ratio <= 0.5 %}
+                    {% set reason = 'Pruning already effective (scanning ' ~ _scan_pct ~ '% of partitions).' %}
+                {% else %}
+                    {% set reason = 'Below size threshold or insufficient data.' %}
                 {% endif %}
-
-                {% set final_score = base_score * multiplier %}
 
                 {% do candidates.append(
                     {
@@ -152,26 +188,29 @@
                         "dbt_model": dbt_model_id,
                         "table_type": row['TABLE_TYPE'],
                         "is_candidate": is_candidate,
-                        "score": final_score,
+                        "recommendation_tier": recommendation_tier,
+                        "has_pruning_data": (total_scanned + total_pruned) > 0,
+                        "score": score,
                         "size_gb": row["SIZE_GB"],
-                        'row_count': total_rows,
+                        "row_count": total_rows,
                         "micropartitions": actual_partitions,
                         "avg_rows_per_partition": avg_rows_per_partition,
-                        "avg_partitions_scanned": avg_scanned,
+                        "scan_ratio_pct": (scan_ratio * 100),
                         "select_count": select_count,
                         "dml_count": dml_count,
-                        "avg_exec_sec": (avg_exec_ms / 1000),
+                        "query_ratio": query_ratio,
+                        "avg_exec_sec": avg_exec_sec,
+                        "read_boost": read_boost,
+                        "reason": reason,
                     }
                 ) %}
-            
-            {% endif %}
 
+            {% endif %}
         {% endfor %}
 
         {% if preview_only %}
         {# --- 5. Output Results --- #}
-        {# SQL already orders by score desc — preserve that order #}
-        {% set sorted_candidates = candidates %}
+        {% set sorted_candidates = candidates | sort(attribute="score", reverse=true) %}
 
         {{ log("\n--- Top 10 Clustering Candidates ---", info=true) }}
 
@@ -179,7 +218,7 @@
             {{ log("No clustering candidates found.", info=true) }}
             {{ log("", info=true) }}
             {{ log("Large tables were found but none qualified as candidates.", info=true) }}
-            {{ log("Candidate criteria: read activity > 0, query metrics above threshold.", info=true) }}
+            {{ log("Candidate criteria: read activity > 0, read:write ratio > 1, scan ratio > 50%.", info=true) }}
             {{ log("", info=true) }}
             {{ log("Suggestions:", info=true) }}
             {{ log("  - Try extending lookback_days (e.g., --args '{lookback_days: 14}')", info=true) }}
@@ -189,159 +228,32 @@
 
         {% for c in sorted_candidates %}
             {% if loop.index <= 10 %}
-                {{ log("------------------------------------------------", info=true) }}
-                {{ log("Table: " ~ c.fqn, info=true) }}
-                {{ log("dbt Model: " ~ c.dbt_model, info=true) }}
-                {{ log("Table Type: " ~ c.table_type, info=true) }}
-                {{log("Score: " ~ c.score | int ~ " | Potential candidate? " ~ c.is_candidate, info=true)}}
-                {{ log("Table Size: " ~ c.size_gb | int ~ " GB ", info=true) }}
-                {{ log("Total rows: " ~ c.row_count, info=true) }}
-                {{ log("Current Micropartitions: " ~ c.micropartitions, info=true) }}
-                {{ log("Average Rows per Micropartition: " ~ c.avg_rows_per_partition, info=true)}}
-                {{log("Average Partitions Scanned: " ~ c.avg_partitions_scanned, info=true) }}
-                {{log("Usage: " ~ c.select_count ~ " SELECTs | " ~ c.dml_count ~ " DMLs (Ratio: " ~ (c.select_count / (c.dml_count + 1)) ~ ")", info=true) }}
-                {{ log("Average Query Duration: " ~ c.avg_exec_sec ~ "s", info=true) }}
+                {{ log("", info=true) }}
+                {{ log_recommendation(
+                    title="Table: " ~ c.fqn,
+                    recommendation=c.recommendation_tier ~ " | Score: " ~ c.score | int,
+                    reason=c.reason,
+                    metrics={
+                        "table_size_gb": c.size_gb | int,
+                        "total_rows": c.row_count,
+                        "micropartitions": c.micropartitions,
+                        "avg_rows_per_partition": c.avg_rows_per_partition,
+                        "scan_ratio": c.scan_ratio_pct ~ "%",
+                        "select_count": c.select_count,
+                        "dml_count": c.dml_count,
+                        "read_write_ratio": c.query_ratio,
+                        "avg_exec_sec": c.avg_exec_sec,
+                        "read_boost": c.read_boost ~ "x"
+                    },
+                    severity='warn' if c.is_candidate else 'info'
+                ) }}
                 {% if c.is_candidate and c.dbt_model %}
-                    {{ log("Next step: run `dbt run-operation suggest_clustering_keys --args '{model_name: <your_model_name>}'` for column-level clustering key recommendations.", info=true) }}
+                    {{ log("  Next: dbt run-operation suggest_clustering_keys --args '{model_name: <model>}'", info=true) }}
                 {% endif %}
             {% endif %}
         {% endfor %}
         {% else %}
-            {{ log("Populating model clustering_table_candidates with results...", info=true)}}
+            {{ log("Populating model with results...", info=true) }}
         {% endif %}
     {% endif %}
-{% endmacro %}
-
-
-{% macro get_large_tables(min_size_gb=1024, target_databases=[], target_schemas=[]) %}
-  {#--
-    Scans Snowflake ACCOUNT_USAGE to find large tables across the entire account.
-    Requires privileges on SNOWFLAKE database.
-  --#}
-  {% set sql %}
-    select
-        t.table_catalog as table_database,
-        t.table_schema,
-        t.table_name,
-        sm.active_bytes as size_bytes,
-        sm.active_bytes / power(1024, 3) as size_gb,
-        t.row_count,
-        -- Calculate approximate partitions based on size if history is missing
-        (sm.active_bytes / (16 * 1024 * 1024)) as approx_micropartitions,
-        case
-            when t.table_type = 'MATERIALIZED VIEW' then 'Materialized View'
-            when t.is_transient = 'YES' then 'Transient Table'
-            else 'Permanent Table'
-        end as table_type
-    from snowflake.account_usage.tables t
-    join snowflake.account_usage.table_storage_metrics sm
-    on t.table_catalog = sm.table_catalog
-    and t.table_schema = sm.table_schema
-    and t.table_name = sm.table_name
-    where sm.active_bytes >= ({{ min_size_gb }} * 1024 * 1024 * 1024)
-    and t.table_type in ('BASE TABLE', 'MATERIALIZED VIEW')
-    and t.deleted is null -- Crucial: ACCOUNT_USAGE contains history of dropped tables
-    and sm.deleted = FALSE
-    and t.clustering_key is null -- Exclude tables that are already clustered
-    
-    {# --- Dynamic Database Filtering --- #}
-    {% if target_databases and target_databases | length > 0 %}
-      and t.table_catalog in (
-        {% for db in target_databases %}
-          '{{ db | upper }}'{% if not loop.last %},{% endif %}
-        {% endfor %}
-      )
-    {% endif %}
-
-    {# --- Dynamic Schema Filtering --- #}
-    {% if target_schemas and target_schemas | length > 0 %}
-      and t.table_schema in (
-        {% for sc in target_schemas %}
-          '{{ sc | upper }}'{% if not loop.last %},{% endif %}
-        {% endfor %}
-      )
-    {% endif %}
-
-    order by size_gb desc
-
-    -- limit results for performance here
-    limit 100
-  {% endset %}
-
-  {{ return(run_query(sql)) }}
-{% endmacro %}
-
-
-
-{% macro get_table_performance_stats(table_database, table_schema, table_name, lookback_days
-) %}
-
-    {% set fqn = table_database ~ "." ~ table_schema ~ "." ~ table_name %}
-
-    {% set sql %}
-    with query_stats as (
-        select
-            query_type,
-            execution_time,
-            partitions_scanned,
-            partitions_total
-        from snowflake.account_usage.query_history
-        where start_time >= dateadd('day', -{{ lookback_days }}, current_timestamp())
-        and query_text ilike '%{{ table_name }}%' 
-        and execution_status = 'SUCCESS'
-    )
-    select
-        count(case when query_type = 'SELECT' then 1 end) as select_count,
-        count(case when query_type in ('INSERT', 'UPDATE', 'DELETE', 'MERGE') then 1 end) as dml_count,
-        avg(case when query_type = 'SELECT' then execution_time else null end) as avg_execution_time_ms,
-        avg(case when query_type = 'SELECT' then partitions_scanned else null end) as avg_partitions_scanned,
-        avg(case when query_type = 'SELECT' then partitions_total else null end) as avg_partitions_total
-    from query_stats
-    {% endset %}
-
-    {{ return(run_query(sql)) }}
-{% endmacro %}
-
-
-{% macro get_table_pruning_stats(table_database, table_schema, table_name, lookback_days) %}
-  {#--
-    Returns per-table pruning statistics from TABLE_QUERY_PRUNING_HISTORY.
-    This gives accurate, table-specific partition scan/prune counts
-    (unlike QUERY_HISTORY which reports query-level totals across all tables).
-  --#}
-    {% set sql %}
-    select
-        coalesce(sum(partitions_scanned), 0) as total_partitions_scanned,
-        coalesce(sum(partitions_pruned), 0) as total_partitions_pruned,
-        coalesce(sum(num_queries), 0) as total_query_count,
-        iff(
-            sum(num_queries) > 0,
-            sum(aggregate_query_execution_time) / sum(num_queries),
-            0
-        ) as avg_execution_time_ms
-    from snowflake.account_usage.table_query_pruning_history
-    where interval_start_time >= dateadd('day', -{{ lookback_days }}, current_timestamp())
-        and database_name = '{{ table_database }}'
-        and schema_name = '{{ table_schema }}'
-        and table_name = '{{ table_name }}'
-    {% endset %}
-    {{ return(run_query(sql)) }}
-{% endmacro %}
-
-
-{% macro get_table_dml_count(table_database, table_schema, table_name, lookback_days) %}
-  {#--
-    Returns DML operation count for a table from QUERY_HISTORY via query_text matching.
-    Used alongside get_table_pruning_stats to compute read:write ratio.
-  --#}
-    {% set sql %}
-    select
-        count(*) as dml_count
-    from snowflake.account_usage.query_history
-    where start_time >= dateadd('day', -{{ lookback_days }}, current_timestamp())
-        and query_text ilike '%{{ table_name }}%'
-        and query_type in ('INSERT', 'UPDATE', 'DELETE', 'MERGE')
-        and execution_status = 'SUCCESS'
-    {% endset %}
-    {{ return(run_query(sql)) }}
 {% endmacro %}

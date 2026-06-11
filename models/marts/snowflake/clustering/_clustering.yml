@@ -138,11 +138,20 @@ models:
       - name: total_rows
         description: Approximate row count of the table.
 
-      - name: current_micropartitions
+      - name: estimated_micropartitions
         description: >
-          Estimated total micropartition count. When query history is available, derived
-          from the observed avg_partitions_total; otherwise approximated from active
-          storage bytes using a 16MB-per-micropartition estimate.
+          Estimated total micropartition count, sourced from the best available data.
+          See micropartition_source for which method was used. Priority order:
+          (1) pruning_history: partitions_scanned + partitions_pruned from TABLE_QUERY_PRUNING_HISTORY,
+          (2) query_history: avg_partitions_total from QUERY_HISTORY,
+          (3) storage_approximation: active_bytes / 16MB.
+
+      - name: micropartition_source
+        description: >
+          Indicates how estimated_micropartitions was derived. One of:
+          pruning_history (from TABLE_QUERY_PRUNING_HISTORY scanned + pruned totals),
+          query_history (from QUERY_HISTORY avg_partitions_total),
+          storage_approximation (estimated from active storage bytes / 16MB per partition).
 
       - name: avg_rows_per_micropartition
         description: >
@@ -169,7 +178,16 @@ models:
           partitions_scanned / (partitions_scanned + partitions_pruned) * 100.
           A value of 50% means half of the table's micropartitions are scanned on average.
           Values above 50% indicate poor pruning and are the primary signal for clustering.
-          Null or 50% (fallback) when no pruning data is available.
+          When has_pruning_data is false, this is the fallback value (50%).
+
+      - name: has_pruning_data
+        description: >
+          Boolean. True when scan_ratio_pct is derived from observed TABLE_QUERY_PRUNING_HISTORY
+          data. False when using the 0.5 (50%) fallback because no pruning data exists for
+          this table in the lookback window. When false, the scan_ratio should be treated as
+          a conservative placeholder rather than an observed measurement. Common reasons for
+          missing pruning data: no queries with WHERE/JOIN predicates ran against the table,
+          latency (up to 4 hours), or the table was recently created.
 
       - name: avg_partitions_scanned
         description: >

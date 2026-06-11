@@ -107,6 +107,8 @@ scored as (
         coalesce(tqs.scan_ratio, 0.5) as scan_ratio,
         coalesce(tqs.pruning_partitions_scanned, 0) as pruning_partitions_scanned,
         coalesce(tqs.pruning_partitions_pruned, 0) as pruning_partitions_pruned,
+        -- Data availability flag
+        (coalesce(tqs.pruning_partitions_scanned, 0) + coalesce(tqs.pruning_partitions_pruned, 0)) > 0 as has_pruning_data,
         -- Legacy query-level stats (retained for display)
         coalesce(tqs.avg_partitions_scanned, 0) as avg_partitions_scanned,
         coalesce(tqs.avg_partitions_total, 0) as avg_partitions_total,
@@ -116,7 +118,14 @@ scored as (
             nullif(coalesce(tqs.pruning_partitions_scanned, 0) + coalesce(tqs.pruning_partitions_pruned, 0), 0),
             nullif(coalesce(tqs.avg_partitions_total, 0), 0),
             lt.approx_micropartitions
-        ) as micropartitions
+        ) as estimated_micropartitions,
+        case
+            when (coalesce(tqs.pruning_partitions_scanned, 0) + coalesce(tqs.pruning_partitions_pruned, 0)) > 0
+                then 'pruning_history'
+            when coalesce(tqs.avg_partitions_total, 0) > 0
+                then 'query_history'
+            else 'storage_approximation'
+        end as micropartition_source
     from large_tables as lt
     left join table_query_stats as tqs
         on lt.database_name = tqs.database_name
@@ -182,7 +191,7 @@ final as (
             then
                 'Queries scan '
                 || round(scan_ratio * 100, 0)
-                || '% of ' || micropartitions
+                || '% of ' || estimated_micropartitions
                 || ' micropartitions on average. '
                 || select_count || ' reads over the lookback window at '
                 || round(avg_execution_time_ms / 1000, 1) || 's average. '
@@ -205,11 +214,13 @@ final as (
         -- size & structure
         size_gb as table_size_gb,
         row_count as total_rows,
-        micropartitions as current_micropartitions,
+        estimated_micropartitions,
+        micropartition_source,
         case
-            when micropartitions > 0 then round(row_count / micropartitions, 2)
+            when estimated_micropartitions > 0 then round(row_count / estimated_micropartitions, 2)
             else 0
         end as avg_rows_per_micropartition,
+        has_pruning_data,
         round(scan_ratio * 100, 2) as scan_ratio_pct,
         avg_partitions_scanned,
         -- query activity
@@ -249,8 +260,10 @@ select
     -- size & structure
     table_size_gb,
     total_rows,
-    current_micropartitions,
+    estimated_micropartitions,
+    micropartition_source,
     avg_rows_per_micropartition,
+    has_pruning_data,
     scan_ratio_pct,
     avg_partitions_scanned,
     -- query activity
