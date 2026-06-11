@@ -29,8 +29,7 @@ select
     user_id,
     user_name,
     token_credits,
-    tokens,
-    role_names
+    tokens
 from {{ source('snowflake_usage', 'cortex_agent_usage_history') }}
 {% if is_incremental() %}
   where start_time >= (select dateadd(day, -1, max(start_time)) from {{ this }})
