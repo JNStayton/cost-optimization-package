@@ -18,47 +18,42 @@ require-dbt-version: [">=1.0.0"]
 models:
   dbt_cost_optimization_package:
     +schema: dbt_cost_optimization
-    # Staging models - platform-specific data extraction
-    staging:
+    # Shared platform-agnostic models
+    shared:
       +materialized: view
-      snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
-      bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
-      databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
-      redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
-    intermediate:
-      +materialized: view
-      snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
-      bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
-      databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
-      redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
-    marts:
-      snowflake:
+    # Snowflake optimization models
+    snowflake:
+      +enabled: "{{ target.type == 'snowflake' }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
+      marts:
         clustering:
-          +enabled: "{{ target.type == 'snowflake' }}"
           +tags: ['clustering']
         materialization:
-          +enabled: "{{ target.type == 'snowflake' }}"
           +tags: ['materialization']
         warehouse:
-          +enabled: "{{ target.type == 'snowflake' }}"
           +tags: ['warehouse']
         ai:
-          +enabled: "{{ target.type == 'snowflake' }}"
           +tags: ['ai_spend']
-      bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
-      databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
-      redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
+    # Redshift optimization models
+    redshift:
+      +enabled: "{{ target.type == 'redshift' }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
+    # BigQuery optimization models
+    bigquery:
+      +enabled: "{{ target.type == 'bigquery' }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
+    # Databricks optimization models
+    databricks:
+      +enabled: "{{ target.type == 'databricks' }}"
 
 # Package variables — override in consuming project's dbt_project.yml
 vars:
