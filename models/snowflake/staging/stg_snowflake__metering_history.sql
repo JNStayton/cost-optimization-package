@@ -1,13 +1,27 @@
 {{ config(
     materialized='incremental',
-    unique_key=['warehouse_name', 'start_time'],
+    unique_key=['service_type', 'entity_name', 'start_time'],
     on_schema_change='append_new_columns',
     enabled=(target.type == 'snowflake')
 ) }}
 
+{#--
+  Staging model for METERING_HISTORY. Filters to AI/Cortex service types.
+
+  Column mapping:
+    - METERING_HISTORY.NAME -> entity_name (the service/function name, not a warehouse)
+    - METERING_HISTORY.DATABASE_NAME -> database_name (available for some service types)
+    - METERING_HISTORY.SCHEMA_NAME -> schema_name (available for some service types)
+
+  Note: warehouse_name does NOT exist in METERING_HISTORY.
+  The NAME column contains the entity name which varies by service_type.
+--#}
+
 select
     service_type,
-    warehouse_name,
+    name as entity_name,
+    database_name,
+    schema_name,
     start_time,
     end_time,
     credits_used,

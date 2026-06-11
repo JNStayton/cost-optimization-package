@@ -26,7 +26,7 @@
 {% set batch_min_daily          = var('ai_batch_opportunity_min_daily_calls', 100) %}
 {% set min_queries              = var('ai_min_queries_for_recommendation', 10) %}
 
-with usage_base as (
+with raw_usage as (
     select
         cast(start_time as date)                                    as stats_date,
         function_name,
@@ -36,20 +36,41 @@ with usage_base as (
         user_id,
         credits,
         is_completed,
-        coalesce(
-            (select sum(m.value:value::int)
-             from lateral flatten(input => metrics) as m
-             where m.value:key:metric::string = 'input'),
-            0
-        )                                                           as input_tokens,
-        coalesce(
-            (select sum(m.value:value::int)
-             from lateral flatten(input => metrics) as m
-             where m.value:key:metric::string = 'output'),
-            0
-        )                                                           as output_tokens
+        metrics
     from {{ ref('stg_snowflake__cortex_ai_functions_usage') }}
     where cast(start_time as date) >= dateadd(day, -{{ lookback_days }}, current_date())
+),
+
+flattened as (
+    select
+        r.stats_date,
+        r.function_name,
+        r.model_name,
+        r.query_id,
+        r.query_tag,
+        r.user_id,
+        r.credits,
+        r.is_completed,
+        f.value:key:metric::string                                  as metric_name,
+        f.value:value::int                                          as metric_value
+    from raw_usage as r,
+    lateral flatten(input => r.metrics) as f
+),
+
+usage_base as (
+    select
+        stats_date,
+        function_name,
+        model_name,
+        query_id,
+        query_tag,
+        user_id,
+        credits,
+        is_completed,
+        coalesce(sum(case when metric_name = 'input' then metric_value end), 0)  as input_tokens,
+        coalesce(sum(case when metric_name = 'output' then metric_value end), 0) as output_tokens
+    from flattened
+    group by stats_date, function_name, model_name, query_id, query_tag, user_id, credits, is_completed
 ),
 
 pattern_stats as (

@@ -12,7 +12,10 @@
   Daily AI usage by model and function, with token breakdowns.
   Grain: one row per (model_name, function_name, stats_date).
 
-  Extracts input/output tokens from the METRICS array.
+  Token extraction uses lateral flatten on the METRICS array followed by
+  conditional aggregation. The METRICS array structure is:
+    [{"key":{"metric":"input","unit":"tokens"},"value":17},
+     {"key":{"metric":"output","unit":"tokens"},"value":65}]
 --#}
 
 with parsed as (
@@ -33,6 +36,20 @@ with parsed as (
     {% endif %}
 ),
 
+flattened as (
+    select
+        p.stats_date,
+        p.function_name,
+        p.model_name,
+        p.query_id,
+        p.user_id,
+        p.credits,
+        f.value:key:metric::string                      as metric_name,
+        f.value:value::int                              as metric_value
+    from parsed as p,
+    lateral flatten(input => p.metrics) as f
+),
+
 token_extraction as (
     select
         stats_date,
@@ -41,25 +58,11 @@ token_extraction as (
         query_id,
         user_id,
         credits,
-        coalesce(
-            (select sum(m.value:value::int)
-             from lateral flatten(input => metrics) as m
-             where m.value:key:metric::string = 'input'),
-            0
-        ) as input_tokens,
-        coalesce(
-            (select sum(m.value:value::int)
-             from lateral flatten(input => metrics) as m
-             where m.value:key:metric::string = 'output'),
-            0
-        ) as output_tokens,
-        coalesce(
-            (select sum(m.value:value::int)
-             from lateral flatten(input => metrics) as m
-             where m.value:key:metric::string = 'total'),
-            0
-        ) as total_tokens_flat
-    from parsed
+        coalesce(sum(case when metric_name = 'input' then metric_value end), 0)  as input_tokens,
+        coalesce(sum(case when metric_name = 'output' then metric_value end), 0) as output_tokens,
+        coalesce(sum(case when metric_name = 'total' then metric_value end), 0)  as total_tokens_flat
+    from flattened
+    group by stats_date, function_name, model_name, query_id, user_id, credits
 )
 
 select

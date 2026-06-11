@@ -10,20 +10,20 @@
 
 {#--
   Daily Cortex Agent credit consumption per agent.
-  Grain: one row per (agent_name, database_name, schema_name, stats_date).
+  Grain: one row per (agent_name, agent_database_name, agent_schema_name, stats_date).
 --#}
 
 select
     md5(
         coalesce(to_varchar(cast(start_time as date)), '') || '|' ||
         coalesce(agent_name, '') || '|' ||
-        coalesce(database_name, '') || '|' ||
-        coalesce(schema_name, '')
+        coalesce(agent_database_name, '') || '|' ||
+        coalesce(agent_schema_name, '')
     )                                                   as ai_agent_usage_daily_key,
     cast(start_time as date)                            as stats_date,
     agent_name,
-    database_name,
-    schema_name,
+    agent_database_name,
+    agent_schema_name,
     count(distinct request_id)                          as total_requests,
     count(distinct user_id)                             as unique_users,
     sum(token_credits)                                  as total_credits,
@@ -36,4 +36,4 @@ where cast(start_time as date) >= (
     from {{ this }}
 )
 {% endif %}
-group by cast(start_time as date), agent_name, database_name, schema_name
+group by cast(start_time as date), agent_name, agent_database_name, agent_schema_name
