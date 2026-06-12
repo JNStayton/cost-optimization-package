@@ -130,9 +130,11 @@
             {% endif %}
 
             {% if filter_col %}
-              {% set append_template = '{{' ~ chr(10) ~ '  config(' ~ chr(10) ~ '    materialized=\'incremental\',' ~ chr(10) ~ '    incremental_strategy=\'append\'' ~ chr(10) ~ '  )' ~ chr(10) ~ '}}' ~ chr(10) ~ chr(10) ~ '{' ~ '% if is_incremental() %' ~ '}' ~ chr(10) ~ 'where ' ~ filter_col ~ ' > (select max(' ~ filter_col ~ ') from ' ~ '{' ~ '{ this }' ~ '}' ~ ')' ~ chr(10) ~ '{' ~ '% endif %' ~ '}' %}
+              {% set nl = '\n' %}
+              {% set append_template = '{{' ~ nl ~ '  config(' ~ nl ~ '    materialized=\'incremental\',' ~ nl ~ '    incremental_strategy=\'append\'' ~ nl ~ '  )' ~ nl ~ '}}' ~ nl ~ nl ~ '{' ~ '% if is_incremental() %' ~ '}' ~ nl ~ 'where ' ~ filter_col ~ ' > (select max(' ~ filter_col ~ ') from ' ~ '{' ~ '{ this }' ~ '}' ~ ')' ~ nl ~ '{' ~ '% endif %' ~ '}' %}
             {% else %}
-              {% set append_template = '{{' ~ chr(10) ~ '  config(' ~ chr(10) ~ '    materialized=\'incremental\',' ~ chr(10) ~ '    incremental_strategy=\'append\'' ~ chr(10) ~ '  )' ~ chr(10) ~ '}}' ~ chr(10) ~ chr(10) ~ '-- TODO: add a filter column (timestamp/date) to scope incremental loads' ~ chr(10) ~ '-- TODO: verify data is truly append-only before using this strategy' %}
+              {% set nl = '\n' %}
+              {% set append_template = '{{' ~ nl ~ '  config(' ~ nl ~ '    materialized=\'incremental\',' ~ nl ~ '    incremental_strategy=\'append\'' ~ nl ~ '  )' ~ nl ~ '}}' ~ nl ~ nl ~ '-- TODO: add a filter column (timestamp/date) to scope incremental loads' ~ nl ~ '-- TODO: verify data is truly append-only before using this strategy' %}
             {% endif %}
 
             {% set update_sql %}
