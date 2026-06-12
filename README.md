@@ -112,4 +112,4 @@ Each platform has its own model subtree, source definitions, and documentation. 
 1. Create `models/<platform>/staging/`, `intermediate/`, and `marts/` directories
 2. Add a `_<platform>_sources.yml` in the staging folder
 3. Add platform documentation in `docs/<platform>/`
-4. Gate models with `+enabled: "{{ target.type == '<platform>' }}"` in `dbt_project.yml`
+4. Gate models with `+enabled: "{{ target.type == '<platform>' and var('dbt_cost_optimization_enabled', false) }}"` in `dbt_project.yml`
