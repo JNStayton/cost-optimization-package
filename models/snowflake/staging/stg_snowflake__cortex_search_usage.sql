@@ -1,6 +1,6 @@
 {{ config(
     materialized='incremental',
-    unique_key=['start_time', 'service_name'],
+    unique_key=['start_time', 'service_name', 'database_name', 'schema_name'],
     on_schema_change='append_new_columns',
 ) }}
 
@@ -10,7 +10,8 @@ select
     credits,
     database_name,
     schema_name,
-    service_name
+    service_name,
+    service_id
 from {{ source('snowflake_usage', 'cortex_search_serving_usage_history') }}
 {% if is_incremental() %}
   where start_time >= (select dateadd(day, -1, max(start_time)) from {{ this }})

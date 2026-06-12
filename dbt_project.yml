@@ -39,6 +39,8 @@ models:
           +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
         int_snowflake__column_query_stats:
           +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        int_snowflake__direct_object_access:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
       marts:
         clustering:
           +tags: ['clustering', 'dbt_cost_optimization']
@@ -48,6 +50,8 @@ models:
           +tags: ['warehouse', 'dbt_cost_optimization']
         ai:
           +tags: ['ai_spend', 'dbt_cost_optimization']
+        gold:
+          +tags: ['gold', 'dbt_cost_optimization']
     # Redshift optimization models
     redshift:
       +enabled: "{{ target.type == 'redshift' and var('dbt_cost_optimization_enabled', false) }}"
@@ -70,6 +74,11 @@ models:
 vars:
   # --- Package enablement (opt-in) ---
   dbt_cost_optimization_enabled: true  # Set to true in your project to activate
+
+  # --- Cross-environment model discovery ---
+  dbt_monitored_projects: []  # Default: current project only. Add project names to monitor additional projects.
+  dbt_relation_history_lookback_days: 90  # How far back to scan query_history for dbt builds
+  environment_priority_order: ['prod', 'staging', 'dev']  # Priority for collapsing recommendations
 
   # --- Snowflake: Edition and shared settings ---
   snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)

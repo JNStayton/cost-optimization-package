@@ -7,7 +7,8 @@ select
     query_id, 
     query_start_time, 
     objects_modified, 
-    base_objects_accessed
+    base_objects_accessed,
+    direct_objects_accessed
 from {{ source('snowflake_usage', 'access_history') }}
 {% if is_incremental() %}
   where query_start_time >= (select dateadd(day, -7, max(query_start_time)) from {{ this }})

@@ -1,6 +1,6 @@
 {{ config(
     materialized='incremental',
-    unique_key='request_id',
+    unique_key=['request_id', 'model_name'],
     on_schema_change='append_new_columns',
 ) }}
 
@@ -12,7 +12,8 @@ select
     tokens,
     tokens_granular,
     inference_region,
-    user_id
+    user_id,
+    query_tag
 from {{ source('snowflake_usage', 'cortex_rest_api_usage_history') }}
 {% if is_incremental() %}
   where start_time >= (select dateadd(day, -1, max(start_time)) from {{ this }})

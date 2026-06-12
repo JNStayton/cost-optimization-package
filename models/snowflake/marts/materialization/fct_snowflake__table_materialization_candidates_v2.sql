@@ -9,9 +9,13 @@
 
   Keeps the existing recommendation logic intact, but makes query-text attribution
   more transparent by classifying each matched query into a single attribution tier:
-    - high:   fully-qualified DATABASE.SCHEMA.OBJECT match in query_text
+    - high:   fully-qualified DATABASE.SCHEMA.OBJECT match (or ACCESS_HISTORY for Enterprise+)
     - medium: schema-qualified SCHEMA.OBJECT match in query_text
     - low:    bare OBJECT name match only
+
+  Enterprise+ customers use ACCESS_HISTORY (direct_objects_accessed) for exact FQN
+  attribution — all matches are automatically "high" confidence.
+  Standard edition customers fall back to ILIKE text-matching against query_text.
 
   Also adds recommendation_confidence based on the quantity of corroborating
   signals rather than any single signal in isolation.
@@ -19,6 +23,7 @@
   Controlled by the following dbt variables:
     - table_materialization_lookback_days   (default 14)
     - table_materialization_min_query_count (default 10)
+    - snowflake_enterprise_edition          (default true) — controls attribution path
 --#}
 
 {% set lookback_days = var('table_materialization_lookback_days', 14) %}
@@ -38,6 +43,32 @@ with view_candidates as (
     where lower(materialized) in ('view', 'ephemeral')
 ),
 
+{% if var('snowflake_enterprise_edition', true) %}
+-- Enterprise+ path: use ACCESS_HISTORY for exact FQN attribution
+matched_queries as (
+    select
+        vc.table_fqn,
+        vc.database_name,
+        vc.schema_name,
+        vc.table_name,
+        vc.dbt_model,
+        vc.model_name,
+        vc.package_name,
+        vc.materialized,
+        doa.query_id,
+        qh.execution_time_ms,
+        coalesce(qh.bytes_scanned, 0) as bytes_scanned,
+        'high' as attribution_confidence
+    from view_candidates as vc
+    inner join {{ ref('int_snowflake__direct_object_access') }} as doa
+        on doa.table_fqn = vc.table_fqn
+        and doa.query_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    inner join {{ ref('int_snowflake__query_history') }} as qh
+        on qh.query_id = doa.query_id
+        and qh.query_type = 'SELECT'
+),
+{% else %}
+-- Standard edition fallback: ILIKE text-matching against query_text
 matched_queries as (
     select
         vc.table_fqn,
@@ -69,6 +100,7 @@ matched_queries as (
             or qh.query_text ilike '%' || vc.table_name || '%'
        )
 ),
+{% endif %}
 
 query_stats as (
     select
@@ -242,19 +274,32 @@ final as (
 )
 
 select
-    *,
+    f.*,
     case
-        when recommendation = 'Materialize as TABLE'
-             and attribution_confidence = 'high'
-             and strong_signal_count >= 2
+        when f.recommendation = 'Materialize as TABLE'
+             and f.attribution_confidence = 'high'
+             and f.strong_signal_count >= 2
             then 'high'
-        when recommendation = 'Materialize as TABLE'
-             and (attribution_confidence in ('high', 'medium') or strong_signal_count >= 2)
+        when f.recommendation = 'Materialize as TABLE'
+             and (f.attribution_confidence in ('high', 'medium') or f.strong_signal_count >= 2)
             then 'medium'
         else 'low'
-    end as recommendation_confidence
-from final
+    end as recommendation_confidence,
+    rh.node_id,
+    rh.target_name,
+    rh.project_name as node_project_name,
+    (select count(*) from {{ ref('int_snowflake__dbt_relation_history') }} rh2 where rh2.node_id = rh.node_id) as environment_count
+from final as f
+left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
+    on rh.table_fqn = f.table_fqn
 order by
-    case when recommendation = 'Materialize as TABLE' then 0 else 1 end,
-    case recommendation_confidence when 'high' then 0 when 'medium' then 1 else 2 end,
-    coalesce(composite_chain_score, materialization_score, 0) desc
+    case when f.recommendation = 'Materialize as TABLE' then 0 else 1 end,
+    case
+        when f.recommendation = 'Materialize as TABLE'
+             and f.attribution_confidence = 'high'
+             and f.strong_signal_count >= 2 then 0
+        when f.recommendation = 'Materialize as TABLE'
+             and (f.attribution_confidence in ('high', 'medium') or f.strong_signal_count >= 2) then 1
+        else 2
+    end,
+    coalesce(f.composite_chain_score, f.materialization_score, 0) desc
