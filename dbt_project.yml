@@ -69,7 +69,7 @@ models:
 # Package variables — override in consuming project's dbt_project.yml
 vars:
   # --- Package enablement (opt-in) ---
-  dbt_cost_optimization_enabled: false  # Set to true in your project to activate
+  dbt_cost_optimization_enabled: true  # Set to true in your project to activate
 
   # --- Snowflake: Edition and shared settings ---
   snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
