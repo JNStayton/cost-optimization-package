@@ -41,7 +41,7 @@ with dbt_build_queries as (
         regexp_substr(query_text, '"target_name":\\s*"([^"]+)"', 1, 1, 'e') as target_name,
         -- Extract the materialized FQN from the DDL statement
         -- Handles: CREATE [OR REPLACE] [TRANSIENT] TABLE|VIEW db.schema.name
-        upper(regexp_substr(query_text, '(?:view|table)\\s+([a-z0-9_]+\\.[a-z0-9_]+\\.[a-z0-9_]+)', 1, 1, 'ie', 1)) as ddl_fqn
+        upper(regexp_substr(query_text, '(view|table)\\s+([a-z0-9_]+\\.[a-z0-9_]+\\.[a-z0-9_]+)', 1, 1, 'ie', 2)) as ddl_fqn
     from {{ source('snowflake_usage', 'query_history') }}
     where query_text ilike '%"app": "dbt"%'
       and query_type in ('CREATE_TABLE_AS_SELECT', 'CREATE_VIEW', 'INSERT', 'MERGE')
