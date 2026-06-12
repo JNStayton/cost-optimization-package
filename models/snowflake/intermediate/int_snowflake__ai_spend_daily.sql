@@ -4,7 +4,6 @@
     incremental_strategy='merge',
     unique_key='ai_spend_daily_key',
     on_schema_change='append_new_columns',
-    enabled=(target.type == 'snowflake')
   )
 }}
 

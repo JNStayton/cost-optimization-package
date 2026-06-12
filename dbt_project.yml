@@ -18,45 +18,58 @@ require-dbt-version: [">=1.0.0"]
 models:
   dbt_cost_optimization_package:
     +schema: dbt_cost_optimization
-    # Shared platform-agnostic models
+    # Shared platform-agnostic models (always enabled for ref resolution)
     shared:
       +materialized: view
     # Snowflake optimization models
     snowflake:
-      +enabled: "{{ target.type == 'snowflake' }}"
+      +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) }}"
       staging:
         +materialized: view
+        stg_snowflake__access_history:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        stg_snowflake__cortex_rest_api_usage:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('ai_rest_api_enabled', true) }}"
       intermediate:
         +materialized: view
+        int_snowflake__query_table_access:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        int_snowflake__column_query_access:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        int_snowflake__column_query_stats:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
       marts:
         clustering:
-          +tags: ['clustering']
+          +tags: ['clustering', 'dbt_cost_optimization']
         materialization:
-          +tags: ['materialization']
+          +tags: ['materialization', 'dbt_cost_optimization']
         warehouse:
-          +tags: ['warehouse']
+          +tags: ['warehouse', 'dbt_cost_optimization']
         ai:
-          +tags: ['ai_spend']
+          +tags: ['ai_spend', 'dbt_cost_optimization']
     # Redshift optimization models
     redshift:
-      +enabled: "{{ target.type == 'redshift' }}"
+      +enabled: "{{ target.type == 'redshift' and var('dbt_cost_optimization_enabled', false) }}"
       staging:
         +materialized: view
       intermediate:
         +materialized: view
     # BigQuery optimization models
     bigquery:
-      +enabled: "{{ target.type == 'bigquery' }}"
+      +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) }}"
       staging:
         +materialized: view
       intermediate:
         +materialized: view
     # Databricks optimization models
     databricks:
-      +enabled: "{{ target.type == 'databricks' }}"
+      +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
 
 # Package variables — override in consuming project's dbt_project.yml
 vars:
+  # --- Package enablement (opt-in) ---
+  dbt_cost_optimization_enabled: false  # Set to true in your project to activate
+
   # --- Snowflake: Edition and shared settings ---
   snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
   table_query_stats_full_account: false

@@ -2,7 +2,6 @@
     materialized='incremental',
     unique_key=['warehouse_name', 'start_time'],
     on_schema_change='append_new_columns',
-    enabled=(target.type == 'snowflake')
 ) }}
 
 select

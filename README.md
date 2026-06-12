@@ -37,6 +37,45 @@ Then run:
 dbt deps
 ```
 
+## Package Models Are Disabled by Default
+
+This package is **opt-in** for persistent model builds. After installation:
+
+- **Macros are immediately available** via `dbt run-operation` (no configuration needed)
+- **Package models do not run** during your project's normal `dbt run` / `dbt build`
+
+To build package models, explicitly opt in:
+
+**Recommended: at the job level** (models only build on a controlled schedule)
+```bash
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
+```
+
+**Alternative: at the project level** (models build on every run)
+```yaml
+# In your dbt_project.yml
+vars:
+  dbt_cost_optimization_enabled: true
+```
+
+This avoids unexpectedly querying large `ACCOUNT_USAGE` views on every regular dbt build.
+
+### Suggested cadences for scheduled jobs
+
+| Domain | Selector | Suggested Cadence |
+|--------|----------|-------------------|
+| Warehouse (sizing, spillage, expensive queries) | `+tag:warehouse` | Weekly |
+| AI / Cortex spend | `+tag:ai_spend` | Weekly |
+| Materialization (view→table, table→incremental) | `+tag:materialization` | Monthly |
+| Clustering candidates | `+tag:clustering` | Monthly |
+
+Example dedicated job:
+```bash
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
+```
+
+---
+
 ## Getting Started
 
 After installation, see your platform's documentation for:

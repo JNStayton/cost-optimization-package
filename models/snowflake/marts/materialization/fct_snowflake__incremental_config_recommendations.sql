@@ -1,7 +1,6 @@
 {{
   config(
     materialized='table',
-    enabled=(target.type == 'snowflake'),
     post_hook="{{ probe_unique_key_candidates() }}"
   )
 }}

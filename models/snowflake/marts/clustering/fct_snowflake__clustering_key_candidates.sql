@@ -9,7 +9,6 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='clustering_key_candidate_snapshot_key',
-    enabled=(target.type == 'snowflake')
   )
 }}
 

@@ -2,7 +2,6 @@
     materialized='incremental',
     unique_key=['start_time', 'service_name'],
     on_schema_change='append_new_columns',
-    enabled=(target.type == 'snowflake')
 ) }}
 
 select

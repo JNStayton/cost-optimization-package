@@ -169,21 +169,52 @@ dbt deps
 
 ---
 
-## Quick Start
+## Package Models Are Disabled by Default
 
-### Run the models (persistent monitoring)
+Persistent package models are **disabled by default** so they do not run on your project's normal `dbt run` or `dbt build`. Macros are always available regardless.
 
+To build package models, explicitly opt in:
+
+**Recommended: at the job level** (keeps cost optimization on a controlled schedule)
 ```bash
-# Build all Snowflake optimization models
-dbt run --select tag:clustering tag:materialization tag:warehouse tag:ai_spend
-
-# Or run a specific optimization path
-dbt run --select tag:warehouse
-dbt run --select tag:clustering
-dbt run --select tag:ai_spend
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
 ```
 
+**Alternative: at the project level** (builds on every dbt run)
+```yaml
+# In your dbt_project.yml
+vars:
+  dbt_cost_optimization_enabled: true
+```
+
+### Suggested cadences
+
+| Domain | Selector | Cadence | Why |
+|--------|----------|---------|-----|
+| Warehouse | `+tag:warehouse` | Weekly | Concurrency, spillage, and expensive queries shift quickly |
+| AI / Cortex | `+tag:ai_spend` | Weekly | Token usage and user concentration can change fast |
+| Materialization | `+tag:materialization` | Monthly | Benefits from accumulated build history |
+| Clustering | `+tag:clustering` | Monthly | Pruning patterns are more meaningful over longer windows |
+
+Example dedicated weekly job:
+```bash
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse +tag:ai_spend
+```
+
+Example dedicated monthly job:
+```bash
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:clustering +tag:materialization
+```
+
+The `+` prefix ensures upstream staging/intermediate dependencies are included.
+
+---
+
+## Quick Start
+
 ### Run a macro (one-off quick check)
+
+Macros work immediately after `dbt deps` — no opt-in needed:
 
 ```bash
 # Find tables that should be clustered

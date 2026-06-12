@@ -1,7 +1,6 @@
 {{ config(
     materialized='incremental',
     unique_key='query_id',
-    enabled=var('snowflake_enterprise_edition', true)
 ) }}
 
 select 

@@ -4,7 +4,6 @@
     incremental_strategy='merge',
     unique_key='column_query_stats_daily_key',
     on_schema_change='append_new_columns',
-    enabled=(target.type == 'snowflake' and var('snowflake_enterprise_edition', true))
   )
 }}
 

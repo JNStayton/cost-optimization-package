@@ -3,7 +3,6 @@
     materialized='incremental',
     unique_key='session_id',
     on_schema_change='append_new_columns',
-    enabled=(target.type == 'snowflake')
   )
 }}
 
