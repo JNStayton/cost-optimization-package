@@ -122,44 +122,27 @@
              is the safer default. strategy_notes guides the user to the correct next step. #}
           {% if current_strat in ('delete+insert', 'merge') %}
 
+            {% set downgrade_note = 'No single-column unique key confirmed by cardinality probe — strategy downgraded from ' ~ current_strat ~ ' to append. To implement a scoped strategy: (1) generate a surrogate key with dbt_utils.generate_surrogate_key([<grain_columns>]) and configure unique_key on that column, then re-evaluate for merge or delete+insert' %}
             {% if filter_col %}
-              {% set update_sql %}
-                update {{ this }}
-                set
-                  incremental_strategy = 'append',
-                  strategy_notes       = $sn$No single-column unique key confirmed by cardinality probe — strategy downgraded from {{ current_strat }} to append. To implement a scoped strategy: (1) generate a surrogate key with dbt_utils.generate_surrogate_key([<grain_columns>]) and configure unique_key on that column, then re-evaluate for merge or delete+insert; or (2) use incremental_predicates with delete+insert to scope deletes to the {{ filter_col }} window if records arrive cleanly with no late-arriving data outside the window.$sn$,
-                  dbt_config_template  =
-                      '{'||'{'||chr(10)
-                    ||'  config('||chr(10)
-                    ||'    materialized=''incremental'','||chr(10)
-                    ||'    incremental_strategy=''append'''||chr(10)
-                    ||'  )'||chr(10)
-                    ||'}'||'}'||chr(10)||chr(10)
-                    ||'{'||'%'||' if is_incremental() '||'%'||'}'||chr(10)
-                    ||'where {{ filter_col }}'
-                    ||' > (select max({{ filter_col }}) from '
-                    ||'{'||'{'||' this '||'}'||'}'||')'||chr(10)
-                    ||'{'||'%'||' endif '||'%'||'}'
-                where table_fqn = '{{ table_fqn }}'
-              {% endset %}
+              {% set downgrade_note = downgrade_note ~ '; or (2) use incremental_predicates with delete+insert to scope deletes to the ' ~ filter_col ~ ' window if records arrive cleanly with no late-arriving data outside the window.' %}
             {% else %}
-              {% set update_sql %}
-                update {{ this }}
-                set
-                  incremental_strategy = 'append',
-                  strategy_notes       = $sn$No single-column unique key confirmed by cardinality probe — strategy downgraded from {{ current_strat }} to append. To implement a scoped strategy: generate a surrogate key with dbt_utils.generate_surrogate_key([<grain_columns>]) and configure unique_key on that column, then re-evaluate for merge or delete+insert.$sn$,
-                  dbt_config_template  =
-                      '{'||'{'||chr(10)
-                    ||'  config('||chr(10)
-                    ||'    materialized=''incremental'','||chr(10)
-                    ||'    incremental_strategy=''append'''||chr(10)
-                    ||'  )'||chr(10)
-                    ||'}'||'}'||chr(10)||chr(10)
-                    ||'-- TODO: add a filter column (timestamp/date) to scope incremental loads'||chr(10)
-                    ||'-- TODO: verify data is truly append-only before using this strategy'
-                where table_fqn = '{{ table_fqn }}'
-              {% endset %}
+              {% set downgrade_note = downgrade_note ~ '.' %}
             {% endif %}
+
+            {% if filter_col %}
+              {% set append_template = '{{' ~ chr(10) ~ '  config(' ~ chr(10) ~ '    materialized=\'incremental\',' ~ chr(10) ~ '    incremental_strategy=\'append\'' ~ chr(10) ~ '  )' ~ chr(10) ~ '}}' ~ chr(10) ~ chr(10) ~ '{' ~ '% if is_incremental() %' ~ '}' ~ chr(10) ~ 'where ' ~ filter_col ~ ' > (select max(' ~ filter_col ~ ') from ' ~ '{' ~ '{ this }' ~ '}' ~ ')' ~ chr(10) ~ '{' ~ '% endif %' ~ '}' %}
+            {% else %}
+              {% set append_template = '{{' ~ chr(10) ~ '  config(' ~ chr(10) ~ '    materialized=\'incremental\',' ~ chr(10) ~ '    incremental_strategy=\'append\'' ~ chr(10) ~ '  )' ~ chr(10) ~ '}}' ~ chr(10) ~ chr(10) ~ '-- TODO: add a filter column (timestamp/date) to scope incremental loads' ~ chr(10) ~ '-- TODO: verify data is truly append-only before using this strategy' %}
+            {% endif %}
+
+            {% set update_sql %}
+              update {{ this }}
+              set
+                incremental_strategy = 'append',
+                strategy_notes       = '{{ downgrade_note | replace("'", "''") }}',
+                dbt_config_template  = '{{ append_template | replace("'", "''") }}'
+              where table_fqn = '{{ table_fqn }}'
+            {% endset %}
 
             {% do run_query(update_sql) %}
             {{ log("probe_unique_key_candidates: downgraded " ~ table_fqn ~ " from " ~ current_strat ~ " to append — no confirmed unique key", info=true) }}
