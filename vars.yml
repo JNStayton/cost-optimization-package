@@ -1,0 +1,61 @@
+vars:
+  # --- Package enablement (opt-in) ---
+  # Set to true in consuming project's vars.yml or dbt_project.yml to activate
+  dbt_cost_optimization_enabled: false
+
+  # --- Snowflake: Edition and feature flags ---
+  snowflake_enterprise_edition: true
+  ai_rest_api_enabled: true
+
+  # --- Cross-environment model discovery ---
+  dbt_monitored_projects: []
+  dbt_relation_history_lookback_days: 90
+  environment_priority_order: ['prod', 'staging', 'dev']
+
+  # --- Snowflake: Table clustering ---
+  clustering_candidates_min_size_gb: 100
+  clustering_candidates_lookback_days: 7
+  clustering_candidates_dbt_project_only: true
+  clustering_candidates_target_databases: []
+  clustering_candidates_target_schemas: []
+  clustering_key_cardinality_table_limit: 10
+
+  # --- Snowflake: Materialization ---
+  table_materialization_lookback_days: 14
+  table_materialization_min_query_count: 10
+  incremental_candidates_lookback_days: 60
+  incremental_candidates_min_build_time_sec: 300
+  incremental_candidates_min_size_gb: 2
+  incremental_candidates_min_compute_waste_score: 5
+  incremental_candidates_min_qualified_build_days: 3
+  incremental_candidates_min_compute_waste_avg_build_sec: 30
+  incremental_large_table_row_threshold: 10000000
+  incremental_large_table_gb_threshold: 10
+
+  # --- Snowflake: Warehouse optimization ---
+  warehouse_sizing_lookback_days: 30
+  warehouse_sizing_dml_threshold: 0.35
+  warehouse_sizing_min_query_count: 20
+  spillage_lookback_days: 30
+  spillage_min_total_gb: 0.05
+  spillage_min_runs: 1
+  expensive_query_lookback_days: 30
+  expensive_query_credit_rate_usd: 2
+  expensive_query_high_cost_threshold: 10000
+  expensive_query_min_total_credits: 0.1
+  expensive_query_top_n: 50
+
+  # --- Snowflake: AI/Cortex spend optimization ---
+  ai_spend_lookback_days: 30
+  ai_spend_initial_lookback_days: 30
+  ai_credit_rate_usd: 2
+  ai_model_downgrade_output_token_threshold: 100
+  ai_prompt_bloat_input_token_threshold: 10000
+  ai_batch_opportunity_min_daily_calls: 100
+  ai_user_spike_threshold_pct: 200
+  ai_user_concentration_threshold_pct: 50
+  ai_min_credits_for_recommendation: 1
+  ai_min_queries_for_recommendation: 10
+
+  # --- Snowflake: Shared settings ---
+  table_query_stats_full_account: false
