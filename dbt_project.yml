@@ -21,26 +21,26 @@ models:
     # Shared platform-agnostic models (always enabled for ref resolution)
     shared:
       +materialized: view
-      +enabled: "{{ var('dbt_cost_optimization_enabled') }}"
+      +enabled: "{{ var('dbt_cost_optimization_enabled', false) }}"
     # Snowflake optimization models
     snowflake:
-      +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') }}"
+      +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) }}"
       staging:
         +materialized: view
         stg_snowflake__access_history:
-          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') and var('snowflake_enterprise_edition') }}"
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
         stg_snowflake__cortex_rest_api_usage:
-          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') and var('ai_rest_api_enabled') }}"
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('ai_rest_api_enabled', true) }}"
       intermediate:
         +materialized: view
         int_snowflake__query_table_access:
-          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') and var('snowflake_enterprise_edition') }}"
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
         int_snowflake__column_query_access:
-          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') and var('snowflake_enterprise_edition') }}"
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
         int_snowflake__column_query_stats:
-          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') and var('snowflake_enterprise_edition') }}"
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
         int_snowflake__direct_object_access:
-          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled') and var('snowflake_enterprise_edition') }}"
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
       marts:
         clustering:
           +tags: ['clustering', 'dbt_cost_optimization']
@@ -54,21 +54,21 @@ models:
           +tags: ['gold', 'dbt_cost_optimization']
     # Redshift optimization models
     redshift:
-      +enabled: "{{ target.type == 'redshift' and var('dbt_cost_optimization_enabled') }}"
+      +enabled: "{{ target.type == 'redshift' and var('dbt_cost_optimization_enabled', false) }}"
       staging:
         +materialized: view
       intermediate:
         +materialized: view
     # BigQuery optimization models
     bigquery:
-      +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled') }}"
+      +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) }}"
       staging:
         +materialized: view
       intermediate:
         +materialized: view
     # Databricks optimization models
     databricks:
-      +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled') }}"
+      +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
 
 # Package variables are defined in vars.yml (parsed before dbt_project.yml)
 # Override in consuming project's vars.yml or dbt_project.yml vars: section
