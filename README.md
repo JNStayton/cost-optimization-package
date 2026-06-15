@@ -46,17 +46,22 @@ This package is **opt-in** for persistent model builds. After installation:
 
 To build package models, explicitly opt in:
 
-**Recommended: at the job level** (models only build on a controlled schedule)
+**Recommended: dedicated scheduled jobs** (no changes to existing jobs required)
 ```bash
+# All package models
 dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
+
+# Or select by optimization domain
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
 ```
 
-**Alternative: at the project level** (models build on every run)
+**Alternative: enable at the project level** (models build on every run)
 ```yaml
-# In your dbt_project.yml
+# In your dbt_project.yml vars: section OR in a vars.yml file
 vars:
   dbt_cost_optimization_enabled: true
 ```
+Note: if enabled at the project level, you will need to explicitly exclude package models from general runs where they are not desired.
 
 This avoids unexpectedly querying large `ACCOUNT_USAGE` views on every regular dbt build.
 

@@ -175,17 +175,22 @@ Persistent package models are **disabled by default** so they do not run on your
 
 To build package models, explicitly opt in:
 
-**Recommended: at the job level** (keeps cost optimization on a controlled schedule)
+**Recommended: dedicated scheduled jobs** (no changes to existing jobs required)
 ```bash
+# All package models
 dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
+
+# Or select by optimization domain
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
 ```
 
-**Alternative: at the project level** (builds on every dbt run)
+**Alternative: enable at the project level** (builds on every dbt run)
 ```yaml
-# In your dbt_project.yml
+# In your dbt_project.yml vars: section OR in a vars.yml file
 vars:
   dbt_cost_optimization_enabled: true
 ```
+Note: if enabled at the project level, you will need to explicitly exclude package models from general runs where they are not desired.
 
 ### Suggested cadences
 
