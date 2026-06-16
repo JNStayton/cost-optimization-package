@@ -14,6 +14,7 @@ select
     bytes_scanned,
     query_load_percent,
     queued_overload_time as queued_overload_time_ms,
+    queued_provisioning_time as queued_provisioning_time_ms,
     query_type,
     execution_time as execution_time_ms,
     partitions_scanned,

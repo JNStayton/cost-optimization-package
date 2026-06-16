@@ -93,9 +93,11 @@ enriched as (
         rh.project_name,
         rh.model_name,
         rh.target_name,
-        -- Priority: prod=1, staging=2, else=3
+        -- Priority: prod-like=1, staging-like=2, else=3
+        -- Recognizes common production target names: prod, default, production, main
         case
-            when lower(rh.target_name) like '%prod%' then 1
+            when lower(rh.target_name) in ('prod', 'default', 'production', 'main')
+                or lower(rh.target_name) like '%prod%' then 1
             when lower(rh.target_name) like '%stag%' then 2
             else 3
         end as env_priority

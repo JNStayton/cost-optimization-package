@@ -135,9 +135,10 @@ scored as (
             when w30.median_overload_sec_30d > 1
                  and w30.median_overload_sec_30d <= 5
                 then 'scale_up'
-            -- Scale down (oversized)
+            -- Scale down (oversized) — but not if already X-Small
             when w30.median_execution_sec_30d < 5
                  and w30.median_overload_sec_30d < 0.5
+                 and lower(coalesce(w30.warehouse_size, '')) not in ('x-small', 'xsmall')
                 then 'scale_down'
             else 'stable'
         end                                                         as recommendation_key,

@@ -250,11 +250,50 @@ Create one current-state recommendation surface that unions and normalizes recom
 
 On top of the domain marts and cross-domain fact, add lightweight current-state views for immediate use.
 
-Examples:
-- `vw_snowflake__top_clustering_candidates`
-- `vw_snowflake__top_incremental_opportunities`
-- `vw_snowflake__top_expensive_queries`
-- `vw_snowflake__current_optimization_actions`
+#### Gold Layer Views (Dashboard-Ready)
+
+| View | Purpose | Audience |
+|------|---------|----------|
+| `vw_snowflake__top_recommendations` | All domains, ranked by estimated impact. One row per actionable recommendation with priority rank, domain, model/table, recommendation, estimated annual impact, effort level, and actionable snippet. | Humans (dashboard top-level) |
+| `vw_snowflake__recommendations_by_environment` | Same as above but filterable by target_name (prod, dev, staging). Surfaces `has_nonprod_only` flag for models not yet in prod. | Humans (environment-scoped) |
+| `vw_snowflake__cost_savings_summary` | Aggregates estimated credit/dollar savings per domain. One row per domain with total estimated annual savings, recommendation count, and top recommendation preview. KPI cards at dashboard top. | Humans (executive summary) |
+| `vw_snowflake__optimization_backlog` | Every recommendation classified by effort level, sortable by impact-to-effort ratio (highest value, lowest effort first). | Humans (sprint planning) + Agents (backlog creation) |
+
+#### Effort Classification
+
+Each recommendation should carry an `effort_category` that determines how it gets routed:
+
+| Category | Definition | Agent Behavior | Human Behavior |
+|----------|-----------|----------------|----------------|
+| `config_change` | One-line dbt config or DDL (warehouse resize, add clustering key, change materialization) | Auto-apply or auto-propose PR | Quick win — do it now |
+| `sql_refactor` | Model SQL needs restructuring (spillage fix, query optimization, join rewrite) | Investigate model code + propose fix | Prioritize in sprint |
+| `architecture` | Model needs to be split, converted to incremental, or restructured in the DAG | Create well-contextualized ticket with evidence | Design session required |
+
+#### Agent-Consumable Design Requirements
+
+For the agent use case (backlog ticket creation, code investigation, auto-fix proposals), each recommendation row must carry enough context that an agent does NOT need to go back to the fact models:
+
+- `node_id` — so the agent can find the file in the dbt project
+- `model_name` and `package_name` — for project navigation
+- `table_fqn` — for Snowflake object reference
+- The specific metric that triggered it (not just "spillage detected" but "321 GB spilled on 2 days")
+- The actionable snippet or investigation path (dbt config template, ALTER statement, or "check for cross joins in WHERE clause")
+- `effort_category` — determines whether the agent auto-applies, investigates, or creates a ticket
+
+An agent with access to the dbt project code would:
+1. Read the gold layer for prioritized recommendations
+2. For `config_change` items: auto-generate the dbt config change or DDL and propose a PR
+3. For `sql_refactor` items: read the model SQL, cross-reference the recommendation with actual query patterns, and draft a fix
+4. For `architecture` items: create a ticket with full context (recommendation, evidence, affected downstream models, estimated impact)
+
+This enables a workflow where the package DAG produces recommendations, and an agent acts on them — either autonomously for low-risk changes or by creating well-contextualized work items for humans.
+
+#### Environment-Aware Recommendations
+
+The `vw_snowflake__recommendations_by_environment` view should support these use cases:
+- "Show me only prod recommendations" — filter to `target_name LIKE '%prod%'`
+- "What's broken in dev that hasn't hit prod yet?" — filter to `has_nonprod_only = true`
+- "Collapse to logical model" — group by `node_id` using the existing `vw_snowflake__recommendations_by_model` pattern
 
 These views should answer questions like:
 - What are the top 10 highest-confidence optimization opportunities right now?

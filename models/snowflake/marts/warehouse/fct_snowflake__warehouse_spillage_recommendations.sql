@@ -107,6 +107,25 @@ warehouse_context as (
     group by warehouse_name
 ),
 
+-- Find the primary warehouse that ran spilling queries for each table
+-- (the warehouse from actual query execution, not the dbt config)
+table_warehouse as (
+    select
+        upper(qta.table_database) || '.' || upper(qta.table_schema) || '.' || upper(qta.table_name) as table_fqn,
+        qh.warehouse_name,
+        row_number() over (
+            partition by upper(qta.table_database) || '.' || upper(qta.table_schema) || '.' || upper(qta.table_name)
+            order by sum(qh.bytes_spilled_to_local_storage + qh.bytes_spilled_to_remote_storage) desc
+        ) as rn
+    from {{ ref('int_snowflake__query_table_access') }} as qta
+    inner join {{ ref('int_snowflake__query_history') }} as qh
+        on qh.query_id = qta.query_id
+    where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
+      and (qh.bytes_spilled_to_local_storage > 0 or qh.bytes_spilled_to_remote_storage > 0)
+      and qh.warehouse_name is not null
+    group by 1, 2
+),
+
 dbt_relations as (
     select
         upper(database_name) || '.' || upper(schema_name) || '.' || upper(table_name)
@@ -127,7 +146,7 @@ scored as (
         dr.dbt_model,
         dr.model_name,
         dr.materialized                                             as current_materialization,
-        coalesce(nullif(dr.warehouse_name, ''), 'unassigned')        as warehouse_name,
+        coalesce(tw.warehouse_name, nullif(dr.warehouse_name, ''), 'unassigned') as warehouse_name,
         ts.spill_days,
         ts.total_runs,
         ts.total_gb_spilled_local,
@@ -166,8 +185,9 @@ scored as (
         end                                                         as recommendation_key
     from table_spillage_summary as ts
     left join dbt_relations      as dr  on dr.table_fqn  = ts.table_fqn
+    left join table_warehouse    as tw  on tw.table_fqn  = ts.table_fqn and tw.rn = 1
     left join trend_split        as trs on trs.table_fqn = ts.table_fqn
-    left join warehouse_context  as wc  on wc.warehouse_name = dr.warehouse_name
+    left join warehouse_context  as wc  on wc.warehouse_name = coalesce(tw.warehouse_name, nullif(dr.warehouse_name, ''))
 )
 
 select

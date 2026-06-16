@@ -30,6 +30,7 @@ with dbt_queries as (
         qh.warehouse_size,
         qh.total_elapsed_time_ms,
         qh.queued_overload_time_ms,
+        qh.queued_provisioning_time_ms,
         qh.execution_time_ms,
         qh.query_load_percent,
         qh.query_type
@@ -71,6 +72,7 @@ select
     round(median(total_elapsed_time_ms), 0)                         as median_elapsed_ms,
     round(median(execution_time_ms), 0)                             as median_execution_ms,
     round(median(queued_overload_time_ms), 0)                       as median_overload_ms,
+    round(median(queued_provisioning_time_ms), 0)                    as median_provisioning_ms,
     round(
         median(queued_overload_time_ms)
             / nullif(median(total_elapsed_time_ms), 0),
