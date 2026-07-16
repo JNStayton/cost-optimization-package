@@ -29,6 +29,7 @@ stg_snowflake__access_       ──► int_snowflake__query_         │      st
 | `stg_snowflake__table_storage_metrics` | `SNOWFLAKE.ACCOUNT_USAGE.TABLE_STORAGE_METRICS` | view |
 | `stg_snowflake__query_history` | `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` | incremental (7-day lookback) |
 | `stg_snowflake__access_history` | `SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY` | incremental (7-day lookback, Enterprise only) |
+| `stg_snowflake__table_query_pruning_history` | `SNOWFLAKE.ACCOUNT_USAGE.TABLE_QUERY_PRUNING_HISTORY` | incremental (7-day lookback) |
 
 ### Intermediate layer
 
@@ -55,7 +56,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `use_access_history_attribution` | `true` | Set to `false` for Snowflake Standard edition (no ACCESS_HISTORY view). When `false`, query-to-table attribution falls back to `query_text` matching. |
+| `snowflake_enterprise_edition` | `true` | Set to `false` for Snowflake Standard edition (no ACCESS_HISTORY view). When `false`, query-to-table attribution falls back to `query_text` matching. |
 
 ### Query stats scope and performance
 
@@ -81,7 +82,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 # dbt_project.yml
 vars:
   # Standard edition Snowflake
-  use_access_history_attribution: false
+  snowflake_enterprise_edition: false
 
   # Include smaller tables for testing
   clustering_candidates_min_size_gb: 1
@@ -105,7 +106,8 @@ vars:
 | `dbt_model` | dbt `unique_id` if the table is a dbt model, otherwise `null` |
 | `table_type` | Human-readable type: Permanent Table, Transient Table, or Materialized View |
 | `score` | V3 composite score. Higher = more potential benefit from clustering. See [Scoring Logic](#scoring-logic) below. |
-| `is_candidate` | Whether the table meets all four criteria for clustering (see [Understanding `is_candidate`](#understanding-is_candidate) below) |
+| `is_candidate` | Whether the table meets all four criteria for clustering (see [Understanding `is_candidate`](#understanding-is_candidate-and-recommendation_tier) below) |
+| `recommendation_tier` | Impact-based classification: High impact, Moderate impact, Low impact, Healthy, Write-heavy, No read activity. See tiers section below. |
 | `recommendation_reason` | Human-readable explanation of why the table was or was not flagged. States the partition scan %, read count, duration, and ratio for candidates; states which criterion was not met for non-candidates. |
 | `table_size_gb` | Table size in GB |
 | `total_rows` | Approximate row count |
@@ -129,16 +131,16 @@ score = total_read_time * partition_scan_ratio * read_heaviness_boost
 
 Where:
 - **total_read_time** = `select_count * avg_query_duration_s` — total seconds spent reading the table in the lookback window
-- **partition_scan_ratio** = `avg_partitions_scanned / avg_partitions_total` — fraction of micropartitions scanned per query (0 to 1). Falls back to 0.5 (neutral) when no query history is available.
-- **read_heaviness_boost** = `1 + log2(query_to_dml_ratio + 1)` — bounded multiplier (~1 to ~8) that rewards read-heavy tables where clustering ROI is highest
+- **partition_scan_ratio** = `partitions_scanned / (partitions_scanned + partitions_pruned)` — fraction of micropartitions scanned per table from `TABLE_QUERY_PRUNING_HISTORY`. This is a **per-table** metric (not per-query). Falls back to 0.5 (neutral) when no pruning data is available.
+- **read_heaviness_boost** = stepped multiplier (1-5x) based on `query_to_dml_ratio`: ratio >= 20 = 5x, >= 10 = 4x, >= 5 = 3x, >= 2 = 2x, else 1x
 
 ### Why each component
 
 | Factor | What it captures | Why it belongs |
 |--------|-----------------|----------------|
 | `total_read_time` | Absolute pain: how many seconds were spent reading this table | Tables nobody queries don't need clustering regardless of condition |
-| `partition_scan_ratio` | Scan efficiency: what fraction of the table is actually scanned per query | If queries already prune to 5% of partitions, clustering won't help. If they scan 80%, clustering has huge upside. **Independent of warehouse size.** |
-| `read_heaviness_boost` | ROI multiplier: read-heavy tables recoup clustering cost faster | A 100:1 read/write table amortizes reclustering cost over 100 reads. Logarithmic dampening prevents extreme ratios from dominating. |
+| `partition_scan_ratio` | Scan efficiency: what fraction of the table's partitions are scanned | If queries already prune to 5% of partitions, clustering won't help. If they scan 80%, clustering has huge upside. **Per-table metric from TABLE_QUERY_PRUNING_HISTORY** — not diluted by other tables in multi-table queries. |
+| `read_heaviness_boost` | ROI multiplier: read-heavy tables recoup clustering cost faster | A 100:1 read/write table amortizes reclustering cost over 100 reads. Stepped tiers keep the boost bounded. |
 
 ### Properties
 
@@ -152,7 +154,7 @@ Where:
 |---------|---------|-----------|--------|
 | V1 | `(select_count * avg_exec_sec) + (query_ratio * 10)` multiplied by `partition_ratio_pct` | First attempt: combined signals additively + unbounded multiplier | Historical (`find_table_clustering_candidates.sql`) |
 | V2 | `select_count * avg_exec_sec` | Simplified: removed invisible additive term and unbounded multiplier; surfaced signals as display metrics only | Historical (`find_table_clustering_candidates_v2.sql`) |
-| V3 | `total_read_time * scan_ratio * (1 + log2(ratio + 1))` | Best of both: retains scan inefficiency signal (bounded 0-1), adds read-heaviness as a log-bounded multiplier, warehouse-size independent | Current (fact model + `find_table_clustering_candidates_v3.sql`) |
+| V3 | `total_read_time * scan_ratio * stepped_read_boost` | Best of both: retains scan inefficiency signal (bounded 0-1), adds read-heaviness as a stepped multiplier, warehouse-size independent, uses per-table pruning data from TABLE_QUERY_PRUNING_HISTORY | Current (fact model + `find_table_clustering_candidates.sql`) |
 
 V1's issues: the additive `query_ratio * 10` was orders of magnitude smaller than the first term in practice (invisible in ranking). The partition_ratio_pct multiplier was unbounded and could produce extreme scores for fragmented but unqueried tables.
 
@@ -160,9 +162,38 @@ V2's issues: lost the scan efficiency signal entirely — a table scanned at 90%
 
 V3 addresses both: the scan ratio directly measures pruning effectiveness (independent of warehouse size), and the read-heaviness boost is meaningful but bounded.
 
+### Scoring divergence: DAG vs macro
+
+The V3 scoring formula is implemented in two places with slightly different `read_heaviness_boost` calculations:
+
+| Implementation | read_heaviness_boost | Why |
+|---------------|---------------------|-----|
+| **DAG** (`fct_snowflake__table_clustering_candidates`) | `1 + log(2, query_to_dml_ratio + 1)` | SQL-native, continuous, produces smooth rankings across the full ratio spectrum |
+| **Macro** (`find_table_clustering_candidates`) | Stepped multiplier: ratio >= 20 = 5x, >= 10 = 4x, >= 5 = 3x, >= 2 = 2x, else 1x | Fusion-safe (avoids Jinja `| log` on query results), discrete tiers |
+
+Both produce the same directional rankings — tables with higher read:write ratios score higher. However, the absolute score magnitudes will not match exactly between a macro run and the fact model for the same table.
+
+**Use the DAG** for persistent daily monitoring, trend analysis, and dashboards.
+**Use the macro** for one-off interactive checks and quick assessments.
+
 ---
 
-## Understanding `is_candidate`
+## Understanding `is_candidate` and `recommendation_tier`
+
+The model outputs both a boolean `is_candidate` and a descriptive `recommendation_tier`.
+
+### recommendation_tier
+
+| Tier | Meaning | Action |
+|------|---------|--------|
+| **High impact** | scan_ratio >= 0.5 AND score >= 1000 | Strong clustering candidate. Run `suggest_clustering_keys` next. |
+| **Moderate impact** | scan_ratio >= 0.5 AND score < 1000 | Clustering would help but overall query load is moderate. |
+| **Low impact** | scan_ratio 0.2 - 0.5 | Some pruning inefficiency but not severe. Monitor. |
+| **Healthy** | scan_ratio < 0.2 | Pruning is effective. No clustering needed. |
+| **Write-heavy** | query_to_dml_ratio <= 1 | More writes than reads — clustering ROI unclear. |
+| **No read activity** | select_count = 0 | Table isn't being queried in the lookback window. |
+
+### is_candidate (boolean)
 
 A table is flagged as `is_candidate = true` only when **all four** conditions are met:
 
@@ -251,9 +282,80 @@ order by snapshot_date;
 
 ---
 
+## Data Sources and Metric Design
+
+### Partition scan ratio: source and grain
+
+The `scan_ratio` (and `scan_ratio_pct`) metric comes from `SNOWFLAKE.ACCOUNT_USAGE.TABLE_QUERY_PRUNING_HISTORY`.
+
+**Why this view (not QUERY_HISTORY):**
+
+`QUERY_HISTORY.partitions_scanned` and `partitions_total` are *query-level* stats — they report totals across ALL tables touched by a statement. For any multi-table query (joins, subqueries), these numbers are meaningless for evaluating a single table's pruning efficiency. `TABLE_QUERY_PRUNING_HISTORY` provides per-table partition stats, which is what clustering evaluation actually needs.
+
+**Source grain:** One row per `(table_id, warehouse_id, query_hash, hourly_interval)`. Each row contains:
+- `num_queries` — how many times that query pattern ran against that table in that hour
+- `partitions_scanned` — micropartitions scanned for this specific table
+- `partitions_pruned` — micropartitions pruned (skipped) for this specific table
+
+**Aggregation path:**
+
+```
+TABLE_QUERY_PRUNING_HISTORY (hourly, per table/warehouse/query_hash)
+    ↓ stg_snowflake__table_query_pruning_history (preserves source grain)
+    ↓ int_snowflake__table_query_stats_daily (aggregated to: one row per table_fqn per day)
+    ↓ fct_snowflake__table_clustering_candidates (summed across lookback_days → one row per table per snapshot)
+```
+
+### Join key strategy
+
+| Join point | Keys | Method |
+|-----------|------|--------|
+| Pruning history → candidate tables | `database_name`, `schema_name`, `table_name` | Exact match (UPPER on both sides) |
+| Pruning history → daily grain | `interval_start_time::date = stats_date` | Date cast |
+| Daily stats → fact model | `table_database`, `table_schema`, `table_name` + date range | Exact match |
+| Fact model → dbt models | `database_name`, `schema_name`, `table_name` | Via `int_dbt__relations` |
+
+No fuzzy `ILIKE` matching is used in the pruning path. The pruning view provides exact database/schema/table identifiers.
+
+### Metric: scan_ratio
+
+```sql
+scan_ratio = SUM(partitions_scanned) / NULLIF(SUM(partitions_scanned + partitions_pruned), 0)
+```
+
+This is a **query-volume-weighted** metric, not a simple average. A table that receives 1000 queries in the window contributes proportionally more partition data than one that receives 10. This is intentional — it measures the actual proportion of partition I/O that is wasteful across the full workload, not per-query.
+
+| scan_ratio | Interpretation |
+|-----------|----------------|
+| 1.0 (100%) | Every partition is scanned on every query — no pruning at all |
+| 0.5 (50%) | Half of partitions scanned — moderate pruning |
+| 0.05 (5%) | Excellent pruning — only 5% of partitions touched |
+| NULL / fallback 0.5 | No pruning data available (see below) |
+
+### Fallback behavior (scan_ratio = 0.5)
+
+The fallback fires when `SUM(partitions_scanned + partitions_pruned) = 0` for a table in the lookback window. This happens when:
+
+1. **No queries with WHERE/JOIN predicates ran against the table.** The pruning view only records rows when Snowflake evaluates a pruning decision. Full-table scans without any filter (`SELECT * FROM table`) don't appear.
+2. **The pruning data hasn't populated yet.** Latency is up to 4 hours.
+3. **The table was recently created** and hasn't accumulated enough query history.
+
+When the fallback fires:
+- The `recommendation_tier` will show based on the 0.5 ratio (typically "Moderate impact" for read-heavy tables)
+- The `recommendation_reason` will show "Below size threshold or insufficient data"
+- This is a **conservative neutral** — it doesn't claim pruning is good or bad, it flags the table for investigation
+
+### Edition and availability
+
+`TABLE_QUERY_PRUNING_HISTORY` is available to the `USAGE_VIEWER` database role — the same access level as all other ACCOUNT_USAGE views. No Snowflake edition restriction is documented. The base grant `IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE` is sufficient.
+
+Latency: up to 4 hours (longest of the ACCOUNT_USAGE views used by this package).
+
+---
+
 ## Notes
 
-- **Snowflake edition:** Enterprise edition (or higher) is recommended. Enterprise uses ACCESS_HISTORY for exact query-to-table attribution. Standard edition falls back to `query_text` matching, which is less precise and slower on high-volume accounts.
-- **Account usage latency:** Snowflake's ACCOUNT_USAGE views can lag by 45 minutes to 3 hours. Run the pipeline after this latency window for complete results.
+- **Snowflake edition:** Enterprise edition (or higher) is recommended for query-to-table attribution (via ACCESS_HISTORY). Standard edition falls back to `query_text` matching for DML counts. The partition scan ratio (from TABLE_QUERY_PRUNING_HISTORY) works on all editions.
+- **Account usage latency:** TABLE_QUERY_PRUNING_HISTORY can lag by up to 4 hours. Other views lag 45 minutes to 3 hours. Run the pipeline after these windows for complete results.
 - **First build performance:** The first run processes the full initial lookback window (default 30 days for Enterprise, 7 days for Standard). Subsequent incremental runs only process new data and are significantly faster.
 - **Incremental snapshots:** The fact model produces one snapshot per day. Running it multiple times in the same day updates (merges) the existing snapshot for that date rather than creating duplicates.

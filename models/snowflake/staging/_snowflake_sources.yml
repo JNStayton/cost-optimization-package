@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: snowflake_usage
+    database: SNOWFLAKE
+    schema: ACCOUNT_USAGE
+    config:
+      enabled: "{{ target.type == 'snowflake' }}"
+    tables:
+      - name: columns
+      - name: query_history
+      - name: access_history
+      - name: sessions
+      - name: tables
+      - name: table_storage_metrics
+      - name: views
+      - name: warehouse_metering_history
+      - name: query_attribution_history
+      - name: metering_history
+        description: >
+          Serverless and service-level credit consumption. Column mapping in staging model:
+          NAME -> entity_name (the service/function/warehouse name, varies by service_type).
+          Note: This view does NOT have a warehouse_name column.
+      - name: cortex_ai_functions_usage_history
+        description: >
+          Per-query Cortex AI function usage with token metrics.
+          METRICS column is an ARRAY of objects: [{key:{metric, unit}, value}].
+          Token extraction uses lateral flatten + conditional aggregation in intermediate models.
+      - name: cortex_agent_usage_history
+        description: >
+          Cortex Agent request-level usage. Column mapping in staging model:
+          AGENT_DATABASE_NAME -> agent_database_name (not bare database_name),
+          AGENT_SCHEMA_NAME -> agent_schema_name (not bare schema_name).
+      - name: cortex_search_serving_usage_history
+      - name: cortex_rest_api_usage_history
+      - name: users
+      - name: table_query_pruning_history
+      - name: warehouse_events_history

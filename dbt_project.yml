@@ -18,54 +18,71 @@ require-dbt-version: [">=1.0.0"]
 models:
   dbt_cost_optimization_package:
     +schema: dbt_cost_optimization
-    # Staging models - platform-specific data extraction
-    staging:
+    # Shared platform-agnostic models (always enabled for ref resolution)
+    shared:
       +materialized: view
-      snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
-      bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
-      databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
-      redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
-    intermediate:
-      +materialized: view
-      snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
-      bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
-      databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
-      redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
-    marts:
-      snowflake:
+      +enabled: "{{ var('dbt_cost_optimization_enabled', false) }}"
+    # Snowflake optimization models
+    snowflake:
+      +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) }}"
+      staging:
+        +materialized: view
+        stg_snowflake__access_history:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        stg_snowflake__cortex_rest_api_usage:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('ai_rest_api_enabled', true) }}"
+      intermediate:
+        +materialized: view
+        int_snowflake__query_table_access:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        int_snowflake__column_query_access:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        int_snowflake__column_query_stats:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        int_snowflake__direct_object_access:
+          +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+      marts:
         clustering:
-          +enabled: "{{ target.type == 'snowflake' }}"
-          +tags: ['clustering']
+          +tags: ['clustering', 'dbt_cost_optimization']
         materialization:
-          +enabled: "{{ target.type == 'snowflake' }}"
-          +tags: ['materialization']
+          +tags: ['materialization', 'dbt_cost_optimization']
         warehouse:
-          +enabled: "{{ target.type == 'snowflake' }}"
-          +tags: ['warehouse']
+          +tags: ['warehouse', 'dbt_cost_optimization']
         ai:
-          +enabled: "{{ target.type == 'snowflake' }}"
-          +tags: ['ai_spend']
-      bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
-      databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
-      redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
+          +tags: ['ai_spend', 'dbt_cost_optimization']
+        gold:
+          +tags: ['gold', 'dbt_cost_optimization']
+    # Redshift optimization models
+    redshift:
+      +enabled: "{{ target.type == 'redshift' and var('dbt_cost_optimization_enabled', false) }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
+    # BigQuery optimization models
+    bigquery:
+      +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
+    # Databricks optimization models
+    databricks:
+      +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
 
-# Package variables — override in consuming project's dbt_project.yml
+# Package variables — override in consuming project's dbt_project.yml vars: section
 vars:
-  # --- Snowflake: Shared ---
-  use_access_history_attribution: true
-  use_query_attribution: true
-  table_query_stats_full_account: false
+  # --- Package enablement (opt-in) ---
+  dbt_cost_optimization_enabled: false  # Set to true in consuming project to activate
+
+  # --- Snowflake: Edition and feature flags ---
+  snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
+  ai_rest_api_enabled: true             # Set to false to exclude REST API from AI analysis
+
+  # --- Cross-environment model discovery ---
+  dbt_monitored_projects: []  # Default: current project only. Add project names to monitor additional projects.
+  dbt_relation_history_lookback_days: 90  # How far back to scan query_history for dbt builds
+  environment_priority_order: ['prod', 'staging', 'dev']  # Priority for collapsing recommendations
 
   # --- Snowflake: Table clustering ---
   clustering_candidates_min_size_gb: 100
@@ -111,4 +128,6 @@ vars:
   ai_user_concentration_threshold_pct: 50
   ai_min_credits_for_recommendation: 1
   ai_min_queries_for_recommendation: 10
-  ai_rest_api_enabled: true
+
+  # --- Snowflake: Shared settings ---
+  table_query_stats_full_account: false

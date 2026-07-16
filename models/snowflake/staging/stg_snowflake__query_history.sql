@@ -1,0 +1,34 @@
+{{ config(
+    materialized='incremental',
+    unique_key='query_id',
+    on_schema_change='append_new_columns'
+) }}
+
+select
+    query_id, 
+    start_time, 
+    query_hash, 
+    warehouse_name, 
+    warehouse_size, 
+    total_elapsed_time, 
+    bytes_scanned, 
+    query_load_percent, 
+    queued_overload_time,
+    queued_provisioning_time,
+    query_type, 
+    execution_time, 
+    partitions_scanned, 
+    partitions_total,
+    bytes_spilled_to_local_storage, 
+    bytes_spilled_to_remote_storage, 
+    query_text, 
+    session_id,
+    execution_status,
+    rows_inserted
+from {{ source('snowflake_usage', 'query_history') }}
+where execution_status = 'SUCCESS'
+{% if is_incremental() %}
+  and start_time >= (select dateadd(day, -7, max(start_time)) from {{ this }})
+{% else %}
+  and start_time >= dateadd(day, -14, current_timestamp())
+{% endif %}
