@@ -115,13 +115,13 @@ table_warehouse as (
         qh.warehouse_name,
         row_number() over (
             partition by upper(qta.table_database) || '.' || upper(qta.table_schema) || '.' || upper(qta.table_name)
-            order by sum(qh.bytes_spilled_to_local_storage + qh.bytes_spilled_to_remote_storage) desc
+            order by sum(qh.bytes_spilled_local + qh.bytes_spilled_remote) desc
         ) as rn
     from {{ ref('int_snowflake__query_table_access') }} as qta
     inner join {{ ref('int_snowflake__query_history') }} as qh
         on qh.query_id = qta.query_id
     where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
-      and (qh.bytes_spilled_to_local_storage > 0 or qh.bytes_spilled_to_remote_storage > 0)
+      and (qh.bytes_spilled_local > 0 or qh.bytes_spilled_remote > 0)
       and qh.warehouse_name is not null
     group by 1, 2
 ),
