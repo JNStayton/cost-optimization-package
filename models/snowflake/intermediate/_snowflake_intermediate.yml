@@ -242,3 +242,61 @@ models:
         description: Total row count of the table at time of scan
       - name: calculated_at
         description: Timestamp when the macro last populated or updated this record
+
+  # ===========================================================================
+  # int_snowflake__query_history
+  # ===========================================================================
+  - name: int_snowflake__query_history
+    description: >
+      Thin incremental pass-through of stg_snowflake__query_history with column renames
+      (e.g., start_time → query_start_time, total_elapsed_time → total_elapsed_time_ms).
+      Provides a stable interface for downstream models and filters to successful queries only.
+      Clustered by to_date(query_start_time).
+
+  # ===========================================================================
+  # int_snowflake__warehouse_query_stats_daily
+  # ===========================================================================
+  - name: int_snowflake__warehouse_query_stats_daily
+    description: >
+      Daily per-warehouse aggregate stats for dbt-authored queries. Grain: (warehouse_name, stats_date).
+      Provides medians for overload, provisioning, and execution time; DML ratio; query load percent.
+      Used by fct_snowflake__warehouse_sizing_recommendations.
+
+  # ===========================================================================
+  # int_snowflake__warehouse_expensive_queries_daily
+  # ===========================================================================
+  - name: int_snowflake__warehouse_expensive_queries_daily
+    description: >
+      Daily per-query-hash credit consumption for dbt-authored queries. Grain: (query_hash, stats_date).
+      Uses QUERY_ATTRIBUTION_HISTORY for exact credits where available, falling back to
+      elapsed-time proration from WAREHOUSE_METERING_HISTORY. Surfaces top_user_name and
+      top_role_name per query pattern.
+
+  # ===========================================================================
+  # int_snowflake__view_chains
+  # ===========================================================================
+  - name: int_snowflake__view_chains
+    description: >
+      Recursive CTE that walks the dbt DAG from each view/ephemeral model through
+      its children until reaching a materialized table. Provides downstream_table_count,
+      min_hops_to_table, and downstream_table_fqns for view chain impact scoring.
+
+  # ===========================================================================
+  # int_snowflake__direct_object_access
+  # ===========================================================================
+  - name: int_snowflake__direct_object_access
+    description: >
+      Flattens ACCESS_HISTORY.direct_objects_accessed to provide exact engine-reported
+      query-to-object attribution at the view/table level. Unlike base_objects_accessed
+      (which resolves through views), this preserves the actual objects referenced.
+      Enterprise+ only (requires ACCESS_HISTORY).
+
+  # ===========================================================================
+  # int_snowflake__dbt_relation_history
+  # ===========================================================================
+  - name: int_snowflake__dbt_relation_history
+    description: >
+      Cross-environment dbt model discovery. Parses the dbt query comment JSON from
+      QUERY_HISTORY to map each logical dbt model (node_id) to every physical FQN
+      where it has been materialized across environments (dev, staging, prod).
+      Grain: (node_id, table_fqn). Enables recommendation deduplication across environments.

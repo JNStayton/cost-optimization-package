@@ -2,7 +2,7 @@
     materialized='incremental',
     unique_key='pruning_history_key',
     on_schema_change='append_new_columns',
-    cluster_by=['to_date(start_time)']
+    cluster_by=['to_date(interval_start_time)']
 ) }}
 
 select

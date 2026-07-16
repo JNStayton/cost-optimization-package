@@ -271,6 +271,9 @@ All package variables can be overridden in your `dbt_project.yml` under `vars:`.
 |----------|---------|-------------|
 | `table_materialization_lookback_days` | `14` | Lookback window for view query history. |
 | `table_materialization_min_query_count` | `10` | Minimum queries for a view to appear in results. |
+| `table_query_stats_initial_lookback_days` | `30` | Initial load window for table_query_stats_daily on first build. |
+| `column_query_stats_initial_lookback_days` | `30` | Initial load window for column_query_stats on first build. |
+| `incremental_unique_key_probe_threshold` | `0.95` | Uniqueness ratio threshold for key candidate detection. |
 | `incremental_candidates_lookback_days` | `60` | Lookback window for table rebuild history. |
 | `incremental_candidates_min_build_time_sec` | `300` | Min max build time for build-time trigger. |
 | `incremental_candidates_min_size_gb` | `2` | Min table size for size trigger. |
@@ -311,6 +314,14 @@ All package variables can be overridden in your `dbt_project.yml` under `vars:`.
 | `ai_min_credits_for_recommendation` | `1` | Min credits for a model to produce recommendations. |
 | `ai_min_queries_for_recommendation` | `10` | Min queries for a model to produce recommendations. |
 | `ai_rest_api_enabled` | `true` | Set to `false` to exclude REST API (dollar-billed) from AI analysis. |
+
+### Cross-environment model discovery
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `dbt_monitored_projects` | `[]` | List of dbt project names to track across environments. Defaults to current project when empty. |
+| `dbt_relation_history_lookback_days` | `90` | How far back to scan QUERY_HISTORY for dbt build comments. |
+| `environment_priority_order` | `['prod', 'staging', 'dev']` | Priority order for collapsing recommendations by environment in the gold layer. |
 
 ### Example: Standard edition configuration
 

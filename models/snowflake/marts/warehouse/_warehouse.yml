@@ -329,6 +329,23 @@ models:
           False when credits were estimated from WAREHOUSE_METERING_HISTORY prorated
           by elapsed time share (approximate, Standard edition fallback).
 
+      - name: top_user_name
+        description: >
+          The user who most frequently executes this query pattern (mode of user_name
+          across all runs in the lookback window). Useful for identifying who to work
+          with on query optimization.
+
+      - name: top_role_name
+        description: >
+          The role most frequently used when executing this query pattern (mode of
+          role_name). Useful for RBAC-based cost attribution.
+
+      - name: distinct_users
+        description: >
+          Number of distinct users who executed this query pattern in the lookback
+          window. High values indicate shared/scheduled queries; low values indicate
+          a single user's workload.
+
       - name: total_runs_30d
         description: Total number of executions of this query hash in the 30-day lookback window.
 

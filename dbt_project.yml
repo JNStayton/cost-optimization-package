@@ -95,6 +95,9 @@ vars:
   # --- Snowflake: Materialization ---
   table_materialization_lookback_days: 14
   table_materialization_min_query_count: 10
+  table_query_stats_initial_lookback_days: 30  # Initial load window for table_query_stats_daily
+  column_query_stats_initial_lookback_days: 30  # Initial load window for column_query_stats
+  incremental_unique_key_probe_threshold: 0.95  # Uniqueness ratio threshold for key candidates
   incremental_candidates_lookback_days: 60
   incremental_candidates_min_build_time_sec: 300
   incremental_candidates_min_size_gb: 2

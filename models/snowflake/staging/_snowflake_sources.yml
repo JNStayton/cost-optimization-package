@@ -13,7 +13,6 @@ sources:
       - name: sessions
       - name: tables
       - name: table_storage_metrics
-      - name: views
       - name: warehouse_metering_history
       - name: query_attribution_history
       - name: metering_history

@@ -97,10 +97,15 @@ After installation, see your platform's documentation for:
 ```
 models/
   shared/          Platform-agnostic models (dbt graph introspection)
-  snowflake/       Snowflake staging, intermediate, and mart models
-  redshift/        Redshift staging and intermediate models
-  bigquery/        BigQuery staging and intermediate models
-  databricks/      Databricks (planned)
+  snowflake/
+    staging/       Snowflake ACCOUNT_USAGE source staging models
+    intermediate/  Transforms, aggregations, and cross-environment discovery
+    marts/
+      clustering/       Table clustering candidate recommendations
+      materialization/  View-to-table and incremental strategy recommendations
+      warehouse/        Sizing, spillage, and expensive query recommendations
+      ai/              AI/Cortex spend and token efficiency recommendations
+      gold/            Dashboard-ready views (cross-domain, deduplicated by model)
 
 macros/
   snowflake/       Snowflake optimization macros and utilities

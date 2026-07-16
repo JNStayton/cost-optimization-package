@@ -593,3 +593,25 @@ models:
       - name: recommendation_reason
         description: Human-readable explanation of the recommendation and the metrics that triggered it.
 
+      - name: node_id
+        description: >
+          Logical dbt model identifier from int_snowflake__dbt_relation_history
+          (e.g., model.my_project.stg_orders). Enables cross-environment deduplication.
+          Null for models not tracked in dbt query comment history.
+
+      - name: target_name
+        description: >
+          The dbt target name (e.g., dev, prod, default) associated with this physical
+          relation in int_snowflake__dbt_relation_history.
+
+      - name: node_project_name
+        description: >
+          The dbt project name extracted from the node_id (second segment).
+          Enables filtering recommendations by project.
+
+      - name: environment_count
+        description: >
+          Number of distinct physical environments (table_fqn values) where this logical
+          dbt model has been materialized. Useful for identifying models that exist across
+          dev/staging/prod.
+
