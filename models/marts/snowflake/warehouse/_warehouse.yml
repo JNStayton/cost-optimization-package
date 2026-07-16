@@ -1,0 +1,373 @@
+version: 2
+
+models:
+  # ===========================================================================
+  # fct_snowflake__warehouse_sizing_recommendations
+  # ===========================================================================
+  - name: fct_snowflake__warehouse_sizing_recommendations
+    description: >
+      Warehouse sizing recommendations for dbt workloads, based on concurrency,
+      DML ratio, and idle credit signals over a configurable lookback window
+      (default 30 days).
+
+      Mirrors the recommendation logic in find_warehouse_sizing_recommendations()
+      but adds 7-day vs. 30-day trend comparison and idle credit context for
+      historical tracking and drift detection.
+
+      Recommendation tiers:
+        Enable Gen2              — DML ratio > warehouse_sizing_dml_threshold (default 35%)
+        Enable multi-cluster     — median overload > 5s AND overload > 10% of elapsed
+        Scale up single cluster  — median overload 1–5s (moderate concurrency bottleneck)
+        Scale down single cluster — median execution < 5s AND median overload < 0.5s
+        Stable                   — metrics within healthy range
+
+      Controlled by the following dbt variables:
+        - warehouse_sizing_lookback_days    (default 30)
+        - warehouse_sizing_dml_threshold    (default 0.35)
+        - warehouse_sizing_min_query_count  (default 20)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: analysis_lookback_days
+        description: Lookback window used for this analysis run, in days.
+
+      - name: warehouse_name
+        description: Name of the Snowflake virtual warehouse.
+
+      - name: warehouse_size
+        description: >
+          Most recently observed warehouse size (e.g., X-Small, Small, Medium, Large).
+          Sourced via any_value() from daily stats — if a warehouse was resized during
+          the lookback window, this may not reflect the current size.
+          Sourced from ACCOUNT_USAGE.QUERY_HISTORY via int_snowflake__warehouse_query_stats_daily.
+
+      - name: total_queries_30d
+        description: Total dbt queries executed on this warehouse in the 30-day lookback window.
+
+      - name: total_queries_7d
+        description: Total dbt queries executed on this warehouse in the last 7 days.
+
+      - name: dml_pct_30d
+        description: >
+          Percentage of dbt queries that are DML (INSERT, UPDATE, DELETE, MERGE) over
+          the 30-day window. Values above warehouse_sizing_dml_threshold trigger the
+          Gen2 recommendation.
+
+      - name: median_overload_sec_30d
+        description: >
+          Median queued_overload_time in seconds over the 30-day window. This is a
+          median-of-daily-medians approximation (not the true 30-day median across all
+          queries), which is acceptable for recommendation signals but not statistically
+          exact. The primary concurrency bottleneck signal.
+
+      - name: median_execution_sec_30d
+        description: >
+          Median execution_time in seconds over the 30-day window (median-of-daily-medians
+          approximation). Used alongside median_overload_sec_30d to detect oversized
+          warehouses (low execution, low overload).
+
+      - name: overload_to_elapsed_ratio_30d
+        description: >
+          Median ratio of overload queue time to total elapsed time over the 30-day window.
+          Values above 0.10 (10%) combined with median_overload_sec_30d > 5s trigger the
+          multi-cluster recommendation.
+
+      - name: avg_query_load_pct_30d
+        description: >
+          Average query_load_percent for dbt queries over the 30-day window, excluding
+          zero-load queries. Values consistently below 50% alongside low overload suggest
+          the warehouse is oversized.
+
+      - name: queries_at_100pct_load_30d
+        description: >
+          Number of dbt queries that ran when the warehouse was at 100% load over the
+          30-day window. A high count alongside high overload confirms a concurrency
+          bottleneck rather than a single slow query.
+
+      - name: median_overload_sec_7d
+        description: Median overload queue time in seconds over the last 7 days. Used for trend comparison.
+
+      - name: median_execution_sec_7d
+        description: Median execution time in seconds over the last 7 days. Used for trend comparison.
+
+      - name: overload_trend
+        description: >
+          Direction of the overload queue trend comparing the 7-day median to the 30-day median.
+          Worsening: 7-day overload > 30-day overload by more than 20%.
+          Improving: 7-day overload < 30-day overload by more than 20%.
+          Stable: within 20% of the 30-day baseline.
+
+      - name: avg_idle_credit_pct_30d
+        description: >
+          Average fraction of total warehouse credits that were idle (not used for compute)
+          over the 30-day window. Sourced from WAREHOUSE_METERING_HISTORY.
+          Values above 0.15 (15%) are flagged in the recommendation_reason.
+
+      - name: total_idle_credits_30d
+        description: Total idle credits consumed by this warehouse over the 30-day window.
+
+      - name: total_credits_30d
+        description: Total credits (compute + idle) consumed by this warehouse over the 30-day window.
+
+      - name: recommendation
+        description: >
+          Human-readable sizing recommendation. One of: Enable Gen2 warehouse,
+          Enable multi-cluster or split workload, Scale up single cluster,
+          Scale down single cluster, Stable — no sizing change recommended.
+
+      - name: recommendation_reason
+        description: >
+          Detailed explanation of the recommendation including the specific metrics
+          that triggered it, trend direction, and idle credit context where relevant.
+
+  # ===========================================================================
+  # fct_snowflake__warehouse_spillage_recommendations
+  # ===========================================================================
+  - name: fct_snowflake__warehouse_spillage_recommendations
+    description: >
+      Spillage recommendations for dbt-managed tables, with warehouse-level trend
+      context. The actionable unit is the table — fixing the query SQL is almost
+      always cheaper than scaling up the warehouse.
+
+      Recommendation tiers:
+        Critical — Remote Spillage  — any meaningful remote spillage (> 0.1 GB total)
+        Warn — Heavy Local Spillage — local spillage > 5 GB total in the window
+        Monitor — Moderate Spillage — above the floor but not severe
+
+      Trend direction compares the first half of the lookback to the most
+      recent half: Worsening / Improving / Stable (20% threshold). The split point
+      is dynamically calculated as lookback_days / 2.
+
+      Requires Snowflake Enterprise Edition (use_access_history_attribution = true).
+      When use_access_history_attribution = false, this model produces no rows.
+
+      Controlled by the following dbt variables:
+        - spillage_lookback_days          (default 30)
+        - spillage_min_total_gb           (default 0.05)
+        - spillage_min_runs               (default 1)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: analysis_lookback_days
+        description: Lookback window used for this analysis run, in days.
+
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: table_database
+        description: Snowflake database containing the table.
+
+      - name: table_schema
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table. Null when not in the dbt project.
+
+      - name: model_name
+        description: dbt model name (filename without extension). Null when not in the dbt project.
+
+      - name: current_materialization
+        description: Current dbt materialization type of the model (table, incremental, view, etc.).
+
+      - name: warehouse_name
+        description: Warehouse most recently associated with this table's builds.
+
+      - name: spill_days
+        description: Number of distinct days in the lookback window where spillage was recorded for this table.
+
+      - name: total_runs
+        description: >
+          Total number of DML and CTAS (build) queries against this table in the lookback
+          window. Read queries (SELECT) are excluded — this counts only write operations
+          that could cause spillage.
+
+      - name: total_gb_spilled_local
+        description: Total gigabytes spilled to local (SSD) storage across all runs in the lookback window.
+
+      - name: total_gb_spilled_remote
+        description: >
+          Total gigabytes spilled to remote (S3) storage across all runs in the lookback window.
+          Remote spillage is the critical signal — it dramatically increases elapsed time and
+          credit consumption.
+
+      - name: avg_gb_spilled_local_per_day
+        description: Average gigabytes spilled to local storage per spilling day.
+
+      - name: avg_gb_spilled_remote_per_day
+        description: Average gigabytes spilled to remote storage per spilling day.
+
+      - name: spill_gb_recent_15d
+        description: >
+          Total GB spilled (local + remote) in the most recent half of the lookback window.
+          The split point is lookback_days / 2 (not fixed at 15 days).
+
+      - name: spill_gb_prior_15d
+        description: >
+          Total GB spilled (local + remote) in the first half of the lookback window.
+          The split point is lookback_days / 2 (not fixed at 15 days).
+
+      - name: spill_trend
+        description: >
+          Direction of spillage trend comparing the recent half to the prior half of
+          the lookback window. Worsening: recent > prior by more than 20%.
+          Improving: recent < prior by more than 20%.
+          Stable: within 20% of the prior period.
+          'Insufficient data' if lookback_days <= 2.
+
+      - name: warehouse_spill_days_30d
+        description: >
+          Number of spilling queries on the associated warehouse over the 30-day window.
+          Provides context for whether this table's spillage is isolated or part of a
+          broader warehouse-level pattern.
+
+      - name: warehouse_total_gb_spilled_30d
+        description: Total GB spilled across all dbt queries on the associated warehouse in the 30-day window.
+
+      - name: recommendation
+        description: >
+          Spillage severity tier. One of: Critical — Refactor SQL or scale up warehouse
+          (remote spillage), Warn — Refactor SQL or scale up warehouse (heavy local spillage),
+          Monitor — Moderate local spillage.
+
+      - name: recommendation_reason
+        description: >
+          Detailed explanation including total spillage, trend direction, and warehouse-level
+          context. Includes actionable SQL refactor guidance for critical and warn tiers.
+
+  # ===========================================================================
+  # fct_snowflake__expensive_query_recommendations
+  # ===========================================================================
+  - name: fct_snowflake__expensive_query_recommendations
+    description: >
+      Surfaces the most expensive dbt-authored queries by projected annual cost,
+      grouped by query_hash so repeated runs of the same logical query are
+      aggregated together.
+
+      Recommendation tiers:
+        High Cost (warn) — projected annual cost > expensive_query_high_cost_threshold (default $10,000)
+        Tracked   (info) — above the min_total_credits floor but below the high bar
+
+      Annual cost is projected from the lookback-window credit consumption multiplied
+      by credit_rate_usd. Tune credit_rate_usd to your contract rate (default $2/credit).
+
+      When use_query_attribution = false (Standard edition), credits are estimated from
+      warehouse_metering_history prorated by elapsed time share. The credits_from_attribution
+      column flags which method was used.
+
+      Trend direction compares the 7-day projected annual cost to the 30-day projected
+      annual cost: Worsening / Improving / Stable (20% threshold).
+
+      Controlled by the following dbt variables:
+        - expensive_query_lookback_days       (default 30)
+        - expensive_query_credit_rate_usd     (default 2)
+        - expensive_query_high_cost_threshold (default 10000)
+        - expensive_query_min_total_credits   (default 0.1)
+        - expensive_query_top_n               (default 50)
+
+      Important notes:
+        - This model is capped at expensive_query_top_n rows (default 50). SELECT * will
+          return at most that many rows, ordered by projected cost descending.
+        - If expensive_query_lookback_days exceeds the intermediate model's initial load
+          window (30 days), the mart will return correct but incomplete results until the
+          intermediate has accumulated enough incremental history.
+        - On Standard edition (credits_from_attribution = false), credit estimates are
+          approximate — prorated by elapsed time share across all queries in the
+          warehouse-hour. The approximation is flagged in the credits_from_attribution column.
+        - On Standard edition, the ILIKE-based table matching in int_snowflake__table_query_stats_daily
+          can produce false positives for tables with short or common names.
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: analysis_lookback_days
+        description: Lookback window used for this analysis run, in days.
+
+      - name: credit_rate_usd
+        description: Credit rate in USD used to project annual cost. Set via expensive_query_credit_rate_usd.
+
+      - name: query_hash
+        description: >
+          Snowflake query hash that uniquely identifies the logical query structure.
+          Repeated runs of the same compiled SQL share a query_hash, enabling
+          aggregation across runs.
+
+      - name: dbt_node_id
+        description: >
+          dbt unique_id of the model that produced this query, extracted from the JSON
+          comment dbt prepends to compiled queries. Null when the query was not compiled
+          by dbt or the comment is absent.
+
+      - name: warehouse_name
+        description: Warehouse most recently associated with this query hash.
+
+      - name: warehouse_size
+        description: Warehouse size most recently associated with this query hash.
+
+      - name: credits_from_attribution
+        description: >
+          True when credits were sourced from QUERY_ATTRIBUTION_HISTORY (precise).
+          False when credits were estimated from WAREHOUSE_METERING_HISTORY prorated
+          by elapsed time share (approximate, Standard edition fallback).
+
+      - name: total_runs_30d
+        description: Total number of executions of this query hash in the 30-day lookback window.
+
+      - name: avg_elapsed_sec
+        description: Average execution time in seconds per run over the 30-day window.
+
+      - name: total_credits_30d
+        description: Total credits consumed by this query hash in the 30-day lookback window.
+
+      - name: avg_daily_credits
+        description: Average credits consumed per day by this query hash over the 30-day window.
+
+      - name: estimated_annual_credits
+        description: Projected annual credits based on the 30-day average daily consumption.
+
+      - name: estimated_annual_cost_usd
+        description: >
+          Projected annual cost in USD based on the 30-day average daily consumption
+          multiplied by credit_rate_usd. Primary sort key.
+
+      - name: estimated_annual_cost_usd_7d
+        description: >
+          Projected annual cost in USD based on the 7-day average daily consumption.
+          Used for trend comparison against the 30-day baseline.
+
+      - name: cost_trend
+        description: >
+          Direction of the cost trend comparing the 7-day projected annual cost to the
+          30-day projected annual cost.
+          Worsening: 7-day projection > 30-day projection by more than 20%.
+          Improving: 7-day projection < 30-day projection by more than 20%.
+          Stable: within 20% of the 30-day baseline.
+
+      - name: recommendation
+        description: >
+          Cost tier recommendation. One of: Review for refactor opportunities (high projected cost),
+          Monitor — recurring credit consumption.
+
+      - name: recommendation_reason
+        description: >
+          Detailed explanation including projected annual cost, run count, average elapsed time,
+          trend direction, and a note when credit estimates are approximate (Standard edition).

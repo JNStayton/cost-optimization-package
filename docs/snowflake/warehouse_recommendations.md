@@ -38,31 +38,11 @@ All warehouse recommendations are scoped to **dbt-authored queries only** via `i
 
 ### Shared Concept: Enterprise vs Standard Edition
 
-Controlled by `snowflake_enterprise_edition` variable (default: `true`).
-
 | Feature | Enterprise+ | Standard |
 |---------|------------|----------|
-| Gen2 warehouses | Yes | Yes |
-| Multi-cluster (MCW) | Yes | **No** — recommends "split workload" instead |
-| Query Acceleration (QAS) | Yes | **No** |
 | Credit attribution | `QUERY_ATTRIBUTION_HISTORY` (exact per-query credits) | Elapsed-time proration from `WAREHOUSE_METERING_HISTORY` (approximate) |
 | Table-level spillage attribution | `ACCESS_HISTORY` (exact query→table mapping) | Not available — spillage mart produces no rows |
 | Query-to-table attribution | `ACCESS_HISTORY` (exact) | `query_text ILIKE` matching (approximate, false-positive risk) |
-
-### Warehouse Configuration Awareness
-
-The sizing model and macro detect current warehouse configuration via `WAREHOUSE_EVENTS_HISTORY` (ACCOUNT_USAGE) and suppress redundant recommendations:
-
-| Signal | Current Config | Edition | Recommendation |
-|--------|---------------|---------|---------------|
-| DML > threshold | Not Gen2 | Any | Enable Gen2 |
-| DML > threshold | Already Gen2 | Any | Already optimized — review query patterns |
-| High overload | Single-cluster | Enterprise+ | Enable multi-cluster |
-| High overload | Single-cluster | Standard | Split workload across warehouses |
-| High overload | Already multi-cluster | Enterprise+ | Review scaling policy / increase max_cluster_count |
-| Moderate overload | Any | Any | Scale up single cluster |
-| Low utilization | Any | Any | Scale down single cluster |
-| Any | Adaptive | Any | Stable (self-optimizing) |
 
 ### Adaptive Warehouse Exclusion
 
@@ -131,7 +111,7 @@ The lookback window is split in half (`lookback_days / 2`). Recent-half spillage
 
 ### Enterprise+ Requirement
 
-This model **requires Enterprise+ edition** (`snowflake_enterprise_edition = true`). Without ACCESS_HISTORY, table-level spillage attribution is not possible and the model produces zero rows with an explanatory message.
+This model **requires Enterprise+ edition** (`use_access_history_attribution = true`). Without ACCESS_HISTORY, table-level spillage attribution is not possible and the model produces zero rows with an explanatory message.
 
 The `int_snowflake__warehouse_spillage_daily` intermediate (warehouse-level aggregation) works on all editions since it only joins query_history to dbt_sessions.
 
@@ -158,8 +138,8 @@ estimated_annual_cost_usd = (total_credits / lookback_days) * 365 * credit_rate_
 ```
 
 Where `total_credits` comes from:
-- **Primary**: `QUERY_ATTRIBUTION_HISTORY.credits_attributed_compute` — exact per-query credits (automatic, no configuration needed)
-- **Fallback** (for short queries <= ~100ms where attribution is NULL): prorated from `WAREHOUSE_METERING_HISTORY` by each query's elapsed time share within the warehouse-hour bucket. Flagged via `credits_from_attribution = false`.
+- **Enterprise+** (`use_query_attribution = true`): `QUERY_ATTRIBUTION_HISTORY.credits_attributed_compute` — exact per-query credits
+- **Standard** (`use_query_attribution = false`): prorated from `WAREHOUSE_METERING_HISTORY` by each query's elapsed time share within the warehouse-hour bucket. Flagged via `credits_from_attribution = false`.
 
 ### Recommendation Tiers
 
@@ -267,7 +247,7 @@ order by estimated_annual_cost_usd desc;
 ## Notes
 
 - **Adaptive warehouses:** Excluded from sizing recommendations. Spillage and expensive query models still apply to adaptive warehouses.
-- **Credit approximation for short queries:** Queries <= ~100ms don't appear in QUERY_ATTRIBUTION_HISTORY. For these, credit estimates are prorated by elapsed time share across all queries in the warehouse-hour. This can over-estimate credits for short queries running alongside long ones on the same warehouse. The `credits_from_attribution` column flags approximate rows.
+- **Standard-edition credit approximation:** When `use_query_attribution = false`, credit estimates are prorated by elapsed time share across all queries in the warehouse-hour. This can over-estimate credits for short queries running alongside long ones on the same warehouse. The `credits_from_attribution` column flags approximate rows.
 - **Lookback vs intermediate initial load:** If you set `expensive_query_lookback_days: 60` but the intermediate model only has 30 days of data (initial load window), the mart returns correct but incomplete results until the intermediate accumulates enough history.
 - **ACCOUNT_USAGE latency:** Views can lag 45 minutes to 3 hours. Schedule dbt builds outside this window for complete results.
 - **Median-of-medians approximation:** The sizing model computes `median(median_overload_ms)` across daily medians — an approximation of the true 30-day median. Acceptable for recommendation signals but not statistically exact.

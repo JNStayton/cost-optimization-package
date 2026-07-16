@@ -1,0 +1,473 @@
+version: 2
+
+models:
+  # ===========================================================================
+  # fct_snowflake__table_materialization_candidates
+  # ===========================================================================
+  - name: fct_snowflake__table_materialization_candidates
+    description: >
+      dbt VIEW and EPHEMERAL models that are candidates for conversion to TABLE
+      materialization, scored by query volume, data scan cost, and view/ephemeral
+      chain analysis over a configurable lookback window.
+
+      Query attribution uses query_text ILIKE matching against the view name for
+      both Enterprise and Standard editions. ACCESS_HISTORY resolves views to their
+      base tables and cannot be used for view-level attribution.
+
+      Known limitation: view names that are substrings of other table or column
+      identifiers may produce false-positive query matches.
+
+      Controlled by the following dbt variables:
+        - table_materialization_lookback_days   (default 14)
+        - table_materialization_min_query_count (default 10)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: table_fqn
+        description: Fully-qualified view name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the view.
+
+      - name: schema_name
+        description: Snowflake schema containing the view.
+
+      - name: table_name
+        description: Name of the evaluated view.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this view.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: materialized
+        description: Current materialization type of the model. One of view, ephemeral.
+
+      - name: select_count
+        description: >
+          Number of distinct SELECT queries that referenced this view by name
+          in query_text over the lookback window.
+
+      - name: avg_query_duration_s
+        description: >
+          Average execution time in seconds for SELECT queries referencing this
+          view. Derived from execution_time_ms (excludes queue time).
+
+      - name: relative_duration_ratio
+        description: >
+          This view's avg_query_duration_s divided by the project-wide average.
+          Values > 1 indicate this view is slower than average; used to normalize
+          out warehouse size differences when scoring view chains.
+
+      - name: total_gb_scanned
+        description: >
+          Total gigabytes scanned by SELECT queries referencing this view over
+          the lookback window. A large value alongside high query volume is a
+          strong signal that materialization would reduce repeated scan cost.
+
+      - name: avg_gb_scanned_per_query
+        description: Average gigabytes scanned per SELECT query against this view.
+
+      - name: materialization_score
+        description: >
+          Composite priority score for isolated views: select_count * avg_query_duration_s.
+          Higher scores indicate views where materializing as a TABLE would deliver the
+          greatest reduction in repeated computation cost. Used for relative ranking
+          within a single snapshot_date. Superseded by composite_chain_score for views
+          that are part of a view/ephemeral chain.
+
+      - name: is_in_view_chain
+        description: >
+          True when this view is part of a chain that leads to at least one downstream
+          TABLE materialization. Views in chains amplify recomputation cost across all
+          downstream consumers.
+
+      - name: min_hops_to_table
+        description: >
+          Minimum number of hops from this view to the nearest downstream TABLE
+          materialization in the DAG. Null when is_in_view_chain is false.
+
+      - name: downstream_table_count
+        description: >
+          Number of distinct TABLE materializations reachable downstream from this view.
+          Higher values amplify the cost savings from materializing this view.
+
+      - name: composite_chain_score
+        description: >
+          Priority score for views in a chain. Formula:
+          (greatest(select_count, 1) * avg_gb_scanned_per_query * relative_duration_ratio
+            + downstream_build_time_s) * min_hops_to_table * greatest(downstream_table_count, 1)
+          Higher scores indicate views where materialization would eliminate the most
+          cascading recomputation. Used for ranking when is_in_view_chain is true.
+
+      - name: downstream_build_time_s
+        description: >
+          Average build time in seconds of downstream TABLE materializations reachable
+          from this view. Contributes to composite_chain_score — a slow downstream
+          table amplifies the value of materializing an upstream view.
+
+      - name: recommendation
+        description: >
+          'Materialize as TABLE' when the view meets either cost threshold or is in a
+          view chain with a positive composite_chain_score; 'Monitor' otherwise.
+
+      - name: recommendation_reason
+        description: Human-readable explanation of the recommendation and the specific metrics that triggered it.
+
+  # ===========================================================================
+  # fct_snowflake__incremental_materialization_candidates
+  # ===========================================================================
+  - name: fct_snowflake__incremental_materialization_candidates
+    description: >
+      dbt TABLE models that are candidates for conversion to INCREMENTAL
+      materialization, based on rebuild cost, table size, and rebuild redundancy
+      over a configurable lookback window.
+
+      The key signal is rebuild_redundancy_rate = rows_at_period_start /
+      rows_at_period_end. A rate of 0.95 means 95% of every rebuild reprocesses
+      identical data. Combined with size and frequency, this produces
+      est_daily_redundant_gb_scanned — compute waste quantified in GB/day.
+
+      A model is surfaced when ANY of the following triggers fire:
+        - triggered_by_build_time: max rebuild time >= incremental_candidates_min_build_time_sec
+          AND table size >= incremental_candidates_min_size_gb
+        - triggered_by_compute_waste: compute_waste_score >= incremental_candidates_min_compute_waste_score
+          AND avg build time >= incremental_candidates_min_compute_waste_avg_build_sec
+
+      Downstream model fct_snowflake__incremental_config_recommendations adds
+      strategy recommendations and copy-pasteable config templates.
+
+      Controlled by the following dbt variables:
+        - incremental_candidates_lookback_days                   (default 60)
+        - incremental_candidates_min_build_time_sec              (default 300)
+        - incremental_candidates_min_size_gb                     (default 2)
+        - incremental_candidates_min_compute_waste_score         (default 5)
+        - incremental_candidates_min_compute_waste_avg_build_sec (default 30)
+        - incremental_candidates_min_qualified_build_days        (default 3)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: analysis_lookback_days
+        description: Lookback window used for this analysis run, in days.
+
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the table.
+
+      - name: schema_name
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: total_rows
+        description: >
+          Approximate row count of the table. Sourced from ACCOUNT_USAGE.TABLES;
+          falls back to the most recent CTAS rows_inserted snapshot when the
+          inventory value is zero or stale.
+
+      - name: table_build_count
+        description: >
+          Number of full table rebuilds (CREATE_TABLE_AS_SELECT) detected in
+          the lookback window.
+
+      - name: builds_per_day
+        description: Average number of full rebuilds per day over the lookback window.
+
+      - name: max_build_time_sec
+        description: >
+          Maximum full-rebuild execution time in seconds over the lookback window.
+          Derived from execution_time_ms (excludes queue time).
+
+      - name: avg_build_time_sec
+        description: Average full-rebuild execution time in seconds over the lookback window.
+
+      - name: select_count
+        description: Total SELECT queries against this table in the lookback window.
+
+      - name: avg_query_duration_s
+        description: Average SELECT query execution time in seconds over the lookback window.
+
+      - name: dml_count
+        description: Total INSERT, UPDATE, DELETE, and MERGE operations in the lookback window.
+
+      - name: insert_count
+        description: INSERT operations in the lookback window.
+
+      - name: update_count
+        description: UPDATE operations in the lookback window.
+
+      - name: delete_count
+        description: DELETE operations in the lookback window.
+
+      - name: merge_count
+        description: MERGE operations in the lookback window.
+
+      - name: qualified_build_days
+        description: >
+          Number of days in the lookback window where a CTAS build was recorded
+          with a non-null rows_inserted snapshot. Must meet incremental_candidates_min_qualified_build_days
+          for the growth signal to be considered reliable.
+
+      - name: rows_at_period_start
+        description: Row count from the earliest qualifying CTAS build in the lookback window.
+
+      - name: rows_at_period_end
+        description: Row count from the most recent qualifying CTAS build in the lookback window.
+
+      - name: rebuild_redundancy_rate
+        description: >
+          Fraction of each full rebuild that re-processes unchanged rows
+          (rows_at_period_start / rows_at_period_end). Null when growth signal
+          is unreliable or history is insufficient. A rate of 0.95 means 95%
+          of every rebuild reprocesses identical data.
+
+      - name: growth_signal_reliable
+        description: >
+          True when qualified_build_days >= incremental_candidates_min_qualified_build_days
+          and row count did not decrease during the lookback window. False when history
+          is too thin or a mid-lookback row count drop suggests a full-refresh or upstream deletes.
+
+      - name: compute_waste_score
+        description: >
+          Dimensionless composite waste signal: size_gb × (table_build_count / lookback_days).
+          Used as a secondary trigger alongside the build time threshold.
+
+      - name: est_daily_redundant_gb_scanned
+        description: >
+          Estimated GB scanned per day that is redundant
+          (size_gb × builds_per_day × rebuild_redundancy_rate). Null when
+          growth signal is unreliable. Primary sort key for the output.
+
+      - name: recommendation
+        description: >
+          Redundancy-based tier. One of: Strong Candidate (rate >= 0.90),
+          Candidate (rate >= 0.70), Candidate — Moderate Redundancy (rate >= 0.50),
+          Low ROI — Minimal Rebuild Redundancy (rate < 0.50),
+          Candidate — Verify Growth Signal, Candidate — Insufficient History.
+
+      - name: recommendation_reason
+        description: Human-readable explanation of the redundancy signal and triggering metrics.
+
+      - name: triggered_by_build_time
+        description: True when max_build_time_sec >= incremental_candidates_min_build_time_sec.
+
+      - name: triggered_by_size
+        description: True when table_size_gb >= incremental_candidates_min_size_gb.
+
+      - name: triggered_by_compute_waste
+        description: >
+          True when compute_waste_score >= incremental_candidates_min_compute_waste_score
+          and avg_build_time_sec >= incremental_candidates_min_compute_waste_avg_build_sec.
+
+  # ===========================================================================
+  # fct_snowflake__incremental_config_recommendations
+  # ===========================================================================
+  - name: fct_snowflake__incremental_config_recommendations
+    description: >
+      Model 2 of the incremental materialization recommendation flow. Depends on
+      fct_snowflake__incremental_materialization_candidates (Model 1).
+
+      For each candidate table, detects the best filter column (timestamp/date),
+      ranks unique key candidates by naming convention, probes cardinality via
+      APPROX_COUNT_DISTINCT (post-hook) to confirm likely_unique_key, recommends
+      a Snowflake-optimized incremental strategy, and generates a copy-pasteable
+      dbt config template with the is_incremental() filter block pre-filled.
+
+      Excludes 'Low ROI — Minimal Rebuild Redundancy' tables from Model 1.
+
+      Strategy selection priority:
+        1. External deletes detected + filter column  → delete+insert (flagged)
+        2. External deletes detected, no filter       → merge (flagged)
+        3. Unique key + filter + large scale          → delete+insert
+        4. Unique key + filter, moderate scale        → merge
+        5. Filter only, no DML, large scale           → microbatch
+        6. Filter only, no DML                        → append
+        7. Filter only, external DML, no key          → append (flag manual review)
+        8. Unique key only                            → merge
+        9. No key candidates                          → append
+
+      Controlled by the following dbt variables:
+        - incremental_large_table_row_threshold        (default 10000000)
+        - incremental_large_table_gb_threshold         (default 10)
+        - incremental_unique_key_probe_threshold       (default 0.95)
+    config:
+      materialized: table
+    columns:
+      - name: snapshot_date
+        description: Calendar date when this analysis was run.
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      - name: table_fqn
+        description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+
+      - name: database_name
+        description: Snowflake database containing the table.
+
+      - name: schema_name
+        description: Snowflake schema containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table.
+
+      - name: model_name
+        description: dbt model name (filename without extension).
+
+      - name: package_name
+        description: dbt package the model belongs to.
+
+      - name: redundancy_tier
+        description: >
+          Redundancy classification from Model 1. One of: Strong Candidate,
+          Candidate, Candidate — Moderate Redundancy, Candidate — Verify Growth
+          Signal, Candidate — Insufficient History.
+
+      - name: redundancy_reason
+        description: Human-readable explanation of the Model 1 redundancy signal.
+
+      - name: rebuild_redundancy_rate
+        description: >
+          Fraction of each full rebuild that re-processes unchanged rows
+          (rows_at_period_start / rows_at_period_end). Null when growth signal
+          is unreliable or history is insufficient.
+
+      - name: est_daily_redundant_gb_scanned
+        description: >
+          Estimated GB scanned per day that is redundant
+          (size_gb × builds_per_day × rebuild_redundancy_rate). Primary sort key.
+
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: total_rows
+        description: Approximate row count of the table.
+
+      - name: table_build_count
+        description: Number of full table rebuilds detected in the analysis window.
+
+      - name: builds_per_day
+        description: Average number of full rebuilds per day over the analysis window.
+
+      - name: max_build_time_sec
+        description: Maximum full-rebuild execution time in seconds over the analysis window.
+
+      - name: avg_build_time_sec
+        description: Average full-rebuild execution time in seconds over the analysis window.
+
+      - name: dml_count
+        description: Total INSERT, UPDATE, DELETE, and MERGE operations in the analysis window.
+
+      - name: insert_count
+        description: INSERT operations in the analysis window.
+
+      - name: update_count
+        description: UPDATE operations in the analysis window.
+
+      - name: delete_count
+        description: >
+          DELETE operations in the analysis window. Non-zero indicates external
+          processes are deleting from this table, which influences strategy selection.
+
+      - name: merge_count
+        description: MERGE operations in the analysis window.
+
+      - name: incremental_strategy
+        description: >
+          Recommended dbt incremental strategy. One of: append, merge,
+          delete+insert, microbatch. See strategy_notes for rationale.
+
+      - name: has_filter_column
+        description: True when a timestamp or date column was detected for use in the is_incremental() filter.
+
+      - name: has_unique_key_candidate
+        description: True when at least one plausible unique key candidate was detected by naming convention.
+
+      - name: has_external_deletes
+        description: True when delete_count > 0, indicating an external process deletes rows from this table.
+
+      - name: is_large_table
+        description: >
+          True when total_rows > incremental_large_table_row_threshold OR
+          table_size_gb > incremental_large_table_gb_threshold. Used to prefer
+          delete+insert over merge at large scale.
+
+      - name: suggested_filter_column
+        description: >
+          Best timestamp or date column for the is_incremental() WHERE filter,
+          ranked by name pattern. Null when no qualifying column is found.
+          Detection priority: *updated_at* / *modified_at* > *loaded_at* /
+          *ingested_at* / *inserted_at* / *synced_at* > *created_at* /
+          *event_date* / *event_time* / *event_timestamp* > any timestamp/date column.
+
+      - name: unique_key_candidates
+        description: >
+          Array of up to 3 plausible unique key column names ordered by naming
+          convention rank. Uniqueness is verified by the probe_unique_key_candidates
+          post-hook — use likely_unique_key for the confirmed result.
+
+      - name: best_unique_key
+        description: >
+          Top unique key candidate from naming convention detection (rank 1 from
+          unique_key_candidates). Not uniqueness-verified — use likely_unique_key
+          when populated.
+
+      - name: likely_unique_key
+        description: >
+          First column in unique_key_candidates confirmed as likely unique by the
+          probe_unique_key_candidates post-hook (APPROX_COUNT_DISTINCT / COUNT(*) >= threshold).
+          Null when no single-column unique key is found — indicates a composite or
+          surrogate key is needed. The dbt_config_template and validate_uniqueness_sql
+          are updated to reference this column when populated.
+
+      - name: strategy_notes
+        description: Human-readable rationale for the recommended strategy, including key column names and any caveats.
+
+      - name: validate_uniqueness_sql
+        description: >
+          SQL snippet to run against the candidate table to confirm unique key suitability.
+          Returns is_unique = TRUE when the column has no duplicates. Updated by the
+          post-hook to reference likely_unique_key when confirmed. Null when no
+          unique key candidate was detected.
+
+      - name: dbt_config_template
+        description: >
+          Copy-pasteable dbt config block and is_incremental() filter for the
+          recommended strategy, with detected column names pre-filled. Updated by
+          the post-hook to use likely_unique_key when confirmed. Replace the existing
+          config() block at the top of your model file. For microbatch, set the begin
+          date manually. Placeholders (<unique_key>) appear when no candidate was confirmed.
