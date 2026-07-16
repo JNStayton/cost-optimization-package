@@ -9,6 +9,8 @@ select
     query_id, 
     start_time, 
     query_hash, 
+    user_name,
+    role_name,
     warehouse_name, 
     warehouse_size, 
     total_elapsed_time, 
