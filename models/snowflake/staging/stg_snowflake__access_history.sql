@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='query_id',
+    cluster_by=['to_date(query_start_time)']
 ) }}
 
 select 

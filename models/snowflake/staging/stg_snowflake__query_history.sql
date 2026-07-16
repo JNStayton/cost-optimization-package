@@ -1,7 +1,8 @@
 {{ config(
     materialized='incremental',
     unique_key='query_id',
-    on_schema_change='append_new_columns'
+    on_schema_change='append_new_columns',
+    cluster_by=['to_date(start_time)']
 ) }}
 
 select

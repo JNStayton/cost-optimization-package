@@ -1,6 +1,9 @@
 {{
   config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='query_id',
+    on_schema_change='append_new_columns',
+    cluster_by=['to_date(query_start_time)'],
   )
 }}
 
@@ -26,4 +29,8 @@ select
     execution_status,
     rows_inserted
 from {{ ref('stg_snowflake__query_history') }}
+{% if is_incremental() %}
+where start_time >= (select dateadd(day, -1, max(query_start_time)) from {{ this }})
+{% else %}
 where start_time >= dateadd(day, -60, current_timestamp())
+{% endif %}
