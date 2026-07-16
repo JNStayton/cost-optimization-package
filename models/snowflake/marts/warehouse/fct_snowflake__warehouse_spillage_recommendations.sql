@@ -108,22 +108,29 @@ warehouse_context as (
 ),
 
 -- Find the primary warehouse that ran spilling queries for each table
--- (the warehouse from actual query execution, not the dbt config)
+-- Matches via table name in query_text for DML queries (builds that spilled)
 table_warehouse as (
     select
-        upper(qta.table_database) || '.' || upper(qta.table_schema) || '.' || upper(qta.table_name) as table_fqn,
-        qh.warehouse_name,
+        table_fqn,
+        warehouse_name,
         row_number() over (
-            partition by upper(qta.table_database) || '.' || upper(qta.table_schema) || '.' || upper(qta.table_name)
-            order by sum(qh.bytes_spilled_local + qh.bytes_spilled_remote) desc
+            partition by table_fqn
+            order by total_spill desc
         ) as rn
-    from {{ ref('int_snowflake__query_table_access') }} as qta
-    inner join {{ ref('int_snowflake__query_history') }} as qh
-        on qh.query_id = qta.query_id
-    where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
-      and (qh.bytes_spilled_local > 0 or qh.bytes_spilled_remote > 0)
-      and qh.warehouse_name is not null
-    group by 1, 2
+    from (
+        select
+            ts.table_fqn,
+            qh.warehouse_name,
+            sum(qh.bytes_spilled_local + qh.bytes_spilled_remote) as total_spill
+        from table_spillage_summary as ts
+        inner join {{ ref('int_snowflake__query_history') }} as qh
+            on qh.query_type in ('INSERT', 'MERGE', 'CREATE_TABLE_AS_SELECT')
+            and qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
+            and (qh.bytes_spilled_local > 0 or qh.bytes_spilled_remote > 0)
+            and qh.warehouse_name is not null
+            and qh.query_text ilike '%' || ts.table_name || '%'
+        group by 1, 2
+    )
 ),
 
 dbt_relations as (
