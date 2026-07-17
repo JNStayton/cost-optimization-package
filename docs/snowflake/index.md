@@ -245,7 +245,13 @@ dbt run-operation suggest_clustering_keys --args '{model_name: my_model}'
 
 ## Configuration
 
-All package variables can be overridden in your `dbt_project.yml` under `vars:`.
+All package variables can be overridden in any of the following ways:
+
+- In a `vars.yml` file in your project root
+- Via CLI: `--vars '{var_name: value}'`
+- In a deployment job command
+
+Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not supported** due to parse-order limitations with package `+enabled` configs.
 
 ### Edition and shared settings
 
@@ -294,7 +300,7 @@ All package variables can be overridden in your `dbt_project.yml` under `vars:`.
 | `spillage_min_total_gb` | `0.05` | Minimum total spillage (GB) to appear in results. |
 | `spillage_min_runs` | `1` | Minimum DML/CTAS runs to appear in results. |
 | `expensive_query_lookback_days` | `30` | Analysis window for expensive queries. |
-| `expensive_query_credit_rate_usd` | `2` | Credit-to-dollar conversion rate (your contract rate). |
+| `credit_rate_usd` | `2` | Credit-to-dollar conversion rate (your contract rate). Used across all domains for cost estimation. |
 | `expensive_query_high_cost_threshold` | `10000` | Annual projected cost threshold for "High Cost" tier. |
 | `expensive_query_min_total_credits` | `0.1` | Minimum credits consumed to appear in results. |
 | `expensive_query_top_n` | `50` | Maximum rows in expensive query output. |
@@ -330,7 +336,7 @@ vars:
   snowflake_enterprise_edition: false
   clustering_candidates_min_size_gb: 1    # Lower for testing
   warehouse_sizing_lookback_days: 14
-  expensive_query_credit_rate_usd: 3.5    # Your contract rate
+  credit_rate_usd: 3.5    # Your contract rate
 ```
 
 ---

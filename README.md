@@ -57,11 +57,11 @@ dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
 
 **Alternative: enable at the project level** (models build on every run)
 ```yaml
-# In your dbt_project.yml vars: section OR in a vars.yml file
+# In a vars.yml file in your project root
 vars:
   dbt_cost_optimization_enabled: true
 ```
-Note: if enabled at the project level, you will need to explicitly exclude package models from general runs where they are not desired.
+Note: if enabled at the project level, you will need to explicitly exclude package models from general runs where they are not desired. Overriding package vars in `dbt_project.yml` `vars:` is not supported — use a `vars.yml` file or CLI instead.
 
 This avoids unexpectedly querying large `ACCOUNT_USAGE` views on every regular dbt build.
 

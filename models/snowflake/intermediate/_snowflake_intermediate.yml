@@ -300,3 +300,13 @@ models:
       QUERY_HISTORY to map each logical dbt model (node_id) to every physical FQN
       where it has been materialized across environments (dev, staging, prod).
       Grain: (node_id, table_fqn). Enables recommendation deduplication across environments.
+
+  # ===========================================================================
+  # int_snowflake__all_recommendations
+  # ===========================================================================
+  - name: int_snowflake__all_recommendations
+    description: >
+      Unified recommendation surface that normalizes recommendations from all
+      domain-specific fact models into a single interface with cost estimation and
+      effort classification. Shared foundation for all gold-layer views.
+      Grain: one row per (entity_name, domain, recommendation, table_fqn).

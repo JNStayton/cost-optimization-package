@@ -273,71 +273,8 @@ select
                 || ') as is_unique from '
                 || lower(table_fqn)
     end                                                                     as validate_uniqueness_sql,
-    -- copy-pasteable dbt config template.
-    -- Jinja delimiters are split using string concatenation ('{'||'{', '}'||'}',
-    -- '{'||'%', '%'||'}') to prevent dbt compile-time interpretation.
-    case
-        when incremental_strategy = 'microbatch'
-            then
-                '{' || '{' || chr(10)
-                || '  config(' || chr(10)
-                || '    materialized=''incremental'',' || chr(10)
-                || '    incremental_strategy=''microbatch'',' || chr(10)
-                || '    event_time=''' || lower(suggested_filter_column) || ''',' || chr(10)
-                || '    batch_size=''day'',' || chr(10)
-                || '    begin=''YYYY-MM-DD''  -- set to earliest date to backfill' || chr(10)
-                || '  )' || chr(10)
-                || '}' || '}'
-        when incremental_strategy in ('merge', 'delete+insert')
-            and suggested_filter_column is not null
-            then
-                '{' || '{' || chr(10)
-                || '  config(' || chr(10)
-                || '    materialized=''incremental'',' || chr(10)
-                || '    incremental_strategy=''' || incremental_strategy || ''',' || chr(10)
-                || '    unique_key=''' || lower(coalesce(best_unique_key, '<unique_key>')) || ''',' || chr(10)
-                || '    on_schema_change=''append_new_columns''' || chr(10)
-                || '  )' || chr(10)
-                || '}' || '}' || chr(10) || chr(10)
-                || '{' || '%' || ' if is_incremental() ' || '%' || '}' || chr(10)
-                || 'where ' || lower(suggested_filter_column)
-                || ' > (select max(' || lower(suggested_filter_column) || ') from '
-                || '{' || '{' || ' this ' || '}' || '}' || ')' || chr(10)
-                || '{' || '%' || ' endif ' || '%' || '}'
-        when incremental_strategy in ('merge', 'delete+insert')
-            then
-                '{' || '{' || chr(10)
-                || '  config(' || chr(10)
-                || '    materialized=''incremental'',' || chr(10)
-                || '    incremental_strategy=''' || incremental_strategy || ''',' || chr(10)
-                || '    unique_key=''' || lower(coalesce(best_unique_key, '<unique_key>')) || ''',' || chr(10)
-                || '    on_schema_change=''append_new_columns''' || chr(10)
-                || '  )' || chr(10)
-                || '}' || '}' || chr(10) || chr(10)
-                || '-- TODO: add a filter column (timestamp/date) to scope incremental loads'
-        when incremental_strategy = 'append' and suggested_filter_column is not null
-            then
-                '{' || '{' || chr(10)
-                || '  config(' || chr(10)
-                || '    materialized=''incremental'',' || chr(10)
-                || '    incremental_strategy=''append''' || chr(10)
-                || '  )' || chr(10)
-                || '}' || '}' || chr(10) || chr(10)
-                || '{' || '%' || ' if is_incremental() ' || '%' || '}' || chr(10)
-                || 'where ' || lower(suggested_filter_column)
-                || ' > (select max(' || lower(suggested_filter_column) || ') from '
-                || '{' || '{' || ' this ' || '}' || '}' || ')' || chr(10)
-                || '{' || '%' || ' endif ' || '%' || '}'
-        else
-                '{' || '{' || chr(10)
-                || '  config(' || chr(10)
-                || '    materialized=''incremental'',' || chr(10)
-                || '    incremental_strategy=''append''' || chr(10)
-                || '  )' || chr(10)
-                || '}' || '}' || chr(10) || chr(10)
-                || '-- TODO: add a filter column (timestamp/date) to scope incremental loads' || chr(10)
-                || '-- TODO: verify data is truly append-only before using this strategy'
-    end                                                                     as dbt_config_template
+    -- copy-pasteable dbt config template (logic in macro to keep model clean)
+    {{ build_incremental_config_template() }}                                as dbt_config_template
 from strategy_labeled
 order by
     case when est_daily_redundant_gb_scanned is not null then 0 else 1 end,

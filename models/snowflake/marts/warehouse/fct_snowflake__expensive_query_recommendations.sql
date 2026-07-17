@@ -29,14 +29,14 @@
 
   Controlled by the following dbt variables:
     - expensive_query_lookback_days       (default 30)
-    - expensive_query_credit_rate_usd     (default 2)
+    - credit_rate_usd     (default 2)
     - expensive_query_high_cost_threshold (default 10000)
     - expensive_query_min_total_credits   (default 0.1)
     - expensive_query_top_n               (default 50)
 --#}
 
 {% set lookback_days        = var('expensive_query_lookback_days', 30) %}
-{% set credit_rate_usd      = var('expensive_query_credit_rate_usd', 2) %}
+{% set credit_rate_usd      = var('credit_rate_usd', 2) %}
 {% set high_cost_threshold  = var('expensive_query_high_cost_threshold', 10000) %}
 {% set min_total_credits    = var('expensive_query_min_total_credits', 0.1) %}
 {% set top_n                = var('expensive_query_top_n', 50) %}

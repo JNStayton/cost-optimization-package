@@ -188,7 +188,7 @@ The `dbt_node_id` column extracts the dbt model unique_id from the JSON comment 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `expensive_query_lookback_days` | `30` | Analysis window |
-| `expensive_query_credit_rate_usd` | `2` | Credit-to-dollar conversion rate |
+| `credit_rate_usd` | `2` | Credit-to-dollar conversion rate |
 | `expensive_query_high_cost_threshold` | `10000` | Annual cost threshold for "High Cost" tier |
 | `expensive_query_min_total_credits` | `0.1` | Minimum credits to appear in results |
 | `expensive_query_top_n` | `50` | Maximum rows in output |

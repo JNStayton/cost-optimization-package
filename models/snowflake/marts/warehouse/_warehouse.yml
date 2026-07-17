@@ -274,7 +274,7 @@ models:
 
       Controlled by the following dbt variables:
         - expensive_query_lookback_days       (default 30)
-        - expensive_query_credit_rate_usd     (default 2)
+        - credit_rate_usd     (default 2)
         - expensive_query_high_cost_threshold (default 10000)
         - expensive_query_min_total_credits   (default 0.1)
         - expensive_query_top_n               (default 50)
@@ -303,7 +303,7 @@ models:
         description: Lookback window used for this analysis run, in days.
 
       - name: credit_rate_usd
-        description: Credit rate in USD used to project annual cost. Set via expensive_query_credit_rate_usd.
+        description: Credit rate in USD used to project annual cost. Set via credit_rate_usd.
 
       - name: query_hash
         description: >
