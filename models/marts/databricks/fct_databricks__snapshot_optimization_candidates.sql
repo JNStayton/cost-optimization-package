@@ -40,6 +40,38 @@
 {% set min_runs_for_pause                = var('snapshot_candidates_min_runs_for_pause', 14) %}
 {% set low_productivity_threshold        = var('snapshot_candidates_low_productivity_threshold', 0.25) %}
 
+{#--
+  Window threshold, expressed with dbt's cross-database macros so the change-
+  activity logic below is portable to any adapter (dbt_valid_from / dbt_valid_to
+  are dbt-standard SCD-2 columns present on every platform).
+--#}
+{% set window_start = dbt.dateadd('day', -1 * lookback_days, dbt.current_timestamp()) %}
+
+{#--
+  Resolve the physical relation for each enabled snapshot that actually exists in
+  the warehouse. We read SCD-2 metadata (dbt_valid_from / dbt_valid_to) straight
+  from these tables — the only reliable measure of change activity. Statement-type
+  counts from query history do NOT work: dbt writes snapshots via MERGE, so
+  INSERT/UPDATE counts are ~always zero and a MERGE fires on every run whether or
+  not any row changed. Only snapshots whose table currently exists are probed, so
+  a not-yet-built snapshot never breaks compilation.
+--#}
+{% set snapshot_relations = [] %}
+{% if execute %}
+    {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "snapshot") | list %}
+        {% if node.config and node.config.enabled != false %}
+            {% set rel = adapter.get_relation(
+                database=node.database,
+                schema=node.schema,
+                identifier=(node.alias if node.alias else node.name)
+            ) %}
+            {% if rel is not none %}
+                {% do snapshot_relations.append({'unique_id': node.unique_id, 'relation': rel}) %}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
 with snapshots as (
     select
         dbt_snapshot,
@@ -103,47 +135,41 @@ snapshot_run_history as (
     group by node_id
 ),
 
-table_dml_daily as (
-    select
-        table_database,
-        table_schema,
-        table_name,
-        stats_date,
-        coalesce(insert_count, 0) as insert_count,
-        coalesce(update_count, 0) as update_count,
-        coalesce(delete_count, 0) as delete_count
-    from {{ ref('int_databricks__table_query_stats_daily') }}
-    where stats_date >= current_date() - INTERVAL {{ lookback_days }} DAYS
-),
-
-table_dml_summary as (
-    select
-        table_database,
-        table_schema,
-        table_name,
-        sum(insert_count)                                  as total_inserts,
-        sum(update_count)                                  as total_updates,
-        sum(delete_count)                                  as total_deletes,
-        count(distinct case when insert_count > 0 then stats_date end) as insert_days
-    from table_dml_daily
-    group by table_database, table_schema, table_name
-),
-
--- For productive_run_pct: join run-days to DML-days; a run-day is "productive"
--- when at least one insert happened on the snapshot table on that same date.
-productive_run_days as (
-    select
-        srb.node_id,
-        count(*)                                                          as total_run_days,
-        sum(case when tdd.insert_count > 0 then 1 else 0 end)             as productive_run_days
-    from snapshot_runs_by_day as srb
-    inner join snapshots                       as sn  on sn.dbt_snapshot = srb.node_id
-    left join table_dml_daily                  as tdd
-        on tdd.table_database = sn.database_name
-       and tdd.table_schema   = sn.schema_name
-       and tdd.table_name     = sn.table_name
-       and tdd.stats_date     = srb.run_date
-    group by srb.node_id
+-- Change activity, read straight from each snapshot's SCD-2 metadata.
+--   new_versions_in_window   — rows whose dbt_valid_from falls in the window
+--                              (net-new records + new versions of changed rows).
+--   productive_version_days  — distinct calendar dates a new version appeared;
+--                              a run-day only "counts" when it produced change.
+--   supersedes_in_window     — rows whose dbt_valid_to was set in the window
+--                              (a prior version closed out by a newer one).
+-- The where-clause prunes each scan to the window. Grain: one row per snapshot.
+snapshot_scd2_activity as (
+    {% if snapshot_relations | length > 0 %}
+        {% for s in snapshot_relations %}
+        select
+            '{{ s.unique_id }}'                                              as dbt_snapshot,
+            sum(case when dbt_valid_from >= {{ window_start }} then 1 else 0 end)
+                                                                             as new_versions_in_window,
+            count(distinct case when dbt_valid_from >= {{ window_start }}
+                                then cast(dbt_valid_from as date) end)       as productive_version_days,
+            sum(case when dbt_valid_to is not null and dbt_valid_to >= {{ window_start }}
+                     then 1 else 0 end)                                      as supersedes_in_window,
+            max(dbt_valid_from)                                              as last_new_version_at
+        from {{ s.relation }}
+        where dbt_valid_from >= {{ window_start }}
+           or (dbt_valid_to is not null and dbt_valid_to >= {{ window_start }})
+        {% if not loop.last %}union all{% endif %}
+        {% endfor %}
+    {% else %}
+        -- No enabled snapshot tables exist yet — empty shell so the model still compiles.
+        select
+            cast(null as string)    as dbt_snapshot,
+            cast(0 as bigint)       as new_versions_in_window,
+            cast(0 as bigint)       as productive_version_days,
+            cast(0 as bigint)       as supersedes_in_window,
+            cast(null as timestamp) as last_new_version_at
+        where 1 = 0
+    {% endif %}
 ),
 
 -- Tier 2: look for an updated_at-like column on the snapshot's primary source.
@@ -206,22 +232,22 @@ assembled as (
         round(coalesce(srh.avg_execution_time_ms_per_run, 0) / 1000.0, 2)                as avg_execution_time_per_run_s,
         srh.first_run_date,
         srh.last_run_date,
-        -- Change activity
-        coalesce(tds.total_inserts, 0)                                                   as total_new_versions,
-        coalesce(tds.total_updates, 0)                                                   as total_supersedes,
-        coalesce(tds.total_deletes, 0)                                                   as total_deletes,
+        -- Change activity (from SCD-2 metadata — see snapshot_scd2_activity)
+        coalesce(sca.new_versions_in_window, 0)                                          as total_new_versions,
+        coalesce(sca.supersedes_in_window, 0)                                            as total_supersedes,
+        sca.last_new_version_at,
         -- Productivity
-        coalesce(prd.total_run_days, 0)                                                  as total_run_days,
-        coalesce(prd.productive_run_days, 0)                                             as productive_run_days,
+        coalesce(srh.run_days, 0)                                                        as total_run_days,
+        coalesce(sca.productive_version_days, 0)                                         as productive_run_days,
         round(
-            coalesce(prd.productive_run_days, 0)
-                / nullif(prd.total_run_days, 0)::double,
+            coalesce(sca.productive_version_days, 0)
+                / nullif(srh.run_days, 0)::double,
             4
         )                                                                                 as productive_run_pct,
         -- Scan-per-new-version
         round(
             coalesce(srh.total_bytes_scanned, 0) / 1024 / 1024
-                / nullif(tds.total_inserts, 0)::double,
+                / nullif(sca.new_versions_in_window, 0)::double,
             1
         )                                                                                 as mb_scanned_per_new_version,
         -- Tier 2 — strategy fit
@@ -233,11 +259,7 @@ assembled as (
         )                                                                                 as could_switch_to_timestamp
     from snapshots                            as sn
     left join snapshot_run_history            as srh on srh.node_id      = sn.dbt_snapshot
-    left join table_dml_summary               as tds
-        on tds.table_database = sn.database_name
-       and tds.table_schema   = sn.schema_name
-       and tds.table_name     = sn.table_name
-    left join productive_run_days             as prd on prd.node_id      = sn.dbt_snapshot
+    left join snapshot_scd2_activity          as sca on sca.dbt_snapshot = sn.dbt_snapshot
     left join source_updated_at_suggestion    as sas on sas.dbt_snapshot = sn.dbt_snapshot
 )
 
@@ -302,7 +324,9 @@ select
     )                                                                                    as estimated_monthly_savings_gb
 from assembled
 {% if is_incremental() %}
-where snapshot_date >= (
+-- current_date() is the value of snapshot_date for every row; reference the
+-- function directly (a SELECT-list alias cannot be used in this WHERE clause).
+where current_date() >= (
     select coalesce(max(snapshot_date), cast('1970-01-01' as date))
     from {{ this }}
 )
