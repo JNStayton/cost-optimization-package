@@ -17,9 +17,29 @@
 
   For isolated views not in any chain, existing materialization_score thresholds apply.
 
-  Query attribution uses query_text ILIKE matching against the view name.
-  Known limitation: view names that are substrings of other identifiers may
-  produce false-positive query matches.
+  Query attribution & confidence
+  ------------------------------
+  Databricks has no ACCESS_HISTORY equivalent that reliably resolves a view read
+  back to a query in system.query.history, so attribution uses query_text matching.
+  Each matched query is classified into a single attribution tier based on how
+  specific the text match was:
+    - high:   fully-qualified catalog.schema.table match in query_text
+    - medium: schema-qualified schema.table match in query_text
+    - low:    bare table-name match only
+  A more-specific match is far less likely to be a false positive, so the rolled-up
+  attribution_confidence reflects the most specific tier that matched.
+  Known limitation: bare-name (low) matches on view names that are substrings of
+  other identifiers can still be false positives.
+
+  Future enhancement: system.access.table_lineage can give exact FQN attribution
+  (the Unity Catalog analog of Snowflake ACCESS_HISTORY). It is not wired up here
+  because it is not currently a project source and its join key to query.history
+  (entity_id / entity_run_id) is not stable across entity types — that path needs
+  its own source + intermediate model before it can be trusted.
+
+  recommendation_confidence combines attribution quality with the number of
+  independent corroborating signals (strong_signal_count) rather than trusting any
+  single signal in isolation.
 
   Controlled by the following dbt variables:
     - table_materialization_lookback_days   (default 14)
@@ -43,7 +63,9 @@ with view_candidates as (
     where lower(materialized) in ('view', 'ephemeral')
 ),
 
-query_stats as (
+matched_queries as (
+    -- one row per (view, matching query); attribution_confidence records how
+    -- specific the query_text match was so downstream can weight it
     select
         vc.table_fqn,
         vc.database_name,
@@ -53,38 +75,80 @@ query_stats as (
         vc.model_name,
         vc.package_name,
         vc.materialized,
-        count(distinct qh.query_id)                                        as select_count,
-        avg(qh.execution_time_ms) / 1000.0                                 as avg_query_duration_s,
-        sum(coalesce(qh.bytes_scanned, 0)) / power(1024, 3)               as total_gb_scanned,
-        count(distinct qh.query_id) * avg(qh.execution_time_ms) / 1000.0  as materialization_score,
-        coalesce(
-            sum(coalesce(qh.bytes_scanned, 0)) / power(1024, 3)
-                / nullif(count(distinct qh.query_id), 0),
-            0
-        )                                                                   as avg_gb_scanned_per_query
+        qh.query_id,
+        qh.execution_time_ms,
+        coalesce(qh.bytes_scanned, 0) as bytes_scanned,
+        case
+            when qh.query_text ilike '%' || vc.database_name || '.' || vc.schema_name || '.' || vc.table_name || '%'
+                then 'high'
+            when qh.query_text ilike '%' || vc.schema_name || '.' || vc.table_name || '%'
+                then 'medium'
+            when qh.query_text ilike '%' || vc.table_name || '%'
+                then 'low'
+        end as attribution_confidence
     from view_candidates as vc
     left join {{ ref('int_databricks__query_history') }} as qh
-        on qh.query_text ilike '%' || vc.table_name || '%'
-       and qh.statement_type = 'SELECT'
+        on qh.statement_type = 'SELECT'
        and qh.query_start_time >= current_timestamp() - INTERVAL {{ lookback_days }} DAYS
+       and (
+            qh.query_text ilike '%' || vc.database_name || '.' || vc.schema_name || '.' || vc.table_name || '%'
+            or qh.query_text ilike '%' || vc.schema_name || '.' || vc.table_name || '%'
+            or qh.query_text ilike '%' || vc.table_name || '%'
+       )
+),
+
+query_stats as (
+    select
+        table_fqn,
+        database_name,
+        schema_name,
+        table_name,
+        dbt_model,
+        model_name,
+        package_name,
+        materialized,
+        count(distinct query_id)                                          as select_count,
+        avg(execution_time_ms) / 1000.0                                   as avg_query_duration_s,
+        sum(bytes_scanned) / power(1024, 3)                               as total_gb_scanned,
+        count(distinct query_id) * avg(execution_time_ms) / 1000.0        as materialization_score,
+        coalesce(
+            (sum(bytes_scanned) / power(1024, 3))
+                / nullif(count(distinct query_id), 0),
+            0
+        )                                                                 as avg_gb_scanned_per_query,
+        count(distinct case when attribution_confidence = 'high' then query_id end)   as high_confidence_query_count,
+        count(distinct case when attribution_confidence = 'medium' then query_id end) as medium_confidence_query_count,
+        count(distinct case when attribution_confidence = 'low' then query_id end)    as low_confidence_query_count
+    from matched_queries
     group by
-        vc.table_fqn,
-        vc.database_name,
-        vc.schema_name,
-        vc.table_name,
-        vc.dbt_model,
-        vc.model_name,
-        vc.package_name,
-        vc.materialized
+        table_fqn,
+        database_name,
+        schema_name,
+        table_name,
+        dbt_model,
+        model_name,
+        package_name,
+        materialized
 ),
 
 scored_stats as (
     -- adds relative_duration_ratio: how this view's duration compares to the
-    -- project-wide average, normalizing out warehouse size differences
+    -- project-wide average, normalizing out warehouse size differences; rolls the
+    -- per-query attribution tiers up to a single confidence + method per view
     select
         *,
         avg_query_duration_s
-            / nullif(avg(avg_query_duration_s) over (), 0) as relative_duration_ratio
+            / nullif(avg(avg_query_duration_s) over (), 0) as relative_duration_ratio,
+        case
+            when high_confidence_query_count > 0   then 'high'
+            when medium_confidence_query_count > 0 then 'medium'
+            else 'low'
+        end as attribution_confidence,
+        case
+            when high_confidence_query_count > 0   then 'catalog.schema.table'
+            when medium_confidence_query_count > 0 then 'schema.table'
+            else 'table_name_only'
+        end as attribution_method
     from query_stats
 ),
 
@@ -143,7 +207,9 @@ composite_scored as (
     from chain_context as cc
     left join downstream_build_stats as dbs
         on dbs.model_fqn = cc.table_fqn
-)
+),
+
+final as (
 
 select
     current_date()                                              as snapshot_date,
@@ -167,6 +233,17 @@ select
     cs.downstream_table_count,
     round(cs.composite_chain_score, 4)                        as composite_chain_score,
     round(coalesce(cs.downstream_build_time_s, 0), 2)         as downstream_build_time_s,
+    cs.attribution_method,
+    cs.attribution_confidence,
+    coalesce(cs.high_confidence_query_count, 0)               as high_confidence_query_count,
+    coalesce(cs.medium_confidence_query_count, 0)             as medium_confidence_query_count,
+    coalesce(cs.low_confidence_query_count, 0)                as low_confidence_query_count,
+    (
+        cast(coalesce(cs.total_gb_scanned, 0) > 10 as int)
+        + cast(coalesce(cs.avg_query_duration_s, 0) > 10 as int)
+        + cast(coalesce(cs.select_count, 0) > greatest({{ min_query_count }}, 50) as int)
+        + cast(coalesce(cs.is_in_view_chain, false) and coalesce(cs.composite_chain_score, 0) > 0 as int)
+    )                                                          as strong_signal_count,
     case
         when cs.is_in_view_chain and coalesce(cs.composite_chain_score, 0) > 0
             then 'Materialize as TABLE'
@@ -205,6 +282,33 @@ select
 from composite_scored as cs
 where coalesce(cs.select_count, 0) >= {{ min_query_count }}
    or coalesce(cs.is_in_view_chain, false)
+
+)
+
+select
+    f.*,
+    -- overall trust in the recommendation: strong when the attribution is precise
+    -- AND multiple independent signals agree; weak when it rests on a single
+    -- signal or a bare-name (low) attribution
+    case
+        when f.recommendation = 'Materialize as TABLE'
+             and f.attribution_confidence = 'high'
+             and f.strong_signal_count >= 2
+            then 'high'
+        when f.recommendation = 'Materialize as TABLE'
+             and (f.attribution_confidence in ('high', 'medium') or f.strong_signal_count >= 2)
+            then 'medium'
+        else 'low'
+    end as recommendation_confidence
+from final as f
 order by
-    case when recommendation = 'Materialize as TABLE' then 0 else 1 end,
-    coalesce(cs.composite_chain_score, cs.materialization_score, 0) desc
+    case when f.recommendation = 'Materialize as TABLE' then 0 else 1 end,
+    case
+        when f.recommendation = 'Materialize as TABLE'
+             and f.attribution_confidence = 'high'
+             and f.strong_signal_count >= 2 then 0
+        when f.recommendation = 'Materialize as TABLE'
+             and (f.attribution_confidence in ('high', 'medium') or f.strong_signal_count >= 2) then 1
+        else 2
+    end,
+    coalesce(f.composite_chain_score, f.materialization_score, 0) desc

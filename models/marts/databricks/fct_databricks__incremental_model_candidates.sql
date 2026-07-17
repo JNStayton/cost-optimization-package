@@ -10,6 +10,9 @@
 {% set min_avg_bytes_scanned_gb = var('incremental_candidates_min_avg_bytes_scanned_gb', 0.1) %}
 {% set min_run_count = var('incremental_candidates_min_run_count', 3) %}
 {% set large_table_gb_threshold = var('incremental_candidates_large_table_gb_threshold', 10) %}
+{#-- minimum builds (with a produced_rows signal) required before rebuild_redundancy_rate is trusted.
+     Mirrors Jessica's Snowflake min_qualified_build_days; lower it for very short lookback windows. --#}
+{% set min_qualified_builds = var('incremental_candidates_min_qualified_builds', 3) %}
 
 with model_runs as (
     select
@@ -26,7 +29,13 @@ with model_runs as (
         sum(execution_time_ms) as total_execution_time_ms,
         avg(execution_time_ms) as avg_execution_time_ms,
         min(start_time) as first_seen,
-        max(start_time) as last_seen
+        max(start_time) as last_seen,
+        -- growth signal for rebuild_redundancy_rate: produced_rows on each full
+        -- rebuild approximates the table's row count at that build. The null key in
+        -- min_by/max_by excludes runs with no produced_rows signal.
+        count_if(produced_rows is not null) as qualified_build_count,
+        min_by(produced_rows, case when produced_rows is not null then start_time end) as rows_at_period_start,
+        max_by(produced_rows, case when produced_rows is not null then start_time end) as rows_at_period_end
     from {{ ref('int_databricks__dbt_model_run_history') }}
     where start_time >= current_timestamp() - INTERVAL {{ lookback_days }} DAYS
     group by 1, 2, 3, 4, 5, 6, 7
@@ -161,6 +170,24 @@ final as (
         round(mr.run_count / {{ lookback_days }}.0 * 30, 1) as estimated_monthly_runs,
         round((mr.avg_bytes_scanned / power(1024, 3)) * (mr.run_count / {{ lookback_days }}.0 * 30), 2) as estimated_monthly_bytes_scanned_gb,
         round((mr.avg_bytes_scanned / power(1024, 3)) * mr.run_count, 4) as score,
+        -- rebuild redundancy: how much of each full rebuild re-processes rows that
+        -- already existed at the start of the window (Jessica's first-build/last-build
+        -- ratio). High rate = incrementalizing skips most of the scan.
+        coalesce(mr.qualified_build_count, 0) as qualified_build_count,
+        mr.rows_at_period_start,
+        mr.rows_at_period_end,
+        case
+            when coalesce(mr.qualified_build_count, 0) >= {{ min_qualified_builds }}
+                and mr.rows_at_period_end >= mr.rows_at_period_start
+            then round(mr.rows_at_period_start / nullif(mr.rows_at_period_end, 0), 4)
+        end as rebuild_redundancy_rate,
+        -- false when history is too thin or row count shrank mid-window (likely a
+        -- full-refresh or upstream deletes) — both make the ratio untrustworthy
+        case
+            when coalesce(mr.qualified_build_count, 0) < {{ min_qualified_builds }} then false
+            when mr.rows_at_period_end < mr.rows_at_period_start then false
+            else true
+        end as growth_signal_reliable,
         case
             when mr.materialized = 'table'
                 and mr.avg_bytes_scanned / power(1024, 3) >= {{ min_avg_bytes_scanned_gb }}
@@ -261,6 +288,20 @@ final as (
 final_with_templates as (
     select
         *,
+        -- ROI tier from the rebuild redundancy signal (null when unreliable)
+        case
+            when not growth_signal_reliable or rebuild_redundancy_rate is null then null
+            when rebuild_redundancy_rate >= 0.9 then 'Strong Candidate'
+            when rebuild_redundancy_rate >= 0.7 then 'Candidate'
+            when rebuild_redundancy_rate >= 0.5 then 'Candidate — Moderate Redundancy'
+            else 'Low ROI — Minimal Rebuild Redundancy'
+        end as rebuild_redundancy_tier,
+        -- projected monthly GB re-scanned on unchanged rows — the compute an
+        -- incremental build would avoid. Null when the redundancy signal is unreliable.
+        case
+            when growth_signal_reliable and rebuild_redundancy_rate is not null
+                then round(estimated_monthly_bytes_scanned_gb * rebuild_redundancy_rate, 2)
+        end as estimated_monthly_redundant_gb_scanned,
         case
             when is_candidate
                 then

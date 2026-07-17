@@ -100,6 +100,50 @@ models:
         description: avg_bytes_scanned_gb × run_count. Composite ranking signal — higher values indicate more total compute waste from rebuilds in the lookback window.
 
       # ---------------------------------------------------------------------------
+      # Rebuild redundancy (growth signal)
+      # ---------------------------------------------------------------------------
+      - name: qualified_build_count
+        description: >
+          Number of runs in the lookback window that carried a produced_rows signal.
+          The rebuild_redundancy_rate is only trusted once this reaches
+          incremental_candidates_min_qualified_builds (default 3).
+      - name: rows_at_period_start
+        description: produced_rows on the earliest qualifying build in the window — approximate table row count at the start of the lookback.
+      - name: rows_at_period_end
+        description: produced_rows on the latest qualifying build in the window — approximate table row count at the end of the lookback.
+      - name: rebuild_redundancy_rate
+        description: >
+          rows_at_period_start / rows_at_period_end — the fraction of each full
+          rebuild that re-processes rows already present at the start of the window.
+          A high rate means an incremental model would skip most of the scan. Null
+          when growth_signal_reliable is false.
+      - name: growth_signal_reliable
+        description: >
+          False when fewer than incremental_candidates_min_qualified_builds builds
+          have a produced_rows signal, or when the row count shrank mid-window
+          (likely a full-refresh or upstream deletes) — both make the redundancy
+          ratio untrustworthy.
+      - name: rebuild_redundancy_tier
+        description: >
+          ROI label derived from rebuild_redundancy_rate when reliable: 'Strong
+          Candidate' (>=0.9), 'Candidate' (>=0.7), 'Candidate — Moderate Redundancy'
+          (>=0.5), 'Low ROI — Minimal Rebuild Redundancy' (<0.5). Null when the
+          signal is unreliable.
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - 'Strong Candidate'
+                  - 'Candidate'
+                  - 'Candidate — Moderate Redundancy'
+                  - 'Low ROI — Minimal Rebuild Redundancy'
+      - name: estimated_monthly_redundant_gb_scanned
+        description: >
+          estimated_monthly_bytes_scanned_gb × rebuild_redundancy_rate — projected
+          monthly GB re-scanned on unchanged rows, i.e. the compute an incremental
+          build would avoid. Null when the redundancy signal is unreliable.
+
+      # ---------------------------------------------------------------------------
       # Candidacy
       # ---------------------------------------------------------------------------
       - name: is_candidate
@@ -325,6 +369,41 @@ models:
           Any positive value triggers the recommendation for chain members.
 
       # ---------------------------------------------------------------------------
+      # Attribution confidence
+      # ---------------------------------------------------------------------------
+      - name: attribution_method
+        description: >
+          How queries were attributed to this view: 'catalog.schema.table' (fully
+          qualified match), 'schema.table' (schema-qualified match), or
+          'table_name_only' (bare name match). More specific methods are less prone
+          to false-positive matches.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['catalog.schema.table', 'schema.table', 'table_name_only']
+      - name: attribution_confidence
+        description: >
+          Rolled-up confidence in the query attribution, taken from the most
+          specific tier that matched any query: high (fully qualified), medium
+          (schema qualified), or low (bare name only).
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['high', 'medium', 'low']
+      - name: high_confidence_query_count
+        description: Distinct queries that matched via a fully-qualified catalog.schema.table reference.
+      - name: medium_confidence_query_count
+        description: Distinct queries that matched via a schema-qualified schema.table reference (but not fully qualified).
+      - name: low_confidence_query_count
+        description: Distinct queries that matched only on the bare table name.
+      - name: strong_signal_count
+        description: >
+          Count (0–4) of independent cost signals that corroborate the
+          recommendation: large scan (>10 GB), slow avg duration (>10s), high query
+          volume, and view-chain membership with a positive composite score. Higher
+          means more signals agree rather than relying on any single metric.
+
+      # ---------------------------------------------------------------------------
       # Recommendation
       # ---------------------------------------------------------------------------
       - name: recommendation
@@ -335,6 +414,16 @@ models:
                 values: ['Materialize as TABLE', 'Monitor']
       - name: recommendation_reason
         description: Human-readable rationale for the recommendation, citing the specific signal that triggered it (hops + downstream table count, scan volume, or query frequency + duration).
+      - name: recommendation_confidence
+        description: >
+          Overall trust in the recommendation, combining attribution quality with
+          strong_signal_count: 'high' (precise attribution AND ≥2 corroborating
+          signals), 'medium' (precise-enough attribution OR ≥2 signals), 'low'
+          (single signal or bare-name attribution). 'Monitor' rows are always 'low'.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['high', 'medium', 'low']
 
   # ===========================================================================
   # fct_databricks__snapshot_optimization_candidates
@@ -356,9 +445,13 @@ models:
 
       Pulls snapshot configs from int_dbt__snapshots, run history from
       stg_databricks__query_history (parsed by node_id from dbt-attributed
-      statements), and change activity from int_databricks__table_query_stats_daily.
-      For Tier 2 strategy fit, joins to stg_databricks__columns against the
-      snapshot's primary parent FQN to detect updated_at-like columns.
+      statements), and change activity by reading each snapshot table's SCD-2
+      metadata (dbt_valid_from / dbt_valid_to) directly — the only reliable
+      measure of new-version capture, since dbt writes snapshots via MERGE and
+      statement-type counts cannot distinguish a productive run from a no-op one.
+      Only snapshots whose table currently exists are probed. For Tier 2 strategy
+      fit, joins to stg_databricks__columns against the snapshot's primary parent
+      FQN to detect updated_at-like columns.
 
       Controlled by the following dbt variables:
         - snapshot_candidates_lookback_days              (default 30)
@@ -436,19 +529,23 @@ models:
         description: Date of the most recent snapshot run observed in the lookback window.
 
       # ---------------------------------------------------------------------------
-      # Change activity (DML on the snapshot table)
+      # Change activity (from the snapshot table's SCD-2 metadata)
       # ---------------------------------------------------------------------------
       - name: total_new_versions
         description: >
-          Total INSERTs against the snapshot table in the lookback window. For a
-          snapshot, INSERTs correspond to new SCD-2 versions (either net-new
-          records or new versions of changed records).
+          Count of rows whose dbt_valid_from falls within the lookback window —
+          i.e. new SCD-2 versions captured (net-new records plus new versions of
+          changed records). Read directly from the snapshot table, not inferred
+          from statement types.
       - name: total_supersedes
         description: >
-          Total UPDATEs against the snapshot table — the number of valid_to writes
-          when prior versions are superseded by new ones.
-      - name: total_deletes
-        description: Total DELETEs against the snapshot table. Should be zero under normal snapshot operation; non-zero values suggest manual intervention.
+          Count of rows whose dbt_valid_to was set within the lookback window —
+          prior versions closed out when a newer version superseded them.
+      - name: last_new_version_at
+        description: >
+          Timestamp of the most recent dbt_valid_from within the lookback window
+          (i.e. when the snapshot last actually captured a change). Null when no
+          new versions landed in the window.
 
       # ---------------------------------------------------------------------------
       # Productivity metrics
@@ -457,8 +554,9 @@ models:
         description: Distinct calendar dates within the lookback window on which the snapshot ran at least once.
       - name: productive_run_days
         description: >
-          Distinct run-dates on which the snapshot table received at least one INSERT.
-          A run-day is "productive" when change capture actually added new versions.
+          Distinct calendar dates on which the snapshot captured at least one new
+          SCD-2 version (distinct dates of dbt_valid_from in the window). A run-day
+          is "productive" when change capture actually added new versions.
       - name: productive_run_pct
         description: >
           productive_run_days / total_run_days, as a decimal (0.0–1.0). Headline
