@@ -5,198 +5,183 @@
 }}
 
 {#--
-  Cross-domain correlation insights. Detects cases where recommendations from
-  different domains point to the same root cause or compound each other.
+  Cross-domain signal detection. For each table with 2+ optimization signals
+  from different domains, surfaces the signals as an array and picks the
+  primary recommendation using a fixed hierarchy:
 
-  Each row represents a detected correlation between 2+ domain signals on the
-  same table/model, with a recommended fix order and combined savings estimate.
+    1. Materialize as table (resolves view chain + downstream cascading)
+    2. Convert to incremental (resolves rebuild waste + spillage from large rebuilds)
+    3. Add clustering (resolves scan inefficiency)
+    4. Resize warehouse / reduce spillage (config-level fix)
+    5. Refactor SQL (highest effort, last resort)
+
+  One row per table_fqn — naturally deduped.
+  Warehouse-level insights (oversized + idle) included with table_fqn = NULL.
 --#}
 
-with spillage_tables as (
-    select table_fqn, dbt_model, model_name, warehouse_name,
-           total_gb_spilled_local, total_gb_spilled_remote, recommendation
+{% set monitored_projects = var('dbt_monitored_projects', []) %}
+{% if monitored_projects | length == 0 %}
+  {% set monitored_projects = [project_name] %}
+{% endif %}
+
+with base_tables as (
+    select table_fqn, dbt_model as node_id, model_name, package_name as project_name
+    from {{ ref('int_dbt__relations') }}
+    where package_name in (
+        {% for proj in monitored_projects %}
+          '{{ proj }}'{% if not loop.last %}, {% endif %}
+        {% endfor %}
+    )
+),
+
+spillage_set as (
+    select distinct table_fqn
     from {{ ref('fct_snowflake__warehouse_spillage_recommendations') }}
     where recommendation not like 'Not available%'
 ),
 
-clustering_tables as (
-    select table_fqn, dbt_model, score, scan_ratio_pct, select_count, clustering_key
+clustering_set as (
+    select distinct table_fqn
     from {{ ref('fct_snowflake__table_clustering_candidates') }}
     where is_candidate = true
 ),
 
-materialization_tables as (
-    select table_fqn, dbt_model, model_name, materialization_score, select_count, avg_query_duration_s,
-           is_in_view_chain, downstream_table_count
+materialization_set as (
+    select distinct table_fqn, is_in_view_chain
     from {{ ref('fct_snowflake__table_materialization_candidates_v2') }}
     where recommendation = 'Materialize as TABLE'
 ),
 
-incremental_tables as (
-    select table_fqn, dbt_model, model_name, compute_waste_score, table_size_gb,
-           rebuild_redundancy_rate, avg_build_time_sec
+incremental_set as (
+    select distinct table_fqn
     from {{ ref('fct_snowflake__incremental_materialization_candidates') }}
     where recommendation not like '%Insufficient%'
+      and recommendation != 'Low ROI — Minimal Rebuild Redundancy'
 ),
 
-expensive_queries as (
-    select query_hash, dbt_node_id, warehouse_name, total_credits_30d, estimated_annual_cost_usd
+expensive_set as (
+    select distinct dbt_node_id as node_id
     from {{ ref('fct_snowflake__expensive_query_recommendations') }}
 ),
 
-sizing_recs as (
-    select warehouse_name, recommendation, total_credits_30d, total_idle_credits_30d
-    from {{ ref('fct_snowflake__warehouse_sizing_recommendations') }}
-    where recommendation like 'Scale down%'
-),
-
--- =========================================================================
--- Correlation 1: Spillage + Clustering Candidate
--- =========================================================================
-corr_spillage_clustering as (
+signals_joined as (
     select
-        'spillage_plus_clustering' as insight_type,
-        sp.table_fqn,
-        sp.dbt_model,
-        sp.model_name,
-        array_construct('warehouse', 'clustering') as domains_involved,
-        'Full table scans cause both poor pruning and memory overflow' as root_cause,
-        'Cluster first — reduces scan volume and likely eliminates spillage' as recommended_fix_order,
-        'Table has ' || round(ct.scan_ratio_pct, 0) || '% scan ratio AND '
-            || round(sp.total_gb_spilled_local, 1) || ' GB spillage. '
-            || 'Clustering on ' || coalesce(ct.clustering_key, 'recommended columns')
-            || ' would reduce both.' as evidence
-    from spillage_tables as sp
-    inner join clustering_tables as ct on ct.table_fqn = sp.table_fqn
+        bt.table_fqn,
+        bt.node_id,
+        bt.model_name,
+        bt.project_name,
+        sp.table_fqn is not null as has_spillage,
+        cl.table_fqn is not null as has_clustering_candidate,
+        mt.table_fqn is not null as has_materialization_candidate,
+        coalesce(mt.is_in_view_chain, false) as is_in_view_chain,
+        ic.table_fqn is not null as has_incremental_candidate,
+        eq.node_id is not null as has_expensive_query,
+        -- Signal count
+        (iff(sp.table_fqn is not null, 1, 0)
+         + iff(cl.table_fqn is not null, 1, 0)
+         + iff(mt.table_fqn is not null, 1, 0)
+         + iff(ic.table_fqn is not null, 1, 0)
+         + iff(eq.node_id is not null, 1, 0)
+         + iff(coalesce(mt.is_in_view_chain, false), 1, 0)
+        ) as signal_count,
+        -- Signals array
+        array_construct_compact(
+            iff(sp.table_fqn is not null, 'spillage', null),
+            iff(cl.table_fqn is not null, 'clustering', null),
+            iff(mt.table_fqn is not null, 'materialization', null),
+            iff(coalesce(mt.is_in_view_chain, false), 'view_chain', null),
+            iff(ic.table_fqn is not null, 'incremental', null),
+            iff(eq.node_id is not null, 'expensive_query', null)
+        ) as signals
+    from base_tables as bt
+    left join spillage_set as sp on sp.table_fqn = bt.table_fqn
+    left join clustering_set as cl on cl.table_fqn = bt.table_fqn
+    left join materialization_set as mt on mt.table_fqn = bt.table_fqn
+    left join incremental_set as ic on ic.table_fqn = bt.table_fqn
+    left join expensive_set as eq on eq.node_id = bt.node_id
 ),
 
--- =========================================================================
--- Correlation 2: View in Chain + Downstream Spillage
--- =========================================================================
-corr_view_spillage as (
+multi_signal_tables as (
+    select * from signals_joined where signal_count >= 2
+),
+
+-- Warehouse-level: oversized + idle
+warehouse_insights as (
     select
-        'view_chain_plus_spillage' as insight_type,
-        mt.table_fqn,
-        mt.dbt_model,
-        mt.model_name,
-        array_construct('materialization', 'warehouse') as domains_involved,
-        'View recomputation creates large intermediate results that spill downstream' as root_cause,
-        'Materialize the view — eliminates cascading recomputation and spillage' as recommended_fix_order,
-        'View ' || mt.model_name || ' has ' || mt.downstream_table_count
-            || ' downstream table(s). Materializing eliminates repeated computation.' as evidence
-    from materialization_tables as mt
-    where mt.is_in_view_chain = true
-      and exists (
-          select 1 from spillage_tables sp
-          where sp.table_fqn != mt.table_fqn
-      )
-),
-
--- =========================================================================
--- Correlation 5: Expensive Query + Incremental Candidate
--- =========================================================================
-corr_expensive_incremental as (
-    select
-        'expensive_query_plus_incremental' as insight_type,
-        ic.table_fqn,
-        ic.dbt_model,
-        ic.model_name,
-        array_construct('warehouse', 'materialization') as domains_involved,
-        'Query is expensive because it rebuilds the full table every run' as root_cause,
-        'Convert to incremental — reduces working set and per-run cost' as recommended_fix_order,
-        'Model ' || ic.model_name || ' costs credits monthly as an expensive query AND '
-            || 'has ' || round(coalesce(ic.rebuild_redundancy_rate, 0) * 100, 0)
-            || '% rebuild redundancy. Incremental would process only delta.' as evidence
-    from incremental_tables as ic
-    inner join expensive_queries as eq on eq.dbt_node_id = ic.dbt_model
-),
-
--- =========================================================================
--- Correlation 6: Spillage + Incremental Candidate
--- =========================================================================
-corr_spillage_incremental as (
-    select
-        'spillage_plus_incremental' as insight_type,
-        sp.table_fqn,
-        sp.dbt_model,
-        sp.model_name,
-        array_construct('warehouse', 'materialization') as domains_involved,
-        'Full table rebuilds overflow memory because the entire dataset is processed' as root_cause,
-        'Convert to incremental — smaller working set eliminates spillage' as recommended_fix_order,
-        'Table spills ' || round(sp.total_gb_spilled_local, 1) || ' GB AND has '
-            || round(coalesce(ic.rebuild_redundancy_rate, 0) * 100, 0)
-            || '% rebuild redundancy. Incremental would reduce working set.' as evidence
-    from spillage_tables as sp
-    inner join incremental_tables as ic on ic.table_fqn = sp.table_fqn
-),
-
--- =========================================================================
--- Correlation 9: Clustering Candidate + Expensive Query
--- =========================================================================
-corr_clustering_expensive as (
-    select
-        'clustering_plus_expensive_query' as insight_type,
-        ct.table_fqn,
-        ct.dbt_model,
-        null as model_name,
-        array_construct('clustering', 'warehouse') as domains_involved,
-        'Expensive queries scan the full table because it lacks clustering' as root_cause,
-        'Add clustering key — reduces scan cost for expensive queries' as recommended_fix_order,
-        'Table has ' || round(ct.scan_ratio_pct, 0) || '% scan ratio with '
-            || ct.select_count || ' queries. Clustering on '
-            || coalesce(ct.clustering_key, 'recommended columns') || ' would reduce cost.' as evidence
-    from clustering_tables as ct
-    where exists (
-        select 1 from expensive_queries eq
-        where eq.dbt_node_id = ct.dbt_model
-    )
-),
-
--- =========================================================================
--- Correlation 10: Oversized Warehouse + Low Query Volume
--- =========================================================================
-corr_oversized_idle as (
-    select
-        'oversized_warehouse_idle' as insight_type,
-        null as table_fqn,
-        null as dbt_model,
-        null as model_name,
-        array_construct('warehouse') as domains_involved,
-        'Warehouse is barely used but stays running — auto-suspend too lenient' as root_cause,
-        'Reduce auto-suspend timeout first, then evaluate sizing' as recommended_fix_order,
-        'Warehouse ' || sr.warehouse_name || ' is oversized with '
-            || round(coalesce(sr.total_idle_credits_30d, 0), 1) || ' idle credits/month. '
-            || 'Reduce auto-suspend to 60s.' as evidence
-    from sizing_recs as sr
-    where coalesce(sr.total_idle_credits_30d, 0) > 5
-),
-
--- =========================================================================
--- UNION ALL CORRELATIONS
--- =========================================================================
-all_insights as (
-    select * from corr_spillage_clustering
-    union all
-    select * from corr_view_spillage
-    union all
-    select * from corr_expensive_incremental
-    union all
-    select * from corr_spillage_incremental
-    union all
-    select * from corr_clustering_expensive
-    union all
-    select * from corr_oversized_idle
+        ws.warehouse_name,
+        round(coalesce(ws.total_idle_credits_30d, 0), 1) as idle_credits
+    from {{ ref('fct_snowflake__warehouse_sizing_recommendations') }} as ws
+    where ws.recommendation like 'Scale down%'
+      and coalesce(ws.total_idle_credits_30d, 0) > 5
 )
 
 select
-    md5(insight_type || '|' || coalesce(table_fqn, '') || '|' || coalesce(dbt_model, '')) as insight_id,
-    insight_type,
-    table_fqn,
-    dbt_model as node_id,
-    model_name,
-    domains_involved,
-    root_cause,
-    recommended_fix_order,
-    evidence,
+    md5(mst.table_fqn || '|' || coalesce(mst.node_id, '')) as insight_id,
+    mst.table_fqn,
+    mst.node_id,
+    mst.model_name,
+    mst.project_name,
+    null as warehouse_name,
+    mst.signals,
+    mst.signal_count,
+    case
+        when mst.has_materialization_candidate or mst.is_in_view_chain
+            then 'Materialize as table'
+        when mst.has_incremental_candidate
+            then 'Convert to incremental'
+        when mst.has_clustering_candidate
+            then 'Add clustering key'
+        when mst.has_spillage
+            then 'Resize warehouse or optimize SQL'
+        else 'Refactor SQL'
+    end as primary_recommendation,
+    case
+        when mst.has_materialization_candidate or mst.is_in_view_chain then 'materialization'
+        when mst.has_incremental_candidate then 'materialization'
+        when mst.has_clustering_candidate then 'clustering'
+        else 'warehouse'
+    end as primary_domain,
+    case
+        when mst.is_in_view_chain and mst.has_spillage
+            then 'View recomputation creates large intermediate results that spill downstream'
+        when mst.has_incremental_candidate and mst.has_spillage
+            then 'Full table rebuilds overflow memory because the entire dataset is processed each run'
+        when mst.has_incremental_candidate and mst.has_expensive_query
+            then 'Query is expensive because it rebuilds the full table every run'
+        when mst.has_clustering_candidate and mst.has_expensive_query
+            then 'Expensive queries scan the full table because it lacks clustering'
+        when mst.has_clustering_candidate and mst.has_spillage
+            then 'Full table scans cause both poor pruning and memory overflow'
+        else 'Multiple optimization signals detected — compound inefficiency'
+    end as root_cause,
+    case
+        when mst.has_materialization_candidate or mst.is_in_view_chain
+            then 'Materialize the view — eliminates cascading recomputation'
+        when mst.has_incremental_candidate
+            then 'Convert to incremental — smaller working set resolves secondary issues'
+        when mst.has_clustering_candidate
+            then 'Add clustering key — reduces scan volume and downstream compute'
+        when mst.has_spillage
+            then 'Scale up warehouse or refactor SQL to reduce intermediate result size'
+        else 'Review query SQL for optimization opportunities'
+    end as recommended_action,
     current_date() as snapshot_date
-from all_insights
+from multi_signal_tables as mst
+
+union all
+
+select
+    md5(wi.warehouse_name) as insight_id,
+    null as table_fqn,
+    null as node_id,
+    null as model_name,
+    null as project_name,
+    wi.warehouse_name,
+    array_construct('oversized', 'idle') as signals,
+    2 as signal_count,
+    'Reduce auto-suspend timeout' as primary_recommendation,
+    'warehouse' as primary_domain,
+    'Warehouse is oversized and mostly idle — auto-suspend too lenient' as root_cause,
+    'Reduce auto-suspend timeout to 60s, then evaluate sizing' as recommended_action,
+    current_date() as snapshot_date
+from warehouse_insights as wi

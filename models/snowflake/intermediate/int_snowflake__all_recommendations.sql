@@ -344,16 +344,11 @@ all_recommendations as (
 enriched as (
     select
         ar.*,
-        rh.node_id,
-        rh.project_name as node_project_name,
-        rh.model_name as node_model_name,
+        coalesce(rh.node_id, ar.dbt_model) as node_id,
+        coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2)) as node_project_name,
+        coalesce(rh.model_name, ar.model_name) as node_model_name,
         rh.target_name,
-        case
-            when lower(rh.target_name) in ('prod', 'default', 'production', 'main')
-                or lower(rh.target_name) like '%prod%' then 1
-            when lower(rh.target_name) like '%stag%' then 2
-            else 3
-        end as env_priority
+        rh.dbt_cloud_environment_id
     from all_recommendations as ar
     left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
         on rh.table_fqn = ar.table_fqn

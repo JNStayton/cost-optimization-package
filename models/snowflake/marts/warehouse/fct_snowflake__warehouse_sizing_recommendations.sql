@@ -40,7 +40,7 @@
 with window_30d as (
     select
         warehouse_name,
-        any_value(warehouse_size)                                   as warehouse_size,
+        max(warehouse_size)                                          as warehouse_size,
         sum(total_dbt_queries)                                      as total_queries_30d,
         round(
             sum(dml_count) * 1.0 / nullif(sum(total_dbt_queries), 0),
@@ -138,7 +138,7 @@ scored as (
             -- Scale down (oversized) — but not if already X-Small
             when w30.median_execution_sec_30d < 5
                  and w30.median_overload_sec_30d < 0.5
-                 and lower(coalesce(w30.warehouse_size, '')) not in ('x-small', 'xsmall')
+                 and not coalesce(wc.is_smallest_size, false)
                 then 'scale_down'
             else 'stable'
         end                                                         as recommendation_key,

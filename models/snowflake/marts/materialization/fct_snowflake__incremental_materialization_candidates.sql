@@ -49,6 +49,7 @@
 {% set min_compute_waste_avg_build_sec  = var('incremental_candidates_min_compute_waste_avg_build_sec', 30) %}
 
 with table_candidates as (
+    -- Compile-time relations (current deploy target)
     select
         upper(database_name) as database_name,
         upper(schema_name)   as schema_name,
@@ -59,6 +60,20 @@ with table_candidates as (
         package_name
     from {{ ref('int_dbt__relations') }}
     where lower(materialized) = 'table'
+
+    union
+
+    -- Runtime-discovered tables from other environments
+    select
+        database_name,
+        schema_name,
+        table_name,
+        table_fqn,
+        node_id as dbt_model,
+        model_name,
+        project_name as package_name
+    from {{ ref('int_snowflake__dbt_relation_history') }}
+    where table_fqn not in (select upper(database_name) || '.' || upper(schema_name) || '.' || upper(table_name) from {{ ref('int_dbt__relations') }})
 ),
 
 build_stats as (

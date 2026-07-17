@@ -96,7 +96,7 @@ scored as (
         lt.schema_name,
         lt.table_name,
         upper(lt.database_name) || '.' || upper(lt.schema_name) || '.' || upper(lt.table_name) as table_fqn,
-        dm.dbt_model,
+        coalesce(dm.dbt_model, rh.node_id) as dbt_model,
         lt.table_type,
         lt.is_already_clustered,
         lt.clustering_key,
@@ -135,6 +135,8 @@ scored as (
         on lt.database_name = dm.database_name
         and lt.schema_name = dm.schema_name
         and lt.table_name = dm.table_name
+    left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
+        on rh.table_fqn = lt.database_name || '.' || lt.schema_name || '.' || lt.table_name
 ),
 
 final as (

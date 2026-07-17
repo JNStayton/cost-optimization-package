@@ -418,21 +418,33 @@ These are detected by joining fact models on `table_fqn` or `node_id` and lookin
 
 ---
 
-## 6. Environment Priority
+## 6. Environment Handling
 
-When multiple environments have the same recommendation for the same logical model, the gold layer deduplicates using this priority:
+### How deduplication works
 
-| Priority | Target Names Matched |
-|----------|---------------------|
-| 1 (highest) | `prod`, `default`, `production`, `main`, or any name containing `prod` |
-| 2 | Any name containing `stag` |
-| 3 (lowest) | Everything else (dev, CI, feature branches) |
+When multiple environments have the same recommendation for the same logical model, the gold layer picks the **highest-impact** environment (most savings/score) regardless of environment label. This avoids guessing which environment is "production" — the most expensive instance is always the most actionable.
 
-The "representative" row is the one from the highest-priority environment. All other environment FQNs are preserved in the `all_table_fqns` array for drill-down.
+### Environment identifiers
 
-**Dedup rule:** If the same model has DIFFERENT recommendations across environments (e.g., "Materialize as TABLE" in dev, "Monitor" in prod), both appear as separate rows. They represent genuinely different signals.
+| Field | Source | Description |
+|-------|--------|-------------|
+| `dbt_cloud_environment_id` | Query comment JSON | Unique per dbt Cloud environment. Primary grouping key. |
+| `target_name` | Query comment JSON | Human-readable but unreliable (often "default" in dbt Cloud). |
+| `environment_count` | Derived | Number of distinct environments where this model exists. |
+| `environment_ids` | Derived | Array of all `dbt_cloud_environment_id` values for this model. |
 
-If the same model has the SAME recommendation across environments, only the highest-priority environment's row is kept.
+### Project scoping
+
+The gold layer filters recommendations to models belonging to projects listed in `dbt_monitored_projects`:
+- Default: `[project_name]` (root project only — excludes installed package models)
+- Mesh/multi-project: set to `['project_a', 'project_b', ...]` to monitor multiple projects from a single package install
+- Package models are only surfaced if you explicitly include the package name in the var
+
+### Cross-environment monitoring
+
+The package monitors all models visible in `QUERY_HISTORY` within the current Snowflake account. A single deploy can observe models from all environments (dev, staging, prod) as long as they share the same Snowflake account.
+
+**Limitation:** For multi-account architectures (environments split across Snowflake accounts), deploy the package in each account independently. `QUERY_HISTORY` is account-scoped.
 
 ---
 

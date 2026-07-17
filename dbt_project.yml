@@ -80,9 +80,8 @@ vars:
   ai_rest_api_enabled: true             # Set to false to exclude REST API from AI analysis
 
   # --- Cross-environment model discovery ---
-  dbt_monitored_projects: []  # Default: current project only. Add project names to monitor additional projects.
+  dbt_monitored_projects: []  # Default: [project_name]. Set explicitly for mesh/multi-project monitoring.
   dbt_relation_history_lookback_days: 90  # How far back to scan query_history for dbt builds
-  environment_priority_order: ['prod', 'staging', 'dev']  # Priority for collapsing recommendations
 
   # --- Snowflake: Table clustering ---
   clustering_candidates_min_size_gb: 100

@@ -472,6 +472,33 @@ This makes storage optimization easy to fold into the broader cross-domain prior
 
 ---
 
+## Environment Metadata Expansion
+
+**Status:** Future enhancement  
+**Current state:** The package captures `dbt_cloud_environment_id` from query comments and groups by it, but cannot resolve the human-readable environment name or type (dev/staging/prod) without external data.
+
+### Potential approaches
+
+1. **User-provided mapping var** — A `dbt_environment_labels` var where users manually map env_ids to names:
+   ```yaml
+   vars:
+     dbt_environment_labels:
+       '70437463665306': {name: 'Production', type: 'prod'}
+       '70437463672596': {name: 'CI/PR Checks', type: 'dev'}
+   ```
+
+2. **dbt Cloud Admin API integration** — A `dbt run-operation populate_environment_map` macro that calls `GET /api/v2/accounts/{id}/environments/{env_id}/` via Snowflake External Access Integration and writes results to a seed table. Requires: External Access Integration (ACCOUNTADMIN), dbt Cloud service token as Snowflake secret, network rule for `cloud.getdbt.com`.
+
+3. **dbt-artifacts-style on-run-end hook** — Capture `env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '')` and `env_var('DBT_CLOUD_ENVIRONMENT_NAME', '')` at the package's own runtime and store in a metadata table. Limited: only captures the env where the package itself runs.
+
+### Limitations
+
+- **Cross-account architectures:** `QUERY_HISTORY` is account-scoped. Multi-account setups must deploy the package per account.
+- **target_name unreliability:** In dbt Cloud, `target_name` defaults to "default" unless explicitly set per job. Multiple environments can share the same target_name.
+- **dbt Core users:** No `dbt_cloud_environment_id` available. Only `target_name` from query comments.
+
+---
+
 ## References
 
 - [Adaptive Compute documentation](https://docs.snowflake.com/en/user-guide/warehouses-adaptive)

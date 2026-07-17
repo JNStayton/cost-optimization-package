@@ -325,9 +325,8 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `dbt_monitored_projects` | `[]` | List of dbt project names to track across environments. Defaults to current project when empty. |
+| `dbt_monitored_projects` | `[]` | List of dbt project names to monitor. Default: root project only. Set to multiple for mesh/multi-project monitoring. |
 | `dbt_relation_history_lookback_days` | `90` | How far back to scan QUERY_HISTORY for dbt build comments. |
-| `environment_priority_order` | `['prod', 'staging', 'dev']` | Priority order for collapsing recommendations by environment in the gold layer. |
 
 ### Example: Standard edition configuration
 

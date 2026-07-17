@@ -39,6 +39,7 @@ with dbt_build_queries as (
         -- Extract dbt comment JSON fields
         regexp_substr(query_text, '"node_id":\\s*"([^"]+)"', 1, 1, 'e') as node_id,
         regexp_substr(query_text, '"target_name":\\s*"([^"]+)"', 1, 1, 'e') as target_name,
+        regexp_substr(query_text, '"dbt_cloud_environment_id":\\s*"([^"]+)"', 1, 1, 'e') as dbt_cloud_environment_id,
         -- Extract the materialized FQN from the DDL statement
         -- Handles: CREATE [OR REPLACE] [TRANSIENT] TABLE|VIEW db.schema.name
         upper(regexp_substr(query_text, '(view|table)\\s+([a-z0-9_]+\\.[a-z0-9_]+\\.[a-z0-9_]+)', 1, 1, 'ie', 2)) as ddl_fqn
@@ -88,6 +89,7 @@ aggregated as (
         split_part(table_fqn, '.', 1) as database_name,
         split_part(table_fqn, '.', 2) as schema_name,
         split_part(table_fqn, '.', 3) as table_name,
+        max(dbt_cloud_environment_id) as dbt_cloud_environment_id,
         min(start_time) as first_built_at,
         max(start_time) as last_built_at,
         count(*) as build_count
@@ -107,6 +109,7 @@ select
     a.database_name,
     a.schema_name,
     a.table_name,
+    a.dbt_cloud_environment_id,
     a.first_built_at,
     a.last_built_at,
     a.build_count,
