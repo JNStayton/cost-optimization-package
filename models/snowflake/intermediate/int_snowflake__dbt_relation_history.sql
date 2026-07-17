@@ -59,6 +59,7 @@ parsed as (
         start_time,
         node_id,
         target_name,
+        dbt_cloud_environment_id,
         -- Clean the FQN: remove __dbt_tmp suffix if present
         case
             when ddl_fqn like '%__DBT_TMP' then left(ddl_fqn, length(ddl_fqn) - 9)
