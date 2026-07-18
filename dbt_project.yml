@@ -46,6 +46,8 @@ models:
           +tags: ['clustering', 'dbt_cost_optimization']
         materialization:
           +tags: ['materialization', 'dbt_cost_optimization']
+          _archived:
+            +enabled: false
         warehouse:
           +tags: ['warehouse', 'dbt_cost_optimization']
         ai:

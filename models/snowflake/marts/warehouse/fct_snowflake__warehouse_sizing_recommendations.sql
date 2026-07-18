@@ -50,7 +50,8 @@ with window_30d as (
         round(median(median_execution_ms) / 1000.0, 2)             as median_execution_sec_30d,
         round(median(overload_to_elapsed_ratio), 4)                 as overload_to_elapsed_ratio_30d,
         round(avg(avg_query_load_pct), 2)                           as avg_query_load_pct_30d,
-        sum(queries_at_100pct_load)                                 as queries_at_100pct_load_30d
+        sum(queries_at_100pct_load)                                 as queries_at_100pct_load_30d,
+        round(median(median_provisioning_ms), 0)                   as median_provisioning_ms_30d
     from {{ ref('int_snowflake__warehouse_query_stats_daily') }}
     where stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by warehouse_name
@@ -92,6 +93,7 @@ scored as (
         w30.overload_to_elapsed_ratio_30d,
         w30.avg_query_load_pct_30d,
         w30.queries_at_100pct_load_30d,
+        w30.median_provisioning_ms_30d,
         w7.median_overload_sec_7d,
         w7.median_execution_sec_7d,
         coalesce(id.avg_idle_credit_pct_30d, 0)                     as avg_idle_credit_pct_30d,
@@ -139,7 +141,12 @@ scored as (
             when w30.median_execution_sec_30d < 5
                  and w30.median_overload_sec_30d < 0.5
                  and not coalesce(wc.is_smallest_size, false)
+                 and coalesce(w30.median_provisioning_ms_30d, 0) < 500
                 then 'scale_down'
+            -- Auto-suspend too aggressive (high provisioning queue, low idle)
+            when coalesce(w30.median_provisioning_ms_30d, 0) > 500
+                 and coalesce(id.avg_idle_credit_pct_30d, 0) < 0.05
+                then 'increase_auto_suspend'
             else 'stable'
         end                                                         as recommendation_key,
         case
@@ -191,6 +198,8 @@ select
             then 'Scale up single cluster (moderate concurrency bottleneck)'
         when recommendation_key = 'scale_down'
             then 'Scale down single cluster (oversized for workload)'
+        when recommendation_key = 'increase_auto_suspend'
+            then 'Increase auto-suspend timeout (queries waiting for resume)'
         else
             'Stable — no sizing change recommended'
     end                                                             as recommendation,
@@ -246,6 +255,13 @@ select
                             || 'reduce idle spend.'
                     else 'Idle credit consumption is low.'
                    end
+        when recommendation_key = 'increase_auto_suspend'
+            then 'Median provisioning wait of ' || median_provisioning_ms_30d
+                || 'ms over the last ' || {{ lookback_days }} || ' days — '
+                || 'queries are frequently waiting for the warehouse to resume from suspend. '
+                || 'Idle credit spend is low (' || round(avg_idle_credit_pct_30d * 100, 1)
+                || '%) so the warehouse is not wasting credits when running. '
+                || 'Increase AUTO_SUSPEND from current setting to 300-600 seconds to reduce cold starts.'
         else
             'Metrics within healthy range over the last ' || {{ lookback_days }} || ' days. '
             || 'Trend: ' || overload_trend || '. '
@@ -269,6 +285,7 @@ order by
         when 'gen2'       then 2
         when 'scale_up'   then 3
         when 'scale_down' then 4
-        else 5
+        when 'increase_auto_suspend' then 5
+        else 6
     end,
     total_queries_30d desc

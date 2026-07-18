@@ -88,59 +88,70 @@ An agent should be able to pick any row from this view and:
 
 ---
 
-### `vw_snowflake__recommendations_by_environment`
+### `vw_snowflake__dbt_model_optimizations`
 
-**Environment drill-down.** Does NOT collapse by node_id — every physical FQN gets its own row.
+**dbt engineer view.** Materialization, clustering, and incremental recommendations — things you fix in dbt code.
 
-Same columns as `top_recommendations` plus:
-- `target_name`: which dbt target (dev / prod / default)
-- `environment_count`: how many envs this model exists in
-- `has_prod_relation`: true if the model exists in a prod-like env
-- `has_nonprod_only`: true if the model ONLY exists in non-prod (flag for attention)
+Key columns beyond the standard set:
+- `suggested_clustering_key`: ready-to-use clustering key columns (e.g., "order_date, customer_id")
+- `dbt_config_template`: copy-paste incremental config block
+- `validate_uniqueness_sql`: SQL to verify unique key before implementing
+- `environment_ids`: array of dbt_cloud_environment_ids where this model exists
 
-Use cases:
-- `WHERE target_name LIKE '%prod%'` — "show me only prod recommendations"
-- `WHERE has_nonprod_only = true` — "what needs fixing before it reaches prod?"
-- Compare same model across environments — "is dev worse than prod?"
+---
+
+### `vw_snowflake__warehouse_optimizations`
+
+**Snowflake admin view.** Sizing, spillage, expensive queries, and provisioning queue recommendations.
+
+Key columns beyond the standard set:
+- `warehouse_current_size`: authoritative size from WAREHOUSE_EVENTS_HISTORY
+- `warehouse_category`: standard / gen2 / multi_cluster / adaptive
+
+---
+
+### `vw_snowflake__ai_optimizations`
+
+**AI/ML team view.** Model cost (downgrade, prompt bloat, batching), token efficiency (failure rates, I/O ratios, caching), agent cost trends, and spend overview.
+
+Key columns: `service_or_model`, `estimated_annual_savings_usd`
 
 ---
 
 ### `vw_snowflake__cross_domain_insights`
 
-**Multi-signal correlation view.** Surfaces cases where recommendations from different domains point to the same root cause or compound each other.
+**Multi-signal correlation view.** For each table with 2+ optimization signals from different domains, surfaces the signals as an array and picks the primary recommendation.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `insight_id` | string | Unique identifier for this insight |
-| `insight_type` | string | The correlation pattern detected |
-| `table_fqn` | string | The table/model at the center of the correlation |
-| `node_id` | string | Logical dbt model (nullable) |
-| `model_name` | string | Human-readable name |
-| `domains_involved` | array | Which domains overlap (e.g., ['warehouse', 'clustering']) |
-| `root_cause` | string | What we believe is the underlying issue |
-| `recommended_fix_order` | string | Which domain to fix first |
-| `combined_estimated_savings_usd` | float | Projected savings if the root cause is addressed |
-| `evidence` | string | Detailed metrics from each domain |
+| `signals` | array | Detected optimization signals (e.g., ['spillage', 'clustering']) |
+| `signal_count` | int | Number of distinct signals (2+ for this view) |
+| `primary_recommendation` | string | Highest-priority fix from the hierarchy |
+| `primary_domain` | string | Domain of the primary recommendation |
+| `root_cause` | string | Why these signals co-occur |
+| `recommended_action` | string | What to do first |
 
-See Section 5 for all correlation rules.
+Primary recommendation hierarchy:
+1. Materialize as table (resolves cascading effects)
+2. Convert to incremental (resolves rebuild waste)
+3. Add clustering (resolves scan inefficiency)
+4. Resize warehouse (config-level fix)
+5. Refactor SQL (highest effort)
 
 ---
 
-### `vw_snowflake__expensive_users`
+### `vw_snowflake__user_level_cost_attribution`
 
-**User-level cost attribution.** Aggregates credits consumed by user across expensive queries and AI usage.
+**Manager/chargeback view.** User-level cost attribution across expensive queries and AI usage.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `user_name` | string | Snowflake user |
-| `role_name` | string | Primary role (default_role for AI, top_role for queries) |
-| `query_credits_30d` | float | Credits from expensive queries attributed to this user |
+| `role_name` | string | Primary role |
+| `query_credits_30d` | float | Credits from expensive queries |
 | `ai_credits_30d` | float | Credits from AI/Cortex usage |
-| `combined_credits_30d` | float | Total credits across all attributable domains |
+| `combined_credits_30d` | float | Total credits across all domains |
 | `estimated_annual_cost_usd` | float | Projected annual cost |
-| `top_expensive_query_hash` | string | Their most expensive recurring query |
-| `top_ai_model` | string | Their most-used AI model |
-| `query_count_30d` | int | Total queries attributed |
 | `recommendation` | string | Action/awareness text |
 
 ---

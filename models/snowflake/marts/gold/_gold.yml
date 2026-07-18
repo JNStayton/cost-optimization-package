@@ -4,8 +4,8 @@ models:
   - name: vw_snowflake__top_recommendations
     description: >
       Flagship gold-layer view. Ranked list of actionable optimization recommendations
-      across all domains, deduplicated by logical dbt model (node_id). Ordered by
-      estimated annual savings.
+      across all domains, deduplicated by logical dbt model (node_id) using impact-based
+      ranking (highest savings wins). Ordered by estimated annual savings.
     columns:
       - name: priority_rank
         description: Rank by estimated annual savings (1 = highest savings)
@@ -13,8 +13,8 @@ models:
         description: Optimization domain (warehouse, materialization, clustering, ai)
       - name: effort_category
         description: Effort required (config_change, sql_refactor, architecture)
-      - name: estimated_annual_savings_usd
-        description: Estimated annual savings in USD if recommendation is applied
+      - name: environment_ids
+        description: Array of dbt_cloud_environment_ids where this model exists
 
   - name: vw_snowflake__cost_savings_summary
     description: >
@@ -40,54 +40,64 @@ models:
         description: Current status (actionable, monitor, stable)
       - name: actionable_sql
         description: Ready-to-execute SQL or dbt config change
+
+  - name: vw_snowflake__cross_domain_insights
+    description: >
+      Cross-domain signal detection. For each table with 2+ optimization signals from
+      different domains, surfaces the signals as an array and picks the primary
+      recommendation using a ranked hierarchy.
+    columns:
+      - name: signals
+        description: Array of detected optimization signals (e.g., ['spillage', 'clustering'])
+      - name: signal_count
+        description: Number of distinct signals detected (2+ for this view)
+      - name: primary_recommendation
+        description: The highest-priority fix based on the signal hierarchy
+      - name: primary_domain
+        description: Domain of the primary recommendation
+      - name: root_cause
+        description: Why these signals co-occur on the same table
+
+  - name: vw_snowflake__dbt_model_optimizations
+    description: >
+      dbt model-level optimizations: materialization, clustering, and incremental config.
+      Actions are taken in dbt code (model configs, SQL refactors). Excludes warehouse
+      and AI domain recommendations. Enriched with suggested clustering keys.
+    columns:
+      - name: suggested_clustering_key
+        description: Recommended clustering columns from clustering_key_candidates (e.g., 'order_date, customer_id')
       - name: dbt_config_template
         description: Full dbt config block for incremental conversion (when applicable)
       - name: validate_uniqueness_sql
         description: SQL to validate unique key before applying incremental config
+      - name: environment_ids
+        description: Array of dbt_cloud_environment_ids where this model exists
 
-  - name: vw_snowflake__recommendations_by_environment
+  - name: vw_snowflake__warehouse_optimizations
     description: >
-      Environment drill-down view. Does NOT collapse by node_id — every physical FQN
-      gets its own row. Filterable by target_name for environment-specific views.
+      Warehouse-level optimizations: sizing, spillage, expensive queries, provisioning.
+      Actions are taken in Snowflake (ALTER WAREHOUSE, auto-suspend settings).
+      Audience: Snowflake admins.
     columns:
-      - name: has_prod_relation
-        description: True if this row represents a production environment relation
-      - name: has_nonprod_only
-        description: True if this model only exists in non-production environments
-
-  - name: vw_snowflake__recommendations_by_model
-    description: >
-      Model-centric view that collapses recommendations by logical dbt model (node_id).
-      Same model in multiple environments shows once, with the prod environment preferred.
-      Now includes cost estimation fields (estimated_annual_cost_usd, estimated_annual_savings_usd).
-    columns:
-      - name: node_id
-        description: dbt node identifier (e.g., model.my_project.my_model)
-      - name: all_table_fqns
-        description: Array of all physical FQNs for this logical model across environments
+      - name: warehouse_current_size
+        description: Authoritative current warehouse size from WAREHOUSE_EVENTS_HISTORY
+      - name: warehouse_category
+        description: Warehouse type category (standard, gen2, multi_cluster, adaptive)
       - name: estimated_annual_savings_usd
-        description: Estimated annual savings in USD
-      - name: actionable_sql
-        description: Ready-to-execute SQL or config change
+        description: Estimated annual savings if recommendation is applied
 
-  - name: vw_snowflake__cross_domain_insights
+  - name: vw_snowflake__ai_optimizations
     description: >
-      Cross-domain correlation insights. Detects cases where recommendations from
-      different domains point to the same root cause or compound each other.
-      Each row is a detected multi-signal pattern with recommended fix order.
+      AI/Cortex optimization recommendations. Covers model cost (downgrade, prompt bloat),
+      token efficiency (failure rates, I/O ratios), agent cost trends, and spend overview.
+      Audience: AI/ML teams and platform engineers.
     columns:
-      - name: insight_id
-        description: Deterministic hash ID for the insight
-      - name: insight_type
-        description: Correlation type (e.g., spillage_plus_clustering, view_chain_plus_spillage)
-      - name: domains_involved
-        description: Array of domains that contribute to this insight
-      - name: root_cause
-        description: Identified root cause connecting the domain signals
-      - name: recommended_fix_order
-        description: Which optimization to apply first for maximum impact
+      - name: service_or_model
+        description: AI service, model name, or agent identifier
+      - name: estimated_annual_savings_usd
+        description: Estimated annual savings from applying the recommendation
 
-  - name: vw_snowflake__expensive_users
+  - name: vw_snowflake__user_level_cost_attribution
     description: >
       User-level cost attribution across expensive queries and AI usage.
       Aggregates credits consumed by user for chargeback and awareness dashboards.
@@ -98,5 +108,3 @@ models:
         description: Total credits (query + AI) consumed in the last 30 days
       - name: estimated_annual_cost_usd
         description: Projected annual cost at current rate
-      - name: recommendation
-        description: Action guidance based on spend tier

@@ -6,16 +6,13 @@
 
 {#--
   User-level cost attribution across expensive queries and AI usage.
-  Aggregates credits consumed by user for chargeback/awareness dashboards.
-
-  Note: "finger-pointy" by design — helps identify which users/roles
-  drive the most cost so optimization efforts can be targeted.
+  Aggregates credits consumed by user for chargeback and awareness dashboards.
+  Audience: Engineering managers, finance, platform teams.
 --#}
 
 {% set credit_rate_usd = var('credit_rate_usd', 2) %}
 
 with query_users as (
-    -- Credits attributed to users via expensive queries
     select
         top_user_name as user_name,
         top_role_name as role_name,
@@ -28,7 +25,6 @@ with query_users as (
 ),
 
 ai_users as (
-    -- Credits attributed to users via AI/Cortex usage
     select
         user_name,
         default_role as role_name,

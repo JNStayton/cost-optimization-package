@@ -338,6 +338,111 @@ all_recommendations as (
         null as validate_uniqueness_sql
     from {{ ref('fct_snowflake__ai_spend_overview') }} as ai
     where ai.wow_trend in ('Growing', 'New')
+
+    union all
+
+    -- =========================================================================
+    -- AI MODEL COST RECOMMENDATIONS
+    -- =========================================================================
+    select
+        'ai' as domain,
+        amc.model_name || '/' || coalesce(amc.function_name, 'all') as entity_name,
+        null as table_fqn,
+        null as dbt_model,
+        null as model_name,
+        null as warehouse_name,
+        amc.recommendation,
+        amc.recommendation_reason,
+        case
+            when amc.recommendation like '%cheaper model%' then 'config_change'
+            when amc.recommendation like '%prompt%' then 'sql_refactor'
+            else 'config_change'
+        end as effort_category,
+        amc.total_credits as score,
+        amc.projected_annual_cost_usd as estimated_annual_cost_usd,
+        case
+            when amc.recommendation like '%cheaper model%' then amc.projected_annual_cost_usd * 0.50
+            when amc.recommendation like '%prompt%' then amc.projected_annual_cost_usd * 0.30
+            when amc.recommendation like '%caching%' then amc.projected_annual_cost_usd * 0.20
+            else null
+        end as estimated_annual_savings_usd,
+        '-- Review model usage: ' || amc.model_name || ' / ' || coalesce(amc.function_name, 'all') as actionable_sql,
+        amc.snapshot_date,
+        case when amc.recommendation like '%Monitor%' then 'stable' else 'actionable' end as backlog_status,
+        null as dbt_config_template,
+        null as validate_uniqueness_sql
+    from {{ ref('fct_snowflake__ai_model_cost_recommendations') }} as amc
+    where amc.recommendation not like '%Monitor%'
+
+    union all
+
+    -- =========================================================================
+    -- AI TOKEN EFFICIENCY RECOMMENDATIONS
+    -- =========================================================================
+    select
+        'ai' as domain,
+        ate.model_name || '/' || coalesce(ate.function_name, 'all') || '/' || coalesce(ate.query_pattern, 'untagged') as entity_name,
+        null as table_fqn,
+        null as dbt_model,
+        null as model_name,
+        null as warehouse_name,
+        ate.recommendation,
+        ate.recommendation_reason,
+        case
+            when ate.recommendation like '%failure%' then 'config_change'
+            when ate.recommendation like '%cache%' then 'config_change'
+            else 'sql_refactor'
+        end as effort_category,
+        ate.total_credits as score,
+        ate.projected_annual_cost_usd as estimated_annual_cost_usd,
+        case
+            when ate.recommendation like '%failure%' then ate.projected_annual_cost_usd * ate.incomplete_pct / 100.0
+            when ate.recommendation like '%cache%' then ate.projected_annual_cost_usd * 0.20
+            when ate.recommendation like '%ratio%' or ate.recommendation like '%prompt%' then ate.projected_annual_cost_usd * 0.30
+            else null
+        end as estimated_annual_savings_usd,
+        '-- Review token efficiency: ' || ate.model_name || ' / ' || coalesce(ate.query_pattern, 'untagged') as actionable_sql,
+        ate.snapshot_date,
+        case when ate.recommendation like '%efficient%' then 'stable' else 'actionable' end as backlog_status,
+        null as dbt_config_template,
+        null as validate_uniqueness_sql
+    from {{ ref('fct_snowflake__ai_token_efficiency_recommendations') }} as ate
+    where ate.recommendation not like '%efficient%'
+
+    union all
+
+    -- =========================================================================
+    -- AI AGENT OPTIMIZATION RECOMMENDATIONS
+    -- =========================================================================
+    select
+        'ai' as domain,
+        aao.agent_fqn as entity_name,
+        null as table_fqn,
+        null as dbt_model,
+        null as model_name,
+        null as warehouse_name,
+        aao.recommendation,
+        aao.recommendation_reason,
+        case
+            when aao.recommendation like '%rapidly%' then 'config_change'
+            when aao.recommendation like '%consolidate%' then 'architecture'
+            else 'sql_refactor'
+        end as effort_category,
+        aao.total_credits_30d as score,
+        aao.projected_annual_cost_usd as estimated_annual_cost_usd,
+        case
+            when aao.recommendation like '%rapidly%' then aao.projected_annual_cost_usd * 0.25
+            when aao.recommendation like '%consolidate%' then aao.projected_annual_cost_usd * 0.80
+            when aao.recommendation like '%per-request%' then aao.projected_annual_cost_usd * 0.30
+            else null
+        end as estimated_annual_savings_usd,
+        '-- Review agent: ' || aao.agent_fqn as actionable_sql,
+        aao.snapshot_date,
+        case when aao.recommendation like '%Healthy%' then 'stable' else 'actionable' end as backlog_status,
+        null as dbt_config_template,
+        null as validate_uniqueness_sql
+    from {{ ref('fct_snowflake__ai_agent_optimization_recommendations') }} as aao
+    where aao.recommendation not like '%Healthy%'
 ),
 
 -- Enrich with cross-environment data
