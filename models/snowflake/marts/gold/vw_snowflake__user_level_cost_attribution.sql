@@ -8,9 +8,18 @@
   User-level cost attribution across expensive queries and AI usage.
   Aggregates credits consumed by user for chargeback and awareness dashboards.
   Audience: Engineering managers, finance, platform teams.
+
+  Scope: When include_full_platform_insights = false (default), only shows users
+  who ran expensive queries tied to monitored dbt projects. When true, shows all users.
 --#}
 
 {% set credit_rate_usd = var('credit_rate_usd', 2) %}
+{% set monitored_projects = var('dbt_monitored_projects', []) %}
+{% if monitored_projects | length == 0 %}
+  {% set monitored_projects = [project_name] %}
+{% endif %}
+{% set monitor_all = (monitored_projects | length == 1 and monitored_projects[0] == '*') %}
+{% set platform_insights = var('include_full_platform_insights', false) %}
 
 with query_users as (
     select
@@ -21,6 +30,14 @@ with query_users as (
         max_by(query_hash, total_credits_30d) as top_expensive_query_hash
     from {{ ref('fct_snowflake__expensive_query_recommendations') }}
     where top_user_name is not null
+    {% if not platform_insights and not monitor_all %}
+      and dbt_node_id is not null
+      and split_part(dbt_node_id, '.', 2) in (
+          {% for proj in monitored_projects %}
+            '{{ proj }}'{% if not loop.last %}, {% endif %}
+          {% endfor %}
+      )
+    {% endif %}
     group by top_user_name, top_role_name
 ),
 

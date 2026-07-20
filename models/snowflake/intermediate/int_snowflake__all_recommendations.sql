@@ -452,11 +452,19 @@ enriched as (
         coalesce(rh.node_id, ar.dbt_model) as node_id,
         coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2)) as node_project_name,
         coalesce(rh.model_name, ar.model_name) as node_model_name,
-        rh.target_name,
-        rh.dbt_cloud_environment_id
+        coalesce(rh.target_name, rh_fallback.target_name) as target_name,
+        coalesce(rh.dbt_cloud_environment_id, rh_fallback.dbt_cloud_environment_id) as dbt_cloud_environment_id
     from all_recommendations as ar
     left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
         on rh.table_fqn = ar.table_fqn
+    -- Fallback: match on node_id when table_fqn doesn't match (compile-time dev FQN not in relation_history)
+    left join (
+        select node_id, max(target_name) as target_name, max(dbt_cloud_environment_id) as dbt_cloud_environment_id
+        from {{ ref('int_snowflake__dbt_relation_history') }}
+        group by node_id
+    ) as rh_fallback
+        on rh_fallback.node_id = ar.dbt_model
+        and rh.node_id is null
 )
 
 select

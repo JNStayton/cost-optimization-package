@@ -325,7 +325,8 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `dbt_monitored_projects` | `[]` | List of dbt project names to monitor. Default: root project only. Set to multiple for mesh/multi-project monitoring. |
+| `dbt_monitored_projects` | `[]` | Which dbt projects to monitor. Default: root project only. Set `['*']` for all dbt projects in the account, or list specific project names for mesh. |
+| `include_full_platform_insights` | `false` | Show account-wide non-dbt signals (all warehouses, CoCo, Intelligence, untracked users). |
 | `dbt_relation_history_lookback_days` | `90` | How far back to scan QUERY_HISTORY for dbt build comments. |
 
 ### Example: Standard edition configuration

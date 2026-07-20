@@ -1,0 +1,92 @@
+version: 2
+
+macros:
+  # ===========================================================================
+  # User-facing macros (run-operation)
+  # ===========================================================================
+
+  - name: find_table_clustering_candidates
+    description: >
+      Identifies tables that would benefit from clustering based on size,
+      query volume, and scan ratio. Run via dbt run-operation.
+    arguments:
+      - name: min_size_gb
+        description: "Minimum table size in GB to consider (default: 100)"
+      - name: lookback_days
+        description: "Days of query history to analyze (default: 7)"
+
+  - name: suggest_clustering_keys
+    description: >
+      Suggests optimal clustering key columns for a specific model based on
+      query patterns (WHERE/JOIN clause frequency) and column cardinality.
+    arguments:
+      - name: model_name
+        description: "Name of the dbt model to analyze"
+
+  - name: find_spillage_candidates
+    description: >
+      Finds tables with significant query spillage (local or remote) that
+      indicates undersized warehouses or inefficient SQL.
+
+  - name: find_table_materialization_candidates
+    description: >
+      Identifies views that are queried frequently enough to justify
+      materializing as tables (reducing recomputation).
+
+  - name: find_expensive_dbt_queries
+    description: >
+      Surfaces the most expensive recurring dbt queries by credits consumed,
+      with query hash grouping and cost projection.
+
+  - name: find_warehouse_sizing_recommendations
+    description: >
+      Analyzes warehouse performance metrics (overload, execution time, idle credits)
+      and recommends sizing changes (scale up, scale down, enable Gen2, enable MCW).
+
+  - name: find_incremental_materialization_candidates
+    description: >
+      Identifies tables materialized as full-refresh that would benefit from
+      incremental strategy based on rebuild redundancy and growth patterns.
+
+  # ===========================================================================
+  # Utility macros (internal, called by models)
+  # ===========================================================================
+
+  - name: scope_filter
+    description: >
+      Generates a SQL WHERE clause fragment for project scope filtering.
+      Used by all gold-layer views to apply consistent scope logic based on
+      `dbt_monitored_projects` and `include_full_platform_insights` vars.
+    arguments:
+      - name: project_col
+        description: "Column containing the project name (default: node_project_name)"
+      - name: allow_null_col
+        description: "Column to check for null to identify account-wide recs (default: node_id)"
+
+  - name: build_incremental_config_template
+    description: >
+      Generates a SQL CASE expression that produces a copy-pasteable dbt config
+      template string for incremental models. Uses raw blocks to emit Jinja
+      delimiters as literal SQL string content. Called by
+      fct_snowflake__incremental_config_recommendations.
+
+  - name: probe_unique_key_candidates
+    description: >
+      Post-hook macro that tests unique key candidates against actual table data
+      after fct_snowflake__incremental_config_recommendations builds.
+      Updates the `likely_unique_key` column with validated results.
+
+  - name: dbt_session_filter
+    description: >
+      Generates a WHERE clause fragment that filters QUERY_HISTORY to only
+      dbt-initiated queries (based on query comment JSON pattern).
+
+  - name: refresh_column_cardinality
+    description: >
+      Run-operation macro that refreshes column cardinality statistics in
+      int_snowflake__table_columns for more accurate clustering key suggestions.
+
+  - name: log_recommendation
+    description: >
+      Utility for logging recommendation outputs during macro execution.
+      Formats and prints recommendation results to the console.

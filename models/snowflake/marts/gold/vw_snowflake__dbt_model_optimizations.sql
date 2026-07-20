@@ -51,14 +51,7 @@ ranked as (
     left join clustering_keys as ck on ck.table_fqn = ar.table_fqn
     where ar.domain in ('materialization', 'clustering')
       and ar.backlog_status = 'actionable'
-      and (
-          ar.node_project_name in (
-              {% for proj in monitored_projects %}
-                '{{ proj }}'{% if not loop.last %}, {% endif %}
-              {% endfor %}
-          )
-          or ar.node_id is null
-      )
+      and {{ scope_filter('ar.node_project_name', 'ar.node_id') }}
 )
 
 select

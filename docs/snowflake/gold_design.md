@@ -446,10 +446,18 @@ When multiple environments have the same recommendation for the same logical mod
 
 ### Project scoping
 
-The gold layer filters recommendations to models belonging to projects listed in `dbt_monitored_projects`:
-- Default: `[project_name]` (root project only — excludes installed package models)
-- Mesh/multi-project: set to `['project_a', 'project_b', ...]` to monitor multiple projects from a single package install
-- Package models are only surfaced if you explicitly include the package name in the var
+Two variables control what the gold layer surfaces:
+
+**`dbt_monitored_projects`** (default: `[]` → resolves to current project):
+- `[]` — only the project where the package is installed
+- `['project_a', 'project_b']` — specific projects (mesh/multi-project)
+- `['*']` — all dbt projects visible in the Snowflake account's QUERY_HISTORY
+
+**`include_full_platform_insights`** (default: `false`):
+- `false` — only entities connected to dbt queries from monitored projects
+- `true` — include account-wide signals: all warehouses (even those no dbt project uses), CoCo/Intelligence spend, all users regardless of dbt involvement
+
+The scope filter is applied consistently across all gold views via the `scope_filter()` macro. Recommendations with no project association (warehouse sizing, AI services) only appear when `include_full_platform_insights = true`.
 
 ### Cross-environment monitoring
 

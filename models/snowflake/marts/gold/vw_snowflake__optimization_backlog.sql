@@ -39,14 +39,7 @@ ranked as (
         ) as env_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
-    where (
-        ar.node_project_name in (
-            {% for proj in monitored_projects %}
-              '{{ proj }}'{% if not loop.last %}, {% endif %}
-            {% endfor %}
-        )
-        or ar.node_id is null
-    )
+    where {{ scope_filter('ar.node_project_name', 'ar.node_id') }}
 )
 
 select

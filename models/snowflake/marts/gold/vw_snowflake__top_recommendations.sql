@@ -40,14 +40,7 @@ ranked as (
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
     where ar.backlog_status = 'actionable'
-      and (
-          ar.node_project_name in (
-              {% for proj in monitored_projects %}
-                '{{ proj }}'{% if not loop.last %}, {% endif %}
-              {% endfor %}
-          )
-          or ar.node_id is null
-      )
+      and {{ scope_filter('ar.node_project_name', 'ar.node_id') }}
 )
 
 select

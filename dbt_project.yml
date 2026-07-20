@@ -81,8 +81,11 @@ vars:
   snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
   ai_rest_api_enabled: true             # Set to false to exclude REST API from AI analysis
 
+  # --- Scope & Monitoring ---
+  dbt_monitored_projects: []  # Default: [project_name]. List projects to monitor, or ['*'] for all dbt projects in the account.
+  include_full_platform_insights: false  # Show account-wide non-dbt signals (all warehouses, CoCo, Intelligence, untracked users)
+
   # --- Cross-environment model discovery ---
-  dbt_monitored_projects: []  # Default: [project_name]. Set explicitly for mesh/multi-project monitoring.
   dbt_relation_history_lookback_days: 90  # How far back to scan query_history for dbt builds
 
   # --- Snowflake: Table clustering ---

@@ -30,6 +30,7 @@ ranked as (
     left join warehouse_config as wc on wc.warehouse_name = ar.warehouse_name
     where ar.domain = 'warehouse'
       and ar.backlog_status in ('actionable', 'monitor')
+      and {{ scope_filter('ar.node_project_name', 'ar.node_id') }}
 )
 
 select
