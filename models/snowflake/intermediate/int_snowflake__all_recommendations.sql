@@ -465,7 +465,7 @@ enriched as (
         ar.table_fqn,
         ar.dbt_model,
         ar.model_name,
-        coalesce(ar.warehouse_name, dr.warehouse_name) as warehouse_name,
+        coalesce(ar.warehouse_name, nullif(dr.warehouse_name, '')) as warehouse_name,
         ar.recommendation,
         ar.recommendation_reason,
         ar.effort_category,
@@ -495,7 +495,7 @@ enriched as (
         and rh.dbt_cloud_environment_id is null
     -- Warehouse fallback: get configured warehouse from dbt model graph
     left join {{ ref('int_dbt__relations') }} as dr
-        on dr.unique_id = ar.dbt_model
+        on dr.dbt_model = ar.dbt_model
         and ar.warehouse_name is null
 )
 
