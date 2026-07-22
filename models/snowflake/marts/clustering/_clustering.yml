@@ -322,23 +322,22 @@ models:
         description: Timestamp when the refresh_column_cardinality macro last populated this column's cardinality.
 
       # ---------------------------------------------------------------------------
-      # Usage
+      # Usage (from GET_QUERY_OPERATOR_STATS)
       # ---------------------------------------------------------------------------
-      - name: where_query_count
+      - name: filter_query_count
         description: >
-          Number of distinct queries in the lookback window where this column appeared
-          in a WHERE clause, matched via query_text pattern. Enterprise+ uses ACCESS_HISTORY
-          for precise column-to-query attribution before matching; Standard edition scopes
-          by table name in query_text. Known limitation: column aliasing is not detected.
+          Number of distinct queries where this column appeared in a Filter operator
+          condition, derived from GET_QUERY_OPERATOR_STATS. Direct evidence of WHERE
+          clause usage that benefits from clustering.
 
       - name: join_query_count
         description: >
-          Number of distinct queries in the lookback window where this column appeared
-          in a JOIN...ON clause, matched via query_text pattern. Same attribution approach
-          and aliasing limitation as where_query_count.
+          Number of distinct queries where this column appeared in a Join operator
+          equality condition, derived from GET_QUERY_OPERATOR_STATS. Secondary signal
+          for clustering benefit (join predicates benefit from co-located partitions).
 
       - name: usage_count
         description: >
-          Sum of where_query_count and join_query_count. Columns with usage_count = 0
+          Sum of filter_query_count and join_query_count. Columns with usage_count = 0
           are excluded from recommendations entirely — confirmed filter or join usage
           is required for a column to be considered a clustering key candidate.

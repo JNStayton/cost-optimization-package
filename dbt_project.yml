@@ -95,6 +95,8 @@ vars:
   clustering_candidates_target_databases: []
   clustering_candidates_target_schemas: []
   clustering_key_cardinality_table_limit: 10
+  clustering_key_operator_analysis_table_limit: 10
+  clustering_key_operator_queries_per_table: 20
 
   # --- Snowflake: Materialization ---
   table_materialization_lookback_days: 14

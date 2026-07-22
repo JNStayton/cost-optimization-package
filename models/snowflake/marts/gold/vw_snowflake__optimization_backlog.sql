@@ -61,7 +61,6 @@ select
     validate_uniqueness_sql,
     environment_count,
     environment_ids,
-    dbt_cloud_environment_id,
     target_name,
     snapshot_date
 from ranked

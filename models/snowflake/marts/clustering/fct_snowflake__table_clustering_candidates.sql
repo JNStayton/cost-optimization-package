@@ -7,7 +7,10 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='clustering_candidates_snapshot_key',
-    post_hook="{{ refresh_column_cardinality() }}"
+    post_hook=[
+      "{{ refresh_column_cardinality() }}",
+      "{{ extract_query_operator_columns() }}"
+    ]
   )
 }}
 

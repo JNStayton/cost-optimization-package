@@ -270,6 +270,8 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 | `clustering_candidates_target_databases` | `[]` | Restrict evaluation to specific databases. Empty = no restriction. |
 | `clustering_candidates_target_schemas` | `[]` | Restrict evaluation to specific schemas. Empty = no restriction. |
 | `clustering_key_cardinality_table_limit` | `10` | Max tables to evaluate for column-level clustering key recommendations. |
+| `clustering_key_operator_analysis_table_limit` | `10` | Max tables to analyze with GET_QUERY_OPERATOR_STATS for filter/join evidence. |
+| `clustering_key_operator_queries_per_table` | `20` | Representative queries to analyze per candidate table (one per parameterized hash). |
 
 ### Materialization
 

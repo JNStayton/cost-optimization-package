@@ -211,14 +211,31 @@ models:
         description: Calendar date of the query access
       - name: query_count
         description: Count of distinct query_ids that accessed this column on this date (any access type)
-      - name: where_query_count
-        description: >
-          Count of distinct query_ids where this column appeared in a WHERE clause,
-          matched via query_text ilike. Known limitation: column aliasing is not detected.
-      - name: join_query_count
-        description: >
-          Count of distinct query_ids where this column appeared in a JOIN...ON clause,
-          matched via query_text ilike. Known limitation: column aliasing is not detected.
+
+
+  # ===========================================================================
+  # int_snowflake__query_operator_columns
+  # ===========================================================================
+  - name: int_snowflake__query_operator_columns
+    description: >
+      Stores parsed column references from query plan operators (GET_QUERY_OPERATOR_STATS).
+      One row per (query_id, table_fqn, column_name, operator_type). Populated by the
+      extract_query_operator_columns macro; the dbt model defines schema only.
+    columns:
+      - name: operator_column_key
+        description: MD5 surrogate key (query_id | table_fqn | column_name | operator_type)
+      - name: query_id
+        description: Snowflake query identifier
+      - name: table_fqn
+        description: Fully-qualified table name referenced in the operator
+      - name: column_name
+        description: Column name parsed from the operator condition
+      - name: operator_type
+        description: "Type of operator: 'Filter' (WHERE/HAVING) or 'Join' (equality join)"
+      - name: query_start_time
+        description: Query start timestamp (from QUERY_HISTORY)
+      - name: access_date
+        description: Calendar date of the query (cast from query_start_time)
 
   # ===========================================================================
   # int_snowflake__column_cardinality

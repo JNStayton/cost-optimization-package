@@ -143,7 +143,11 @@ all_recommendations as (
         eq.total_credits_30d as score,
         eq.estimated_annual_cost_usd,
         eq.estimated_annual_cost_usd * 0.20 as estimated_annual_savings_usd,
-        '-- Profile query ' || eq.query_hash || ' and optimize SQL' as actionable_sql,
+        '-- Model: ' || coalesce(eq.dbt_node_id, 'unknown')
+            || ' | Warehouse: ' || coalesce(eq.warehouse_name, 'unknown')
+            || ' | Annual cost: $' || round(eq.estimated_annual_cost_usd, 0)::varchar
+            || ' | Query hash: ' || eq.query_hash
+            || char(10) || '-- Review for: wide JOINs, missing filters, unnecessary columns, UNION vs UNION ALL' as actionable_sql,
         eq.snapshot_date,
         case
             when eq.recommendation like '%Monitor%' then 'monitor'
@@ -203,7 +207,11 @@ all_recommendations as (
         ic.dbt_model,
         ic.model_name,
         null as warehouse_name,
-        ic.recommendation,
+        case
+            when ic.recommendation like 'Strong%' then 'Convert to incremental materialization (strong signal)'
+            when ic.recommendation like 'Good%' then 'Convert to incremental materialization (good signal)'
+            else 'Evaluate incremental materialization'
+        end as recommendation,
         ic.recommendation_reason,
         case
             when ic.recommendation like 'Strong%' then 'architecture'
@@ -281,7 +289,11 @@ all_recommendations as (
         tc.dbt_model,
         null as model_name,
         null as warehouse_name,
-        tc.recommendation_tier || ' clustering candidate' as recommendation,
+        case
+            when tc.recommendation_tier = 'Strong' then 'Add clustering key (strong signal)'
+            when tc.recommendation_tier = 'Good' then 'Add clustering key (good signal)'
+            else 'Evaluate clustering key'
+        end as recommendation,
         tc.recommendation_reason,
         'config_change' as effort_category,
         tc.score,
@@ -445,10 +457,26 @@ all_recommendations as (
     where aao.recommendation not like '%Healthy%'
 ),
 
--- Enrich with cross-environment data
+-- Enrich with cross-environment data and warehouse fallback
 enriched as (
     select
-        ar.*,
+        ar.domain,
+        ar.entity_name,
+        ar.table_fqn,
+        ar.dbt_model,
+        ar.model_name,
+        coalesce(ar.warehouse_name, dr.warehouse_name) as warehouse_name,
+        ar.recommendation,
+        ar.recommendation_reason,
+        ar.effort_category,
+        ar.score,
+        ar.estimated_annual_cost_usd,
+        ar.estimated_annual_savings_usd,
+        ar.actionable_sql,
+        ar.snapshot_date,
+        ar.backlog_status,
+        ar.dbt_config_template,
+        ar.validate_uniqueness_sql,
         coalesce(rh.node_id, ar.dbt_model) as node_id,
         coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2)) as node_project_name,
         coalesce(rh.model_name, ar.model_name) as node_model_name,
@@ -457,14 +485,18 @@ enriched as (
     from all_recommendations as ar
     left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
         on rh.table_fqn = ar.table_fqn
-    -- Fallback: match on node_id when table_fqn doesn't match (compile-time dev FQN not in relation_history)
+    -- Fallback: match on node_id when table_fqn doesn't match
     left join (
         select node_id, max(target_name) as target_name, max(dbt_cloud_environment_id) as dbt_cloud_environment_id
         from {{ ref('int_snowflake__dbt_relation_history') }}
         group by node_id
     ) as rh_fallback
         on rh_fallback.node_id = ar.dbt_model
-        and rh.node_id is null
+        and rh.dbt_cloud_environment_id is null
+    -- Warehouse fallback: get configured warehouse from dbt model graph
+    left join {{ ref('int_dbt__relations') }} as dr
+        on dr.unique_id = ar.dbt_model
+        and ar.warehouse_name is null
 )
 
 select

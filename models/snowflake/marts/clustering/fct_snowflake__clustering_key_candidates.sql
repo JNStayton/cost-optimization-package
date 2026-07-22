@@ -1,8 +1,19 @@
 {#--
-  Top 3 clustering key recommendations per candidate table, scored on WHERE/JOIN
-  query usage and cardinality. Requires fct_snowflake__table_clustering_candidates
-  to build first — its post-hook populates int_snowflake__column_cardinality before
-  this model runs. Known limitation: column aliasing in query_text is not detected.
+  Top 3 clustering key recommendations per candidate table, scored on confirmed
+  Filter/Join operator usage (from GET_QUERY_OPERATOR_STATS) and cardinality.
+
+  Requires fct_snowflake__table_clustering_candidates to build first — its
+  post-hooks populate int_snowflake__column_cardinality and
+  int_snowflake__query_operator_columns before this model runs.
+
+  Scoring formula:
+    - filter_query_count * 3 (WHERE predicates = strongest clustering signal)
+    - join_query_count * 1   (JOIN co-location = secondary benefit)
+    - cardinality_bonus: +10 when avg_rows_per_value between 100 and 10000
+      (sweet spot for micropartition grouping — neither too unique nor too few values)
+
+  Enterprise+ only (operator stats require ACCESS_HISTORY for query discovery).
+  Standard edition falls back to query_text ILIKE matching (less accurate).
 --#}
 {{
   config(
@@ -57,28 +68,27 @@ table_columns as (
 
 {% if is_enterprise %}
 column_usage as (
-    -- Enterprise+: ACCESS_HISTORY provides precise column→query attribution;
-    -- query_text matching is scoped to only queries that actually accessed the column.
+    -- Enterprise+: exact operator stats from GET_QUERY_OPERATOR_STATS
     select
         table_fqn,
         column_name,
-        sum(where_query_count) as where_query_count,
-        sum(join_query_count)  as join_query_count
-    from {{ ref('int_snowflake__column_query_stats') }}
+        count(distinct case when operator_type = 'Filter' then query_id end) as filter_query_count,
+        count(distinct case when operator_type = 'Join' then query_id end) as join_query_count
+    from {{ ref('int_snowflake__query_operator_columns') }}
     where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by table_fqn, column_name
 ),
 {% else %}
 column_usage as (
-    -- Standard: no ACCESS_HISTORY, so scope relevant queries by table name in
-    -- query_text, then apply WHERE/JOIN column matching against that subset.
+    -- Standard edition: no ACCESS_HISTORY or operator stats available.
+    -- Falls back to query_text ILIKE matching (less accurate, known false positives).
     select
         tc.table_fqn,
         tc.column_name,
         count(distinct case
             when qh.query_text ilike '%WHERE%' || tc.column_name || '%'
                 then qh.query_id
-        end) as where_query_count,
+        end) as filter_query_count,
         count(distinct case
             when qh.query_text ilike '%JOIN%'
                 and qh.query_text ilike '%ON%' || tc.column_name || '%'
@@ -101,8 +111,8 @@ scored as (
         tc.distinct_values,
         tc.cardinality_total_rows,
         tc.cardinality_calculated_at,
-        coalesce(cu.where_query_count, 0) as where_query_count,
-        coalesce(cu.join_query_count, 0)  as join_query_count,
+        coalesce(cu.filter_query_count, 0) as filter_query_count,
+        coalesce(cu.join_query_count, 0)   as join_query_count,
         case
             when tc.distinct_values is not null and tc.distinct_values > 0
                 then tc.cardinality_total_rows::float / tc.distinct_values
@@ -121,74 +131,67 @@ scored as (
 column_scored as (
     select
         *,
-        where_query_count + join_query_count as usage_count,
-        coalesce(avg_rows_per_value / nullif(cardinality_total_rows, 0) * 100, 0)
-            + (where_query_count + join_query_count) * 20 as column_score
+        filter_query_count + join_query_count as usage_count,
+        -- Scoring: filter usage weighted 3x (direct pruning), join 1x (co-location)
+        -- Cardinality bonus for sweet-spot grouping (100-10000 rows per value)
+        (filter_query_count * 3)
+            + (join_query_count * 1)
+            + case
+                when avg_rows_per_value between 100 and 10000 then 10
+                when avg_rows_per_value between 10 and 100000 then 5
+                else 0
+              end as column_score
     from scored
-    where where_query_count + join_query_count > 0
+    where filter_query_count + join_query_count > 0
 ),
 
 final as (
     select
-        -- snapshot metadata
         md5(
             to_varchar(current_date()) || '|' || coalesce(table_fqn, '') || '|' || coalesce(column_name, '')
         ) as clustering_key_candidate_snapshot_key,
         current_date()      as snapshot_date,
         current_timestamp() as analyzed_at,
-        -- table identity
         table_fqn,
         split_part(table_fqn, '.', 1) as database_name,
         split_part(table_fqn, '.', 2) as schema_name,
         split_part(table_fqn, '.', 3) as table_name,
         dbt_model,
-        -- column
         column_name,
         ordinal_position,
         data_type,
-        -- recommendation
         row_number() over (
             partition by table_fqn
             order by column_score desc
         ) as recommended_key_position,
-        -- scoring
         column_score,
-        -- cardinality
         distinct_values,
         avg_rows_per_value,
         cardinality_calculated_at,
-        -- usage
-        where_query_count,
+        filter_query_count,
         join_query_count,
         usage_count
     from column_scored
 )
 
 select
-    -- snapshot metadata
     clustering_key_candidate_snapshot_key,
     snapshot_date,
     analyzed_at,
-    -- table identity
     table_fqn,
     database_name,
     schema_name,
     table_name,
     dbt_model,
-    -- column
     column_name,
     ordinal_position,
     data_type,
-    -- recommendation
     recommended_key_position,
-    -- scoring
     column_score,
-    -- cardinality
     distinct_values,
     avg_rows_per_value,
     cardinality_calculated_at,
-    -- usage
-    where_query_count,
+    filter_query_count,
     join_query_count,
     usage_count
 from final
