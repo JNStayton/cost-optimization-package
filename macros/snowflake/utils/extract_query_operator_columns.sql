@@ -32,6 +32,7 @@
     {% set operator_table = ref('int_snowflake__query_operator_columns') %}
     {% set col_access_table = ref('int_snowflake__column_query_access') %}
     {% set table_columns_ref = ref('int_snowflake__table_columns') %}
+    {% set query_history_table = ref('int_snowflake__query_history') %}
 
     {{ log("extract_query_operator_columns: fetching top " ~ table_limit ~ " candidates...", info=true) }}
 
@@ -70,7 +71,7 @@
                       order by ca.query_start_time desc
                   ) as rn
               from {{ col_access_table }} as ca
-              inner join {{ source('snowflake_account_usage', 'query_history') }} as qh
+              inner join {{ query_history_table }} as qh
                   on ca.query_id = qh.query_id
               where ca.table_fqn = '{{ table_fqn }}'
                   and ca.query_start_time >= dateadd(day, -14, current_timestamp())

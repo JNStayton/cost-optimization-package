@@ -8,7 +8,8 @@
 select
     query_id, 
     start_time, 
-    query_hash, 
+    query_hash,
+    query_parameterized_hash,
     user_name,
     role_name,
     warehouse_name, 
