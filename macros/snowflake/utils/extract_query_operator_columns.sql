@@ -8,6 +8,11 @@
     refresh_column_cardinality. Processes representative queries for the top N
     candidate tables to build precise column-level filter/join evidence.
 
+    Query discovery includes the candidate table AND its direct downstream children
+    (from int_dbt__relations). This captures filter signal from analyst queries that
+    hit marts/facts built from the candidate — where WHERE/JOIN predicates actually
+    live in the execution plan.
+
     GET_QUERY_OPERATOR_STATS constraints:
       - Requires literal query_id (no variable or set-based input)
       - 14-day data retention
@@ -16,11 +21,12 @@
     Parsing approach (all in SQL):
       - Filter operators: extract filter_condition, match known column names via ILIKE
       - Join operators: extract equality_join_condition, match known column names via ILIKE
-      - Column names are matched against int_snowflake__table_columns for the target table
+      - Column names are matched against int_snowflake__table_columns for the CANDIDATE table
+        (not the child), ensuring only pass-through columns are attributed
 
     Variables:
       clustering_key_operator_analysis_table_limit (default 10) — max tables to analyze
-      clustering_key_operator_queries_per_table    (default 20) — representative queries per table
+      clustering_key_operator_queries_per_table    (default 20) — representative queries per candidate (budget shared across candidate + children)
   --#}
 
   {% if execute and target.type == 'snowflake' %}
@@ -33,6 +39,7 @@
     {% set col_access_table = ref('int_snowflake__column_query_access') %}
     {% set table_columns_ref = ref('int_snowflake__table_columns') %}
     {% set query_history_table = ref('int_snowflake__query_history') %}
+    {% set relations_table = ref('int_dbt__relations') %}
 
     {{ log("extract_query_operator_columns: fetching top " ~ table_limit ~ " candidates...", info=true) }}
 
@@ -59,7 +66,25 @@
 
         {{ log("extract_query_operator_columns: finding queries for " ~ table_fqn, info=true) }}
 
-        {# Step 2: Get representative query_ids — one per distinct parameterized hash #}
+        {# Step 1b: Find direct downstream children of this candidate #}
+        {% set children_sql %}
+          select table_fqn
+          from {{ relations_table }}
+          where array_contains('{{ table_fqn }}'::variant, parent_models)
+        {% endset %}
+
+        {% set children_result = run_query(children_sql) %}
+        {% set child_fqns = children_result.columns[0].values() if children_result and children_result.rows | length > 0 else [] %}
+
+        {# Build the IN list: candidate + children #}
+        {% set search_fqns = [table_fqn] %}
+        {% for child_fqn in child_fqns %}
+          {% do search_fqns.append(child_fqn) %}
+        {% endfor %}
+
+        {{ log("extract_query_operator_columns: searching across " ~ (search_fqns | length) ~ " FQNs (candidate + " ~ (child_fqns | length) ~ " children)", info=true) }}
+
+        {# Step 2: Get representative query_ids — one per distinct parameterized hash, pooled across candidate + children #}
         {% set queries_sql %}
           select query_id, query_start_time
           from (
@@ -73,7 +98,7 @@
               from {{ col_access_table }} as ca
               inner join {{ query_history_table }} as qh
                   on ca.query_id = qh.query_id
-              where ca.table_fqn = '{{ table_fqn }}'
+              where ca.table_fqn in ({% for fqn in search_fqns %}'{{ fqn }}'{% if not loop.last %}, {% endif %}{% endfor %})
                   and ca.query_start_time >= dateadd(day, -14, current_timestamp())
                   and qh.query_type = 'SELECT'
           )
@@ -87,7 +112,7 @@
 
           {{ log("extract_query_operator_columns: analyzing " ~ (queries_result.rows | length) ~ " queries for " ~ table_fqn, info=true) }}
 
-          {# Step 3: For each query_id, parse operators and merge matches #}
+          {# Step 3: For each query_id, parse operators and merge matches against CANDIDATE columns #}
           {% for q_row in queries_result %}
 
             {% set qid = q_row['QUERY_ID'] %}
@@ -137,7 +162,7 @@
           {{ log("extract_query_operator_columns: completed " ~ table_fqn ~ " (" ~ (queries_result.rows | length) ~ " queries)", info=true) }}
 
         {% else %}
-          {{ log("extract_query_operator_columns: no recent queries for " ~ table_fqn ~ ", skipping.", info=true) }}
+          {{ log("extract_query_operator_columns: no recent queries for " ~ table_fqn ~ " or children, skipping.", info=true) }}
         {% endif %}
 
       {% endfor %}
