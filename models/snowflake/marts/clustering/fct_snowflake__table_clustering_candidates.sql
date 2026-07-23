@@ -138,8 +138,12 @@ scored as (
         on lt.database_name = dm.database_name
         and lt.schema_name = dm.schema_name
         and lt.table_name = dm.table_name
-    left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
-        on rh.table_fqn = lt.database_name || '.' || lt.schema_name || '.' || lt.table_name
+    left join (
+        select table_fqn, max(node_id) as node_id
+        from {{ ref('int_snowflake__dbt_relation_history') }}
+        group by table_fqn
+    ) as rh
+        on rh.table_fqn = upper(lt.database_name || '.' || lt.schema_name || '.' || lt.table_name)
 ),
 
 final as (

@@ -133,9 +133,9 @@ all_recommendations as (
     select
         'warehouse' as domain,
         eq.query_hash as entity_name,
-        null as table_fqn,
+        dr_eq.table_fqn as table_fqn,
         eq.dbt_node_id as dbt_model,
-        null as model_name,
+        dr_eq.model_name as model_name,
         eq.warehouse_name,
         eq.recommendation,
         eq.recommendation_reason,
@@ -143,11 +143,7 @@ all_recommendations as (
         eq.total_credits_30d as score,
         eq.estimated_annual_cost_usd,
         eq.estimated_annual_cost_usd * 0.20 as estimated_annual_savings_usd,
-        '-- Model: ' || coalesce(eq.dbt_node_id, 'unknown')
-            || ' | Warehouse: ' || coalesce(eq.warehouse_name, 'unknown')
-            || ' | Annual cost: $' || round(eq.estimated_annual_cost_usd, 0)::varchar
-            || ' | Query hash: ' || eq.query_hash
-            || char(10) || '-- Review for: wide JOINs, missing filters, unnecessary columns, UNION vs UNION ALL' as actionable_sql,
+        null as actionable_sql,
         eq.snapshot_date,
         case
             when eq.recommendation like '%Monitor%' then 'monitor'
@@ -156,6 +152,8 @@ all_recommendations as (
         null as dbt_config_template,
         null as validate_uniqueness_sql
     from {{ ref('fct_snowflake__expensive_query_recommendations') }} as eq
+    left join {{ ref('int_dbt__relations') }} as dr_eq
+        on dr_eq.dbt_model = eq.dbt_node_id
 
     union all
 
@@ -180,13 +178,13 @@ all_recommendations as (
         (tm.select_count - 1) * tm.avg_query_duration_s
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as actionable_sql,
+        null as actionable_sql,
         tm.snapshot_date,
         case
             when tm.recommendation like '%Monitor%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        null as dbt_config_template,
+        '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as dbt_config_template,
         null as validate_uniqueness_sql
     from {{ ref('fct_snowflake__table_materialization_candidates_v2') }} as tm
     -- Use the warehouse that queries this view most (approximation: use any available rate)
@@ -227,18 +225,20 @@ all_recommendations as (
             * coalesce(ic.rebuild_redundancy_rate, 0.5)
             * coalesce(wr.credits_per_second, 0.000278)
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        '-- Convert to incremental materialization (see incremental_config_recommendations for template)' as actionable_sql,
+        null as actionable_sql,
         ic.snapshot_date,
         case
             when ic.recommendation like '%Monitor%' or ic.recommendation like '%Insufficient%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        icr_lookup.dbt_config_template as dbt_config_template,
+        icr_lookup.validate_uniqueness_sql
     from {{ ref('fct_snowflake__incremental_materialization_candidates') }} as ic
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
+    left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr_lookup
+        on icr_lookup.table_fqn = ic.table_fqn
     where ic.recommendation not like '%Insufficient%'
 
     union all
@@ -267,7 +267,7 @@ all_recommendations as (
             * coalesce(icr.rebuild_redundancy_rate, 0.5)
             * coalesce(wr.credits_per_second, 0.000278)
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        icr.dbt_config_template as actionable_sql,
+        null as actionable_sql,
         icr.snapshot_date,
         'actionable' as backlog_status,
         icr.dbt_config_template,
@@ -306,10 +306,10 @@ all_recommendations as (
             * greatest(tc.scan_ratio_pct / 100.0 - 0.2, 0)
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        'ALTER TABLE ' || tc.table_fqn || ' CLUSTER BY (' || coalesce(tc.clustering_key, '<recommended_columns>') || ');' as actionable_sql,
+        null as actionable_sql,
         tc.snapshot_date,
         'actionable' as backlog_status,
-        null as dbt_config_template,
+        '{% raw %}{{ config(cluster_by=[{% endraw %}' || coalesce('''' || replace(tc.clustering_key, ', ', ''', ''') || '''', '''<recommended_columns>''') || '{% raw %}]) }}{% endraw %}' as dbt_config_template,
         null as validate_uniqueness_sql
     from {{ ref('fct_snowflake__table_clustering_candidates') }} as tc
     left join warehouse_rates as wr on wr.warehouse_name = (

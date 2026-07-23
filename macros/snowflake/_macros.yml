@@ -10,10 +10,10 @@ macros:
       Identifies tables that would benefit from clustering based on size,
       query volume, and scan ratio. Run via dbt run-operation.
     arguments:
-      - name: min_size_gb
-        description: "Minimum table size in GB to consider (default: 100)"
       - name: lookback_days
         description: "Days of query history to analyze (default: 7)"
+      - name: ignore_table_size
+        description: "When true, skips the minimum size filter (default: false)"
 
   - name: suggest_clustering_keys
     description: >
