@@ -70,15 +70,15 @@ all_recommendations as (
             when ws.recommendation like 'Scale up%'
                 then 'ALTER WAREHOUSE ' || ws.warehouse_name || ' SET WAREHOUSE_SIZE = ''MEDIUM'';'
             else null
-        end as actionable_sql,
+        end as snowflake_ddl,
         ws.snapshot_date,
         case
             when ws.recommendation like '%Stable%' then 'stable'
             when ws.recommendation like '%Monitor%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__warehouse_sizing_recommendations') }} as ws
     where ws.recommendation not like 'Stable%'
 
@@ -113,14 +113,14 @@ all_recommendations as (
             when sp.total_gb_spilled_remote > 0
                 then 'ALTER WAREHOUSE ' || coalesce(sp.warehouse_name, '<warehouse>') || ' SET WAREHOUSE_SIZE = ''LARGE''; -- or refactor SQL'
             else '-- Review model SQL for wide joins, missing filters, or unnecessary columns'
-        end as actionable_sql,
+        end as snowflake_ddl,
         sp.snapshot_date,
         case
             when sp.recommendation like '%Monitor%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__warehouse_spillage_recommendations') }} as sp
     left join warehouse_rates as wr on wr.warehouse_name = sp.warehouse_name
     where sp.recommendation not like 'Not available%'
@@ -143,14 +143,14 @@ all_recommendations as (
         eq.total_credits_30d as score,
         eq.estimated_annual_cost_usd,
         eq.estimated_annual_cost_usd * 0.20 as estimated_annual_savings_usd,
-        null as actionable_sql,
+        null as snowflake_ddl,
         eq.snapshot_date,
         case
             when eq.recommendation like '%Monitor%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__expensive_query_recommendations') }} as eq
     left join {{ ref('int_dbt__relations') }} as dr_eq
         on dr_eq.dbt_model = eq.dbt_node_id
@@ -178,14 +178,14 @@ all_recommendations as (
         (tm.select_count - 1) * tm.avg_query_duration_s
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        null as actionable_sql,
+        null as snowflake_ddl,
         tm.snapshot_date,
         case
             when tm.recommendation like '%Monitor%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as dbt_config_template,
-        null as validate_uniqueness_sql
+        '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__table_materialization_candidates_v2') }} as tm
     -- Use the warehouse that queries this view most (approximation: use any available rate)
     left join warehouse_rates as wr on wr.warehouse_name = (
@@ -225,14 +225,14 @@ all_recommendations as (
             * coalesce(ic.rebuild_redundancy_rate, 0.5)
             * coalesce(wr.credits_per_second, 0.000278)
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        null as actionable_sql,
+        null as snowflake_ddl,
         ic.snapshot_date,
         case
             when ic.recommendation like '%Monitor%' or ic.recommendation like '%Insufficient%' then 'monitor'
             else 'actionable'
         end as backlog_status,
-        icr_lookup.dbt_config_template as dbt_config_template,
-        icr_lookup.validate_uniqueness_sql
+        icr_lookup.dbt_model_config as dbt_model_config,
+        icr_lookup.identified_unique_key
     from {{ ref('fct_snowflake__incremental_materialization_candidates') }} as ic
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
@@ -267,11 +267,11 @@ all_recommendations as (
             * coalesce(icr.rebuild_redundancy_rate, 0.5)
             * coalesce(wr.credits_per_second, 0.000278)
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        null as actionable_sql,
+        null as snowflake_ddl,
         icr.snapshot_date,
         'actionable' as backlog_status,
-        icr.dbt_config_template,
-        icr.validate_uniqueness_sql
+        icr.dbt_model_config,
+        icr.identified_unique_key
     from {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
@@ -306,11 +306,11 @@ all_recommendations as (
             * greatest(tc.scan_ratio_pct / 100.0 - 0.2, 0)
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
-        null as actionable_sql,
+        null as snowflake_ddl,
         tc.snapshot_date,
         'actionable' as backlog_status,
-        '{% raw %}{{ config(cluster_by=[{% endraw %}' || coalesce('''' || replace(tc.clustering_key, ', ', ''', ''') || '''', '''<recommended_columns>''') || '{% raw %}]) }}{% endraw %}' as dbt_config_template,
-        null as validate_uniqueness_sql
+        '{% raw %}{{ config(cluster_by=[{% endraw %}' || coalesce('''' || replace(tc.clustering_key, ', ', ''', ''') || '''', '''<recommended_columns>''') || '{% raw %}]) }}{% endraw %}' as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__table_clustering_candidates') }} as tc
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
@@ -340,14 +340,14 @@ all_recommendations as (
         ai.total_credits as score,
         ai.projected_annual_cost_usd as estimated_annual_cost_usd,
         case when ai.wow_trend = 'Growing' then ai.projected_annual_cost_usd * 0.15 else null end as estimated_annual_savings_usd,
-        '-- Review AI usage patterns and consider model downgrades or batch processing' as actionable_sql,
+        '-- Review AI usage patterns and consider model downgrades or batch processing' as snowflake_ddl,
         ai.snapshot_date,
         case
             when ai.wow_trend in ('Growing', 'New') then 'monitor'
             else 'stable'
         end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__ai_spend_overview') }} as ai
     where ai.wow_trend in ('Growing', 'New')
 
@@ -378,11 +378,11 @@ all_recommendations as (
             when amc.recommendation like '%caching%' then amc.projected_annual_cost_usd * 0.20
             else null
         end as estimated_annual_savings_usd,
-        '-- Review model usage: ' || amc.model_name || ' / ' || coalesce(amc.function_name, 'all') as actionable_sql,
+        '-- Review model usage: ' || amc.model_name || ' / ' || coalesce(amc.function_name, 'all') as snowflake_ddl,
         amc.snapshot_date,
         case when amc.recommendation like '%Monitor%' then 'stable' else 'actionable' end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__ai_model_cost_recommendations') }} as amc
     where amc.recommendation not like '%Monitor%'
 
@@ -413,11 +413,11 @@ all_recommendations as (
             when ate.recommendation like '%ratio%' or ate.recommendation like '%prompt%' then ate.projected_annual_cost_usd * 0.30
             else null
         end as estimated_annual_savings_usd,
-        '-- Review token efficiency: ' || ate.model_name || ' / ' || coalesce(ate.query_pattern, 'untagged') as actionable_sql,
+        '-- Review token efficiency: ' || ate.model_name || ' / ' || coalesce(ate.query_pattern, 'untagged') as snowflake_ddl,
         ate.snapshot_date,
         case when ate.recommendation like '%efficient%' then 'stable' else 'actionable' end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__ai_token_efficiency_recommendations') }} as ate
     where ate.recommendation not like '%efficient%'
 
@@ -448,11 +448,11 @@ all_recommendations as (
             when aao.recommendation like '%per-request%' then aao.projected_annual_cost_usd * 0.30
             else null
         end as estimated_annual_savings_usd,
-        '-- Review agent: ' || aao.agent_fqn as actionable_sql,
+        '-- Review agent: ' || aao.agent_fqn as snowflake_ddl,
         aao.snapshot_date,
         case when aao.recommendation like '%Healthy%' then 'stable' else 'actionable' end as backlog_status,
-        null as dbt_config_template,
-        null as validate_uniqueness_sql
+        null as dbt_model_config,
+        null as identified_unique_key
     from {{ ref('fct_snowflake__ai_agent_optimization_recommendations') }} as aao
     where aao.recommendation not like '%Healthy%'
 ),
@@ -465,18 +465,18 @@ enriched as (
         ar.table_fqn,
         ar.dbt_model,
         ar.model_name,
-        coalesce(ar.warehouse_name, nullif(dr.warehouse_name, '')) as warehouse_name,
+        coalesce(ar.warehouse_name, build_wh.build_warehouse_name) as warehouse_name,
         ar.recommendation,
         ar.recommendation_reason,
         ar.effort_category,
         ar.score,
         ar.estimated_annual_cost_usd,
         ar.estimated_annual_savings_usd,
-        ar.actionable_sql,
+        ar.snowflake_ddl,
         ar.snapshot_date,
         ar.backlog_status,
-        ar.dbt_config_template,
-        ar.validate_uniqueness_sql,
+        ar.dbt_model_config,
+        ar.identified_unique_key,
         coalesce(rh.node_id, ar.dbt_model) as node_id,
         coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2)) as node_project_name,
         coalesce(rh.model_name, ar.model_name) as node_model_name,
@@ -493,9 +493,18 @@ enriched as (
     ) as rh_fallback
         on rh_fallback.node_id = ar.dbt_model
         and rh.dbt_cloud_environment_id is null
-    -- Warehouse fallback: get configured warehouse from dbt model graph
-    left join {{ ref('int_dbt__relations') }} as dr
-        on dr.dbt_model = ar.dbt_model
+    -- Warehouse fallback: most common warehouse that built this model (from query_history comments)
+    left join (
+        select
+            parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
+            mode(warehouse_name) as build_warehouse_name
+        from {{ ref('int_snowflake__query_history') }}
+        where query_text like '%node_id%'
+            and query_start_time >= dateadd(day, -30, current_timestamp())
+            and warehouse_name is not null
+        group by 1
+    ) as build_wh
+        on build_wh.node_id = ar.dbt_model
         and ar.warehouse_name is null
 )
 

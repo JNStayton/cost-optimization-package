@@ -11,8 +11,8 @@
 
     When a likely unique key is confirmed it updates:
       - likely_unique_key       — the confirmed column name
-      - validate_uniqueness_sql — re-pointed to the confirmed column
-      - dbt_config_template     — unique_key parameter swapped to confirmed column
+      - identified_unique_key — re-pointed to the confirmed column
+      - dbt_model_config     — unique_key parameter swapped to confirmed column
 
     When no single-column unique key is found and the initial strategy was
     delete+insert or merge, downgrades to append and updates:
@@ -20,7 +20,7 @@
       - strategy_notes          — explains the downgrade and provides next steps
                                   (surrogate key path via dbt_utils.generate_surrogate_key,
                                    incremental_predicates path for clean date windows)
-      - dbt_config_template     — rebuilt as an append config template
+      - dbt_model_config     — rebuilt as an append config template
 
     append is the safe default when no unique key is confirmed: its failure mode
     (visible duplicates) is preferable to silent data corruption from merge or
@@ -100,9 +100,9 @@
             update {{ this }}
             set
               likely_unique_key       = '{{ ns.confirmed_key }}',
-              validate_uniqueness_sql = '{{ new_validate_sql }}',
-              dbt_config_template     = replace(
-                dbt_config_template,
+              identified_unique_key = '{{ ns.confirmed_key }}',
+              dbt_model_config     = replace(
+                dbt_model_config,
                 'unique_key=''' || '{{ old_key_in_template }}' || '''',
                 'unique_key=''' || '{{ ns.confirmed_key }}' || ''''
               )
@@ -142,7 +142,7 @@
               set
                 incremental_strategy = 'append',
                 strategy_notes       = '{{ downgrade_note | replace("'", "''") }}',
-                dbt_config_template  = '{{ append_template | replace("'", "''") }}'
+                dbt_model_config  = '{{ append_template | replace("'", "''") }}'
               where table_fqn = '{{ table_fqn }}'
             {% endset %}
 

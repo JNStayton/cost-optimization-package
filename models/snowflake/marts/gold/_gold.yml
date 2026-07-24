@@ -38,7 +38,7 @@ models:
         description: Effort required — used for sprint planning grouping
       - name: backlog_status
         description: Current status (actionable, monitor, stable)
-      - name: actionable_sql
+      - name: snowflake_ddl
         description: Ready-to-execute SQL or dbt config change
 
   - name: vw_snowflake__cross_domain_insights
@@ -66,9 +66,9 @@ models:
     columns:
       - name: suggested_clustering_key
         description: Recommended clustering columns from clustering_key_candidates (e.g., 'order_date, customer_id')
-      - name: dbt_config_template
+      - name: dbt_model_config
         description: Full dbt config block for incremental conversion (when applicable)
-      - name: validate_uniqueness_sql
+      - name: identified_unique_key
         description: SQL to validate unique key before applying incremental config
       - name: environment_ids
         description: Array of dbt_cloud_environment_ids where this model exists

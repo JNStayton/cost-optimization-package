@@ -451,26 +451,23 @@ models:
           First column in unique_key_candidates confirmed as likely unique by the
           probe_unique_key_candidates post-hook (APPROX_COUNT_DISTINCT / COUNT(*) >= threshold).
           Null when no single-column unique key is found — indicates a composite or
-          surrogate key is needed. The dbt_config_template and validate_uniqueness_sql
+          surrogate key is needed. The dbt_model_config and identified_unique_key
           are updated to reference this column when populated.
 
       - name: strategy_notes
         description: Human-readable rationale for the recommended strategy, including key column names and any caveats.
 
-      - name: validate_uniqueness_sql
+      - name: identified_unique_key
         description: >
-          SQL snippet to run against the candidate table to confirm unique key suitability.
-          Returns is_unique = TRUE when the column has no duplicates. Updated by the
-          post-hook to reference likely_unique_key when confirmed. Null when no
-          unique key candidate was detected.
+          The detected unique key column for the recommended incremental strategy.
+          Null for append strategy (no unique key needed) or when no candidate was detected.
 
-      - name: dbt_config_template
+      - name: dbt_model_config
         description: >
           Copy-pasteable dbt config block and is_incremental() filter for the
-          recommended strategy, with detected column names pre-filled. Updated by
-          the post-hook to use likely_unique_key when confirmed. Replace the existing
+          recommended strategy, with detected column names pre-filled. Replace the existing
           config() block at the top of your model file. For microbatch, set the begin
-          date manually. Placeholders (<unique_key>) appear when no candidate was confirmed.
+          date manually.
 
   - name: fct_snowflake__table_materialization_candidates_v2
     description: >

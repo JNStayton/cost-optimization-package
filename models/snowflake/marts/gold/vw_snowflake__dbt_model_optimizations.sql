@@ -66,10 +66,14 @@ select
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
     score,
-    actionable_sql,
+    snowflake_ddl,
     suggested_clustering_key,
-    dbt_config_template,
-    validate_uniqueness_sql,
+    case
+        when domain = 'clustering' and suggested_clustering_key is not null
+            then '{% raw %}{{ config(cluster_by=[{% endraw %}''' || replace(suggested_clustering_key, ', ', ''', ''') || '''{% raw %}]) }}{% endraw %}'
+        else dbt_model_config
+    end as dbt_model_config,
+    identified_unique_key,
     environment_count,
     environment_ids,
     target_name,

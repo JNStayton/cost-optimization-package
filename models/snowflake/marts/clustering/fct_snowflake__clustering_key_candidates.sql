@@ -78,6 +78,16 @@ column_usage as (
     where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by table_fqn, column_name
 ),
+
+total_queries_per_table as (
+    -- Total distinct queries analyzed per candidate table (for proportion gating)
+    select
+        table_fqn,
+        count(distinct query_id) as total_queries_analyzed
+    from {{ ref('int_snowflake__query_operator_columns') }}
+    where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by table_fqn
+),
 {% else %}
 column_usage as (
     -- Standard edition: no ACCESS_HISTORY or operator stats available.
@@ -113,6 +123,7 @@ scored as (
         tc.cardinality_calculated_at,
         coalesce(cu.filter_query_count, 0) as filter_query_count,
         coalesce(cu.join_query_count, 0)   as join_query_count,
+        coalesce(tqa.total_queries_analyzed, 0) as total_queries_analyzed,
         case
             when tc.distinct_values is not null and tc.distinct_values > 0
                 then tc.cardinality_total_rows::float / tc.distinct_values
@@ -126,6 +137,10 @@ scored as (
     left join column_usage as cu
         on tc.table_fqn = cu.table_fqn
         and tc.column_name = cu.column_name
+    {% if is_enterprise %}
+    left join total_queries_per_table as tqa
+        on tc.table_fqn = tqa.table_fqn
+    {% endif %}
 ),
 
 column_scored as (
@@ -143,6 +158,8 @@ column_scored as (
               end as column_score
     from scored
     where filter_query_count + join_query_count > 0
+        -- Proportion gate: column must be used in >= 25% of analyzed queries
+        and (filter_query_count + join_query_count)::float / nullif(total_queries_analyzed, 0) >= 0.25
 ),
 
 final as (

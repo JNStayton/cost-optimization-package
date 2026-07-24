@@ -38,13 +38,48 @@ stg_snowflake__access_       ──► int_snowflake__query_         │      st
 | `int_snowflake__table_inventory` | Joins table metadata with storage metrics. Produces one row per active table with size, row count, micropartition estimate, and clustering state. |
 | `int_snowflake__table_query_stats_daily` | Daily aggregated query statistics per table. Attribution uses ACCESS_HISTORY (Enterprise) or `query_text` matching (Standard). |
 | `int_snowflake__query_table_access` | Flattens ACCESS_HISTORY into one row per (query, table) for exact object-level attribution. Enterprise only. |
-| `int_dbt__relations` | Compile-time mapping from dbt model metadata to physical relation names. Used to attribute results back to dbt models. |
+| `int_snowflake__query_operator_columns` | Stores parsed Filter/Join column references from GET_QUERY_OPERATOR_STATS. Populated by the `extract_query_operator_columns` macro. |
+| `int_dbt__relations` | Compile-time mapping from dbt model metadata to physical relation names. Used to attribute results back to dbt models and find downstream children for operator analysis. |
 
 The fact references the Snowflake-specific intermediate models directly.
 
 ### Fact model
 
 **`fct_snowflake__table_clustering_candidates`** is the final output. It is an incremental model (merge strategy, one snapshot per day) that scores tables and flags clustering candidates based on query activity, table size, and partition efficiency.
+
+**Post-hooks (execute in order after the fact model builds):**
+
+1. **`refresh_column_cardinality()`** — profiles APPROX_COUNT_DISTINCT for columns on the top N candidate tables
+2. **`extract_query_operator_columns()`** — analyzes query plan operators (GET_QUERY_OPERATOR_STATS) to identify which columns are used in Filter/Join conditions
+
+**`fct_snowflake__clustering_key_candidates`** runs after the post-hooks and uses both cardinality and operator data to score individual columns and recommend clustering keys.
+
+### Clustering key pipeline
+
+```
+fct_snowflake__table_clustering_candidates (identifies WHICH tables)
+    │
+    ├─ post-hook: refresh_column_cardinality()
+    │   └─ writes to: int_snowflake__column_cardinality
+    │
+    ├─ post-hook: extract_query_operator_columns()
+    │   ├─ reads: int_snowflake__column_query_access (candidate + child FQNs)
+    │   ├─ reads: int_snowflake__query_history (parameterized hash dedup)
+    │   ├─ reads: int_dbt__relations (downstream children lookup)
+    │   ├─ calls: GET_QUERY_OPERATOR_STATS per query_id
+    │   └─ writes to: int_snowflake__query_operator_columns
+    │
+    └─► fct_snowflake__clustering_key_candidates (scores WHICH columns)
+        ├─ reads: int_snowflake__query_operator_columns (filter/join evidence)
+        ├─ reads: int_snowflake__column_cardinality (cardinality profiles)
+        └─ applies: 25% proportion gate (column must appear in >= 25% of analyzed queries)
+```
+
+**Downstream children expansion:** The extract macro doesn't only look at queries that directly accessed the candidate table — it also finds queries against the candidate's direct child models (from `int_dbt__relations.parent_models`). This captures filter evidence from analyst queries hitting downstream marts that read from the candidate.
+
+**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter or Join operators in >= 25% of the analyzed queries. This prevents low-signal columns (used in a single query) from being surfaced as recommendations.
+
+**Scoring formula:** `filter_query_count * 3 + join_query_count * 1 + cardinality_bonus` where the cardinality bonus rewards columns with 100-10000 rows per distinct value (sweet spot for micropartition grouping).
 
 ---
 

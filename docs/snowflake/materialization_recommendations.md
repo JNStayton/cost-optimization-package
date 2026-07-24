@@ -179,8 +179,8 @@ For the full strategy decision matrix, key column detection logic, implementatio
 | `suggested_filter_column` | Best timestamp/date column for incremental filter |
 | `best_unique_key` | Top candidate by naming convention (unconfirmed) |
 | `likely_unique_key` | Cardinality-confirmed unique key (populated by post-hook) |
-| `dbt_config_template` | Copy-pasteable dbt model config block |
-| `validate_uniqueness_sql` | SQL to manually verify key uniqueness |
+| `dbt_model_config` | Copy-pasteable dbt model config block |
+| `identified_unique_key` | SQL to manually verify key uniqueness |
 | `strategy_notes` | Explanation of strategy choice and next steps |
 
 ### Variables
@@ -241,7 +241,7 @@ select
     incremental_strategy,
     suggested_filter_column,
     likely_unique_key,
-    dbt_config_template,
+    dbt_model_config,
     strategy_notes
 from <your_schema>.fct_snowflake__incremental_config_recommendations
 where likely_unique_key is not null

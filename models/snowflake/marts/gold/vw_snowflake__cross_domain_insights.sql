@@ -131,9 +131,9 @@ select
             then 'Convert to incremental'
         when mst.has_clustering_candidate
             then 'Add clustering key'
-        when mst.has_spillage
-            then 'Resize warehouse or optimize SQL'
-        else 'Refactor SQL'
+        when mst.has_spillage and mst.signal_count = 1
+            then 'Upsize warehouse'
+        else 'Investigate query patterns'
     end as primary_recommendation,
     case
         when mst.has_materialization_candidate or mst.is_in_view_chain then 'materialization'
@@ -143,15 +143,17 @@ select
     end as primary_domain,
     case
         when mst.is_in_view_chain and mst.has_spillage
-            then 'View recomputation creates large intermediate results that spill downstream'
+            then 'View recomputation creates large intermediate results that spill — high warehouse impact'
         when mst.has_incremental_candidate and mst.has_spillage
-            then 'Full table rebuilds overflow memory because the entire dataset is processed each run'
+            then 'Full table rebuilds overflow memory — high warehouse impact'
         when mst.has_incremental_candidate and mst.has_expensive_query
             then 'Query is expensive because it rebuilds the full table every run'
         when mst.has_clustering_candidate and mst.has_expensive_query
             then 'Expensive queries scan the full table because it lacks clustering'
         when mst.has_clustering_candidate and mst.has_spillage
-            then 'Full table scans cause both poor pruning and memory overflow'
+            then 'Full table scans cause both poor pruning and memory overflow — high warehouse impact'
+        when mst.has_spillage and mst.signal_count = 1
+            then 'Spillage without other domain signals — warehouse capacity insufficient for workload'
         else 'Multiple optimization signals detected — compound inefficiency'
     end as root_cause,
     case
@@ -161,9 +163,9 @@ select
             then 'Convert to incremental — smaller working set resolves secondary issues'
         when mst.has_clustering_candidate
             then 'Add clustering key — reduces scan volume and downstream compute'
-        when mst.has_spillage
-            then 'Scale up warehouse or refactor SQL to reduce intermediate result size'
-        else 'Review query SQL for optimization opportunities'
+        when mst.has_spillage and mst.signal_count = 1
+            then 'Upsize warehouse — no structural optimization available'
+        else 'Investigate query patterns for root cause'
     end as recommended_action,
     current_date() as snapshot_date
 from multi_signal_tables as mst

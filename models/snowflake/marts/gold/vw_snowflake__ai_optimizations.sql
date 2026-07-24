@@ -33,7 +33,7 @@ select
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
     score,
-    actionable_sql,
+    snowflake_ddl,
     snapshot_date
 from ranked
 where dedup_rank = 1

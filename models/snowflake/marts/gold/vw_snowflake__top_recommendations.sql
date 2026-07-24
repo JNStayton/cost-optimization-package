@@ -46,7 +46,6 @@ ranked as (
 select
     dense_rank() over (order by estimated_annual_savings_usd desc nulls last, score desc) as priority_rank,
     domain,
-    effort_category,
     node_id,
     coalesce(node_model_name, model_name) as model_name,
     node_project_name as project_name,
@@ -56,11 +55,6 @@ select
     recommendation_reason,
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
-    score,
-    actionable_sql,
-    environment_count,
-    environment_ids,
-    target_name,
     snapshot_date
 from ranked
 where env_rank = 1

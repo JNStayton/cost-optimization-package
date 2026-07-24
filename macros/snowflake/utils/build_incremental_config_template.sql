@@ -5,7 +5,7 @@
 
   Returns: A SQL CASE expression that builds a multi-line string containing a
   ready-to-use dbt model config block + is_incremental() filter. The output is
-  stored in the `dbt_config_template` column for end-users to copy into their models.
+  stored in the `dbt_model_config` column for end-users to copy into their models.
 
   Column contract (must exist in the calling CTE):
     - incremental_strategy  (text: 'merge', 'delete+insert', 'microbatch', 'append')

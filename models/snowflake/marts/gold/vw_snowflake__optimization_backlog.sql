@@ -56,9 +56,14 @@ select
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
     score,
-    actionable_sql,
-    dbt_config_template,
-    validate_uniqueness_sql,
+    snowflake_ddl,
+    dbt_model_config,
+    identified_unique_key,
+    case
+        when snowflake_ddl is not null then 'snowflake_ddl'
+        when dbt_model_config is not null then 'dbt_config'
+        else 'investigation'
+    end as action_type,
     environment_count,
     environment_ids,
     target_name,

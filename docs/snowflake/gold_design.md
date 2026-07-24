@@ -19,7 +19,7 @@ It transforms raw domain-specific recommendations (warehouse sizing, spillage, m
 | Audience | What they need | How they consume |
 |----------|---------------|-----------------|
 | **Humans** (platform engineers, analytics engineers) | Ranked action items, dollar estimates, quick wins highlighted | Dashboard tiles, filtered views, drill-downs |
-| **Agents** (Cortex Agents, CI automation, ticket bots) | Structured fields, self-contained rows, node_id for code navigation | SQL queries against gold views, actionable_sql field for auto-apply |
+| **Agents** (Cortex Agents, CI automation, ticket bots) | Structured fields, self-contained rows, node_id for code navigation | SQL queries against gold views, snowflake_ddl/dbt_model_config fields for auto-apply |
 
 ---
 
@@ -33,20 +33,18 @@ It transforms raw domain-specific recommendations (warehouse sizing, spillage, m
 |--------|------|-------------|
 | `priority_rank` | int | Dense rank by `estimated_annual_savings_usd` DESC |
 | `domain` | string | warehouse / materialization / clustering / ai |
-| `effort_category` | string | config_change / sql_refactor / architecture |
 | `node_id` | string | Logical dbt model identifier (nullable) |
 | `model_name` | string | Human-readable model name |
+| `project_name` | string | dbt project name |
 | `table_fqn` | string | Physical relation |
-| `warehouse_name` | string | Relevant warehouse (for warehouse domain recs) |
+| `warehouse_name` | string | Relevant warehouse (build warehouse for model recs) |
 | `recommendation` | string | Short action text |
 | `recommendation_reason` | string | Detailed evidence with metrics |
 | `estimated_annual_cost_usd` | float | "If unchanged, expect this yearly cost" |
 | `estimated_annual_savings_usd` | float | "If fixed, save this amount yearly" |
-| `score` | float | Domain-specific impact score (not normalized across domains) |
-| `actionable_sql` | string | DDL/config snippet to apply the fix |
 | `snapshot_date` | date | When this analysis was produced |
 
-Filters out "Monitor" and "Stable" recommendations. Only actionable items appear.
+Filters out "Monitor" and "Stable" recommendations. Only actionable items appear. Pure cost-ranked — no effort or environment detail (drill into backlog for that).
 
 ---
 
@@ -76,8 +74,10 @@ Expected output: 4-5 rows (one per domain with data).
 Same columns as `top_recommendations` plus:
 - Includes ALL tiers (actionable + "Monitor" + "Stable")
 - `backlog_status`: actionable / monitor / stable
-- `dbt_config_template`: from incremental config recs (the ready-to-paste config block)
-- `validate_uniqueness_sql`: from incremental config recs (the test query)
+- `dbt_model_config`: copy-pasteable dbt config block (goes in your model file)
+- `snowflake_ddl`: SQL to execute directly in Snowflake (ALTER WAREHOUSE, etc.)
+- `identified_unique_key`: detected unique key name for merge incrementals
+- `action_type`: 'snowflake_ddl' / 'dbt_config' / 'investigation' — makes clear which column to use
 
 Ordered by: `effort_category ASC` (quick wins first), then `estimated_annual_savings_usd DESC`.
 
@@ -94,8 +94,8 @@ An agent should be able to pick any row from this view and:
 
 Key columns beyond the standard set:
 - `suggested_clustering_key`: ready-to-use clustering key columns (e.g., "order_date, customer_id")
-- `dbt_config_template`: copy-paste incremental config block
-- `validate_uniqueness_sql`: SQL to verify unique key before implementing
+- `dbt_model_config`: copy-paste config block (materialization, incremental, cluster_by)
+- `identified_unique_key`: detected unique key name for merge incrementals
 - `environment_ids`: array of dbt_cloud_environment_ids where this model exists
 
 ---
@@ -107,6 +107,7 @@ Key columns beyond the standard set:
 Key columns beyond the standard set:
 - `warehouse_current_size`: authoritative size from WAREHOUSE_EVENTS_HISTORY
 - `warehouse_category`: standard / gen2 / multi_cluster / adaptive
+- `symptom`: taxonomy of warehouse issues (idle_credit_consumption, queued_provisioning, query_overload, compute_inefficiency, spillage_overflow, query_cost_growth)
 
 ---
 
@@ -135,8 +136,10 @@ Primary recommendation hierarchy:
 1. Materialize as table (resolves cascading effects)
 2. Convert to incremental (resolves rebuild waste)
 3. Add clustering (resolves scan inefficiency)
-4. Resize warehouse (config-level fix)
-5. Refactor SQL (highest effort)
+4. Upsize warehouse (spillage alone, no other signals — warehouse capacity insufficient)
+5. Investigate query patterns (fallback when no clear structural fix)
+
+Note: Spillage is treated as an **amplifier**, not a standalone domain recommendation. When spillage co-occurs with another signal, it elevates that signal's urgency (marked as "high warehouse impact" in root_cause) rather than becoming the primary recommendation.
 
 ---
 
@@ -258,7 +261,7 @@ Each recommendation is classified into one of three effort categories:
 | Warehouse sizing | Enable Gen2 | `ALTER WAREHOUSE <name> SET RESOURCE_CONSTRAINT = 'STANDARD_GEN_2'` |
 | Warehouse sizing | Enable MCW | `ALTER WAREHOUSE <name> SET MIN_CLUSTER_COUNT = 1 MAX_CLUSTER_COUNT = <n>` |
 | Materialization v2 | Materialize as TABLE | `{{ config(materialized='table') }}` |
-| Incremental config | Strategy recommended (with template) | The `dbt_config_template` column has the ready-to-paste block |
+| Incremental config | Strategy recommended (with template) | The `dbt_model_config` column has the ready-to-paste block |
 | Clustering candidates | Add clustering key | `ALTER TABLE <fqn> CLUSTER BY (<recommended_keys>)` |
 | AI spend | Model downgrade | Change model name in application code |
 | Warehouse sizing | Reduce auto-suspend | `ALTER WAREHOUSE <name> SET AUTO_SUSPEND = 60` |

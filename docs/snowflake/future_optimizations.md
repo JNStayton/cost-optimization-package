@@ -4,6 +4,61 @@ This document tracks Snowflake features that are in preview or recently GA'd tha
 
 ---
 
+## Development Backlog
+
+Items below are validated as valuable but deferred from the initial release. Ordered roughly by expected impact.
+
+### Deeper warehouse signals
+- **Unhealthy join detection** — use GET_QUERY_OPERATOR_STATS Join operator output size to identify exploding/cartesian joins
+- **Write amplification metric** — derive from DML row count vs table growth rate; signals incremental config tweaks
+- **Exploding joins** — flag queries where join output rows >> input rows (fanout indicator)
+
+### Expensive query root cause mapping
+- Map expensive queries to a specific symptom (spillage? full scan? cartesian?) instead of null actionable output
+- Point to the relevant domain fix (clustering, materialization, warehouse resize) based on root cause
+
+### Multi-level downstream lineage for clustering key discovery
+- Current: 1-level children only (direct parents in `int_dbt__relations`)
+- Future: recursive traversal for long DAGs where filter queries land 2+ hops downstream
+
+### Report card views
+- Top expensive builds (by credit cost per run)
+- Top queried models (by SELECT frequency)
+- Top spillage models (by GB spilled)
+- Storage growth trends (month-over-month by schema)
+
+### Storage optimization domain
+- Unused/zombie tables (large, never queried)
+- Time-travel cost analysis (retention settings vs actual usage)
+- Transient vs permanent recommendations (rebuildable intermediates → transient)
+- Incremental growth auditing (hot vs cold data separation)
+
+### Action macros (run-operation convenience wrappers)
+- `resize_warehouse` — ALTER WAREHOUSE with validation
+- `apply_mcw` — enable multi-cluster with recommended settings
+- `upgrade_gen2` — enable Gen2 resource constraint
+
+### Version compatibility testing
+- Validate package behavior on dbt-core (non-Fusion) environments
+- Identify Jinja/SQL differences between engines
+
+### Package release prep
+- CHANGELOG generation
+- Version bump strategy (semver)
+- CI pipeline (compile + test on multiple dbt versions)
+- README polish for public consumption
+
+### AI domain expansion
+- Deeper token efficiency analysis (when AI usage is present)
+- Model substitution recommendations (cheaper model achieves same quality)
+- Agent session optimization (consolidation, timeout tuning)
+
+### dbt Wizard / Copilot usage tracking
+- Pending platform export capability — no API or event stream exists today
+- See detailed section below for what integration would look like once available
+
+---
+
 ## dbt Wizard / Copilot Usage Tracking
 
 **Status:** Pending platform capability — no API or export path exists  

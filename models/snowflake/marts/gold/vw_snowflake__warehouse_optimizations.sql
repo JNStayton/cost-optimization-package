@@ -37,14 +37,29 @@ select
     warehouse_name,
     warehouse_current_size,
     warehouse_category,
-    effort_category,
+    -- Symptom taxonomy (replaces generic effort_category)
+    case
+        when recommendation like '%Scale down%' or recommendation like '%auto-suspend%'
+            then 'idle_credit_consumption'
+        when recommendation like '%Scale up%'
+            then 'queued_provisioning'
+        when recommendation like '%multi-cluster%'
+            then 'query_overload'
+        when recommendation like '%Gen2%'
+            then 'compute_inefficiency'
+        when recommendation_reason like '%spill%'
+            then 'spillage_overflow'
+        when recommendation like '%Monitor%' and recommendation_reason like '%Worsening%'
+            then 'query_cost_growth'
+        else 'general_inefficiency'
+    end as symptom,
     backlog_status,
     recommendation,
     recommendation_reason,
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
     score,
-    actionable_sql,
+    snowflake_ddl,
     -- Model context (when warehouse rec is tied to a specific model)
     node_id,
     coalesce(node_model_name, model_name) as model_name,

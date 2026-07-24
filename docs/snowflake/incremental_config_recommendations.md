@@ -2,7 +2,7 @@
 
 ## Overview
 
-`fct_snowflake__incremental_config_recommendations` identifies dbt `table`-materialized models that are candidates for conversion to `incremental` materialization, detects likely incremental key columns, and recommends a Snowflake-optimized strategy. The output includes a copy-pasteable dbt config template and a validation SQL snippet for confirming key column uniqueness before implementing.
+`fct_snowflake__incremental_config_recommendations` identifies dbt `table`-materialized models that are candidates for conversion to `incremental` materialization, detects likely incremental key columns, and recommends a Snowflake-optimized strategy. The output includes a copy-pasteable dbt config template and the identified unique key column name for merge strategies.
 
 This model depends on `fct_snowflake__incremental_materialization_candidates` (Model 1), which handles candidate identification and redundancy scoring.
 
@@ -71,7 +71,7 @@ Detection criteria:
 - Integer or string data types preferred
 - Ranked by name specificity: surrogate/primary key names > exact `id` > `*_id` patterns
 
-**`likely_unique_key`** — confirmed by the `probe_unique_key_candidates` post-hook using `APPROX_COUNT_DISTINCT`. A column is confirmed when its approximate distinct count is ≥ 95% of the table's row count (accounting for HyperLogLog's error margin). When confirmed, `dbt_config_template` and `validate_uniqueness_sql` are updated to reference this column.
+**`likely_unique_key`** — confirmed by the `probe_unique_key_candidates` post-hook using `APPROX_COUNT_DISTINCT`. A column is confirmed when its approximate distinct count is ≥ 95% of the table's row count (accounting for HyperLogLog's error margin). When confirmed, `dbt_model_config` references this column and `identified_unique_key` contains the column name.
 
 When no single-column unique key is confirmed — common for fact tables where all candidate columns are foreign keys — `likely_unique_key` is null. If the initial strategy was `delete+insert` or `merge`, the post-hook **downgrades the strategy to `append`**: the safe default whose failure mode (visible duplicates) is preferable to silent data corruption. `strategy_notes` explains the downgrade and provides two paths forward:
 1. **Surrogate key path** — generate a surrogate key with `dbt_utils.generate_surrogate_key([<grain_columns>])`, configure `unique_key` on that column, then re-evaluate for `merge` or `delete+insert`
@@ -81,8 +81,8 @@ When no single-column unique key is confirmed — common for fact tables where a
 
 ## Implementing the recommendation
 
-1. Check `likely_unique_key` — if populated, the cardinality probe has confirmed the column as a likely unique key and `dbt_config_template` already references it; if null, the strategy has been downgraded to `append` and `strategy_notes` explains next steps for defining a surrogate key or using `incremental_predicates`
-2. Copy the `dbt_config_template` into your model file
+1. Check `likely_unique_key` — if populated, the cardinality probe has confirmed the column as a likely unique key and `dbt_model_config` already references it; if null, the strategy has been downgraded to `append` and `strategy_notes` explains next steps for defining a surrogate key or using `incremental_predicates`
+2. Copy the `dbt_model_config` into your model file
 3. If using a surrogate key strategy, add `dbt_utils.generate_surrogate_key([<grain_columns>])` to your model and update the `unique_key` in the config block
 4. Add a `unique` test to your schema YAML for the chosen key column
 5. Run a full-refresh on the first incremental run: `dbt run --full-refresh --select <model>`

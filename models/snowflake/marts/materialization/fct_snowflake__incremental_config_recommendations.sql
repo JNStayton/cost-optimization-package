@@ -75,7 +75,7 @@ candidate_filter_keys as (
 candidate_unique_keys as (
     -- columns that are plausible unique key candidates by naming convention.
     -- excludes timestamp/date/float/boolean types. uniqueness is not verified here —
-    -- use validate_uniqueness_sql in the output before implementing.
+    -- use identified_unique_key in the output before implementing.
     select
         c.table_fqn,
         c.column_name,
@@ -266,15 +266,9 @@ select
                 || ' manual key identification required before implementing'
     end                                                                     as strategy_notes,
     -- run this before implementing to verify the unique key candidate
-    case
-        when best_unique_key is not null
-            then 'select count(*) = count(distinct '
-                || lower(best_unique_key)
-                || ') as is_unique from '
-                || lower(table_fqn)
-    end                                                                     as validate_uniqueness_sql,
+    best_unique_key                                                          as identified_unique_key,
     -- copy-pasteable dbt config template (logic in macro to keep model clean)
-    {{ build_incremental_config_template() }}                                as dbt_config_template
+    {{ build_incremental_config_template() }}                                as dbt_model_config
 from strategy_labeled
 order by
     case when est_daily_redundant_gb_scanned is not null then 0 else 1 end,
