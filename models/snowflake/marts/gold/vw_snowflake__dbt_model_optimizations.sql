@@ -30,10 +30,13 @@ with env_counts as (
 clustering_keys as (
     select
         table_fqn,
-        listagg(distinct column_name, ', ') within group (order by recommended_key_position) as suggested_clustering_key
-    from {{ ref('fct_snowflake__clustering_key_candidates') }}
-    where recommended_key_position <= 3
-        and snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__clustering_key_candidates') }})
+        listagg(column_name, ', ') within group (order by recommended_key_position) as suggested_clustering_key
+    from (
+        select distinct table_fqn, column_name, recommended_key_position
+        from {{ ref('fct_snowflake__clustering_key_candidates') }}
+        where recommended_key_position <= 3
+            and snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__clustering_key_candidates') }})
+    )
     group by table_fqn
 ),
 
