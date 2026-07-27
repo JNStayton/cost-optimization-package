@@ -254,9 +254,14 @@ all_recommendations as (
         icr.model_name,
         null as warehouse_name,
         'Apply incremental config: ' || icr.incremental_strategy as recommendation,
-        'Redundancy tier: ' || icr.redundancy_tier
-            || '. Strategy: ' || icr.incremental_strategy
-            || '. Unique key: ' || coalesce(icr.best_unique_key, 'none detected')
+        round(coalesce(icr.rebuild_redundancy_rate, 0.5) * 100, 0) || '% of each rebuild reprocesses unchanged rows ('
+            || round(coalesce(icr.est_daily_redundant_gb_scanned, 0), 2) || ' GB/day redundant). '
+            || 'Strategy: ' || icr.incremental_strategy
+            || case
+                when icr.incremental_strategy in ('merge', 'delete+insert') and icr.best_unique_key is not null
+                    then '. Unique key: ' || icr.best_unique_key
+                else ''
+            end
             || '.' as recommendation_reason,
         'config_change' as effort_category,
         icr.table_size_gb as score,

@@ -30,9 +30,10 @@ with env_counts as (
 clustering_keys as (
     select
         table_fqn,
-        listagg(column_name, ', ') within group (order by recommended_key_position) as suggested_clustering_key
+        listagg(distinct column_name, ', ') within group (order by recommended_key_position) as suggested_clustering_key
     from {{ ref('fct_snowflake__clustering_key_candidates') }}
     where recommended_key_position <= 3
+        and snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__clustering_key_candidates') }})
     group by table_fqn
 ),
 
@@ -43,8 +44,10 @@ ranked as (
         ec.environment_ids,
         ck.suggested_clustering_key,
         row_number() over (
-            partition by ar.dedup_key, ar.domain, ar.recommendation
-            order by ar.estimated_annual_savings_usd desc nulls last, ar.score desc
+            partition by ar.dedup_key, ar.domain
+            order by ar.estimated_annual_savings_usd desc nulls last,
+                case ar.effort_category when 'config_change' then 1 when 'sql_refactor' then 2 else 3 end,
+                ar.score desc
         ) as env_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id

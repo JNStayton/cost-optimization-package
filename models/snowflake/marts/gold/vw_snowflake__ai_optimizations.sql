@@ -15,7 +15,7 @@ with ranked as (
     select
         ar.*,
         row_number() over (
-            partition by ar.entity_name, ar.recommendation
+            partition by ar.dedup_key, ar.domain
             order by ar.estimated_annual_savings_usd desc nulls last, ar.score desc
         ) as dedup_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar

@@ -265,8 +265,8 @@ select
             'No filter column or unique key candidate detected — append is the safest default;'
                 || ' manual key identification required before implementing'
     end                                                                     as strategy_notes,
-    -- run this before implementing to verify the unique key candidate
-    best_unique_key                                                          as identified_unique_key,
+    -- Only relevant for merge/delete+insert strategies (append doesn't use a unique key)
+    case when incremental_strategy in ('merge', 'delete+insert') then best_unique_key end as identified_unique_key,
     -- copy-pasteable dbt config template (logic in macro to keep model clean)
     {{ build_incremental_config_template() }}                                as dbt_model_config
 from strategy_labeled
