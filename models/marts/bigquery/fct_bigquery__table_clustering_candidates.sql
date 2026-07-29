@@ -1,13 +1,10 @@
 {#--
-  BigQuery clustering candidates (Option B: BigQuery-native).
+  BigQuery clustering candidates.
 
   Scores tables using BigQuery's primary cost signals:
     - total_bytes_billed (how much each query costs)
     - total_slot_ms (compute intensity)
     - total_partitions (data density proxy for partition_density_multiplier)
-
-  For a cross-platform unified version, see:
-    models/marts/fct__table_clustering_candidates.sql
 --#}
 {{
   config(

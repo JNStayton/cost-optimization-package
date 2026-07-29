@@ -14,7 +14,11 @@
          lookback window from int_bigquery__column_query_stats (when
          use_query_text_attribution = true) — this is the cost-discipline pre-filter
          that avoids scanning every column of every large table.
-      3. Run APPROX_COUNT_DISTINCT only against pre-filtered columns.
+      3. Run APPROX_COUNT_DISTINCT for all pre-filtered columns in a single scan per
+         table (one SELECT computing every column's APPROX_COUNT_DISTINCT, unpivoted
+         into rows) rather than one scan per column — BigQuery's on-demand pricing
+         has a minimum-bytes-billed floor per table referenced per query, so splitting
+         into N queries would multiply that floor by N for no benefit.
       4. Merge results into int_bigquery__column_cardinality.
 
     When use_query_text_attribution = false, the pre-filter is skipped and cardinality
@@ -28,16 +32,35 @@
       use_query_text_attribution             (default true) — toggles the heuristic pre-filter
   --#}
 
+  {#--
+    ref() calls below are evaluated unconditionally (outside `if execute`) so dbt's
+    parser captures them as DAG edges on fct_bigquery__table_clustering_candidates.
+    Wrapping them in `if execute` — as the body below otherwise would, since it also
+    calls run_query() which needs a live connection — silently drops these edges,
+    because dbt's ref-extraction pass runs with execute=False. Without these edges,
+    a fresh-schema first run could try to build this model before the post-hook's
+    dependencies (int_bigquery__column_query_stats, int_bigquery__table_columns,
+    int_bigquery__column_cardinality) exist.
+
+    col_stats_table is ref()'d only when use_query_text_attribution is on, since
+    int_bigquery__column_query_stats is itself disabled (and ref()-ing a disabled
+    model is a compile error) when that var is false.
+
+    The candidates table is `this`, not ref('fct_bigquery__table_clustering_candidates')
+    — this macro only ever runs as that model's own post-hook, so ref()-ing itself
+    here would create a self-referencing cycle now that refs are captured eagerly.
+  --#}
+  {% set use_query_text_attribution = var('use_query_text_attribution', true) %}
+  {% set col_cols_table    = ref('int_bigquery__table_columns') %}
+  {% set cardinality_table = ref('int_bigquery__column_cardinality') %}
+  {% if use_query_text_attribution %}
+    {% set col_stats_table = ref('int_bigquery__column_query_stats') %}
+  {% endif %}
+
   {% if execute and target.type == 'bigquery' %}
 
     {% set cardinality_limit = var('clustering_key_cardinality_table_limit', 10) %}
     {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
-    {% set use_query_text_attribution = var('use_query_text_attribution', true) %}
-
-    {% set candidates_table  = ref('fct_bigquery__table_clustering_candidates') %}
-    {% set col_stats_table   = ref('int_bigquery__column_query_stats') %}
-    {% set col_cols_table    = ref('int_bigquery__table_columns') %}
-    {% set cardinality_table = ref('int_bigquery__column_cardinality') %}
 
     {{ log("refresh_bigquery_column_cardinality: fetching top " ~ cardinality_limit ~ " candidates...", info=true) }}
 
@@ -47,10 +70,10 @@
           database_name,
           schema_name,
           table_name
-      from {{ candidates_table }}
+      from {{ this }}
       where is_candidate = true
           and snapshot_date = (
-              select max(snapshot_date) from {{ candidates_table }}
+              select max(snapshot_date) from {{ this }}
           )
       qualify row_number() over (order by score desc) <= {{ cardinality_limit }}
     {% endset %}
@@ -98,22 +121,32 @@
           {% set merge_sql %}
             merge into {{ cardinality_table }} as target
             using (
+                with agg as (
+                    select
+                        count(*) as total_rows,
+                        {% for col in columns_to_scan %}
+                        approx_count_distinct({{ adapter.quote(col) }})
+                            as {{ adapter.quote('distinct_' ~ loop.index0) }}
+                        {%- if not loop.last %},{% endif %}
+                        {% endfor %}
+                    from `{{ db }}.{{ schema }}.{{ table }}`
+                )
                 select
                     '{{ table_fqn }}' as table_fqn,
-                    column_name,
-                    distinct_values,
-                    total_rows,
+                    unpivoted.column_name,
+                    unpivoted.distinct_values,
+                    agg.total_rows,
                     current_timestamp() as calculated_at
-                from (
+                from agg
+                cross join unnest([
                     {% for col in columns_to_scan %}
-                      select
-                          '{{ col }}' as column_name,
-                          approx_count_distinct({{ adapter.quote(col) }}) as distinct_values,
-                          count(*) as total_rows
-                      from `{{ db }}.{{ schema }}.{{ table }}`
-                      {% if not loop.last %}union all{% endif %}
+                    struct(
+                        '{{ col }}' as column_name,
+                        {{ adapter.quote('distinct_' ~ loop.index0) }} as distinct_values
+                    )
+                    {%- if not loop.last %},{% endif %}
                     {% endfor %}
-                )
+                ]) as unpivoted
             ) as source
             on target.table_fqn = source.table_fqn
                 and target.column_name = source.column_name

@@ -79,10 +79,9 @@ nobody queries.
 The usage signal is a **heuristic** on BigQuery — `JOBS_BY_PROJECT.query` text is
 regex-parsed (substrings rooted at WHERE / JOIN-ON / ORDER-BY clauses, then
 word-boundary-matched against column names). BigQuery has no `ACCESS_HISTORY` analogue,
-so this is the best available. The behaviour is locked in by a dbt unit test
-(`test_int_bigquery__column_query_access_extracts_filter_columns`) covering six
-representative query shapes including a word-boundary collision case (`id` should not
-match `customer_id`).
+so this is the best available. Known false-positive: a column name appearing in a
+comment inside a filter clause will be attributed. Word-boundary matching prevents
+simple substring collisions (e.g. `id` matching inside `customer_id`).
 
 ### Eligibility filters applied before scoring
 

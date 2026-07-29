@@ -1,6 +1,159 @@
 version: 2
 
 models:
+  - name: fct_bigquery__table_clustering_candidates
+    description: >
+      Daily snapshot of BigQuery tables evaluated as candidates for clustering.
+      Each row represents one table assessed on a given day, scored by observed
+      bytes billed and compute intensity over a configurable lookback window.
+
+      Scoring uses avg_bytes_billed (BigQuery's primary cost signal) as the
+      dominant factor, since BigQuery bills by bytes processed rather than
+      compute time. There is no partition-pruning-ratio equivalent to Snowflake's
+      (JOBS_BY_PROJECT does not expose partitions scanned per query), so the
+      partition density multiplier — total_partitions relative to row_count —
+      is used as the fragmentation signal instead.
+
+      No row limit is applied when selecting candidate tables (unlike the
+      Snowflake sibling's limit 100); BigQuery's distributed execution handles
+      large scans efficiently. Narrow the candidate set with
+      clustering_candidates_min_size_gb if needed.
+
+      This model's post-hook (refresh_bigquery_column_cardinality) populates
+      int_bigquery__column_cardinality for the top N candidates by score before
+      fct_bigquery__clustering_key_candidates reads from it.
+
+      Controlled by the following dbt variables:
+        - clustering_candidates_min_size_gb      (default 1000)
+        - clustering_candidates_lookback_days    (default 7)
+        - clustering_candidates_dbt_project_only (default true)
+        - clustering_candidates_target_databases (default [])
+        - clustering_candidates_target_schemas   (default [])
+        - clustering_key_cardinality_table_limit (default 10) — consumed by the post-hook
+        - use_query_text_attribution             (default true) — consumed by the post-hook
+    config:
+      materialized: incremental
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: clustering_candidates_snapshot_key
+        description: >
+          Surrogate key for the snapshot. Derived from md5(current_date || table_fqn).
+          Used as the merge key for incremental runs — one record per table per day.
+        tests:
+          - unique
+          - not_null
+
+      - name: snapshot_date
+        description: Calendar date of the snapshot. Combined with table_fqn to form the unique key.
+        tests:
+          - not_null
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      # ---------------------------------------------------------------------------
+      # Table identity
+      # ---------------------------------------------------------------------------
+      - name: database_name
+        description: BigQuery project ID containing the table.
+
+      - name: schema_name
+        description: BigQuery dataset containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+        tests:
+          - not_null
+
+      - name: table_fqn
+        description: Fully-qualified table name in project.dataset.table format.
+        tests:
+          - not_null
+
+      - name: dbt_model
+        description: >
+          dbt unique_id of the model that produced this table, if the table is a known
+          dbt relation in the current project. Null when clustering_candidates_dbt_project_only
+          is false and the table is not part of the project.
+
+      - name: table_type
+        description: >
+          Normalized table classification. One of: Permanent Table, Materialized View.
+
+      # ---------------------------------------------------------------------------
+      # Recommendation
+      # ---------------------------------------------------------------------------
+      - name: is_candidate
+        description: >
+          Boolean flag indicating whether this table meets all criteria for a clustering
+          recommendation. True when all of the following are satisfied:
+            - At least one SELECT query was executed in the lookback window
+            - Read/write query ratio > 1 (more reads than writes)
+            - Table size meets or exceeds clustering_candidates_min_size_gb
+
+      - name: score
+        description: >
+          Composite priority score for clustering candidacy. Higher values indicate
+          tables where clustering is more likely to reduce bytes billed.
+
+          Formula: (query activity factor) * (partition density multiplier)
+
+          Query activity factor: (select_count * avg_gb_billed_per_query) + (read/write ratio * 10)
+          Partition density multiplier: greatest(total_partitions / row_count * 1000, 1) —
+          floored at 1 so the multiplier only ever boosts the score, never suppresses it.
+
+          Scores are not normalized and should be used for relative ranking within a
+          single snapshot_date, not compared across snapshots.
+
+      # ---------------------------------------------------------------------------
+      # Size & structure
+      # ---------------------------------------------------------------------------
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: total_rows
+        description: Total row count of the table, from TABLE_STORAGE.
+
+      - name: current_partitions
+        description: >
+          Total partition count from TABLE_STORAGE (approx_micropartitions in the
+          upstream inventory model). BigQuery's data density proxy — used in the
+          partition density multiplier in place of Snowflake's partitions-scanned ratio.
+
+      - name: avg_gb_billed_per_query
+        description: >
+          Average total_bytes_billed (converted to GB) per SELECT query over the
+          lookback window. BigQuery's primary cost signal — higher values mean each
+          query against this table is more expensive.
+
+      # ---------------------------------------------------------------------------
+      # Query activity
+      # ---------------------------------------------------------------------------
+      - name: select_count
+        description: Total number of SELECT queries against this table in the lookback window.
+
+      - name: dml_count
+        description: >
+          Total number of INSERT, UPDATE, DELETE, MERGE, and CREATE_TABLE_AS_SELECT
+          queries against this table in the lookback window.
+
+      - name: query_to_dml_ratio
+        description: >
+          Ratio of SELECT queries to DML operations (select_count / (dml_count + 1)).
+          Higher values indicate read-heavy tables where clustering is more likely to
+          deliver a return on the compute cost of maintaining cluster order.
+
+      - name: avg_slot_seconds
+        description: >
+          Average total_slot_ms (converted to seconds) for SELECT queries against this
+          table in the lookback window. Parallel CPU-weighted time, not wall clock —
+          not directly comparable to Snowflake's avg_query_duration_s.
+
+  # ===========================================================================
+  # fct_bigquery__clustering_key_candidates
+  # ===========================================================================
   - name: fct_bigquery__clustering_key_candidates
     description: >
       Daily snapshot of column-level clustering key recommendations for BigQuery

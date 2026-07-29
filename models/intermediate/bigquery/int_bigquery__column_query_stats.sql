@@ -12,11 +12,15 @@
   Daily column-level query access counts per BigQuery table, aggregated from
   int_bigquery__column_query_access. Mirrors int_snowflake__column_query_stats.
 
-  Initial backfill: 30 days. Incremental runs: yesterday onwards (1-day buffer
-  for late-arriving JOBS_BY_PROJECT data, matching the Snowflake pattern).
+  Initial backfill and incremental runs are both bounded by the upstream
+  int_bigquery__column_query_access window (clustering_candidates_lookback_days,
+  default 7) — that view scans JOBS_BY_PROJECT via query-text matching, which is
+  too costly to run unbounded, unlike Snowflake's ACCESS_HISTORY-based path.
+  column_query_stats_initial_lookback_days can narrow the first-run window
+  further but can never see data older than the upstream cap.
 --#}
 
-{% set initial_lookback_days = var('column_query_stats_initial_lookback_days', 30) %}
+{% set initial_lookback_days = var('column_query_stats_initial_lookback_days', var('clustering_candidates_lookback_days', 7)) %}
 
 with column_access as (
     select
