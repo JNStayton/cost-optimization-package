@@ -2,9 +2,9 @@ version: 2
 
 models:
   # ===========================================================================
-  # fct_snowflake__warehouse_sizing_recommendations
+  # fct_snowflake__warehouse_config_recommendations
   # ===========================================================================
-  - name: fct_snowflake__warehouse_sizing_recommendations
+  - name: fct_snowflake__warehouse_config_recommendations
     description: >
       Warehouse sizing recommendations for dbt workloads, based on concurrency,
       DML ratio, and idle credit signals over a configurable lookback window
@@ -127,9 +127,9 @@ models:
           that triggered it, trend direction, and idle credit context where relevant.
 
   # ===========================================================================
-  # fct_snowflake__warehouse_spillage_recommendations
+  # fct_snowflake__warehouse_performance_recommendations
   # ===========================================================================
-  - name: fct_snowflake__warehouse_spillage_recommendations
+  - name: fct_snowflake__warehouse_performance_recommendations
     description: >
       Spillage recommendations for dbt-managed tables, with warehouse-level trend
       context. The actionable unit is the table — fixing the query SQL is almost

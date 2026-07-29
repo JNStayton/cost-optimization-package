@@ -36,7 +36,7 @@ with base_tables as (
 
 spillage_set as (
     select distinct table_fqn
-    from {{ ref('fct_snowflake__warehouse_spillage_recommendations') }}
+    from {{ ref('fct_snowflake__warehouse_performance_recommendations') }}
     where recommendation not like 'Not available%'
 ),
 
@@ -110,7 +110,7 @@ warehouse_insights as (
     select
         ws.warehouse_name,
         round(coalesce(ws.total_idle_credits_30d, 0), 1) as idle_credits
-    from {{ ref('fct_snowflake__warehouse_sizing_recommendations') }} as ws
+    from {{ ref('fct_snowflake__warehouse_config_recommendations') }} as ws
     where ws.recommendation like 'Scale down%'
       and coalesce(ws.total_idle_credits_30d, 0) > 5
 )

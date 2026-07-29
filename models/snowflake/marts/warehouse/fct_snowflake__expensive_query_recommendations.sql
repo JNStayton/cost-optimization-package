@@ -111,6 +111,7 @@ scored as (
         end                                                         as recommendation_key
     from window_30d as w30
     left join window_7d as w7 on w7.query_hash = w30.query_hash
+    where {{ scope_filter("split_part(w30.dbt_node_id, '.', 2)", 'w30.dbt_node_id') }}
 )
 
 select

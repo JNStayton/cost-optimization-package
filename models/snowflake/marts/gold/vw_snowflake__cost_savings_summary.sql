@@ -13,7 +13,6 @@ with actionable as (
     select *
     from {{ ref('int_snowflake__all_recommendations') }}
     where backlog_status = 'actionable'
-      and {{ scope_filter('node_project_name', 'node_id') }}
 )
 
 select

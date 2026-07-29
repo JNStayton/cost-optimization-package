@@ -16,11 +16,11 @@ stg_snowflake__query_        ──► int_snowflake__query_          ─┐
   history                          history                       │
                                                                  ├──► int_snowflake__warehouse_query_stats_daily
 stg_snowflake__sessions      ──► int_snowflake__dbt_sessions ───┤       │
-                                                                 │       ├──► fct_snowflake__warehouse_sizing_recommendations
+                                                                 │       ├──► fct_snowflake__warehouse_config_recommendations
                                                                  │       │
                                                                  ├──► int_snowflake__warehouse_spillage_daily
                                                                  │       │
-                                                                 │       ├──► fct_snowflake__warehouse_spillage_recommendations
+                                                                 │       ├──► fct_snowflake__warehouse_performance_recommendations
                                                                  │       │
                                                                  ├──► int_snowflake__warehouse_expensive_queries_daily
                                                                  │       │
@@ -70,7 +70,7 @@ Adaptive warehouses (`warehouse_size = 'ADAPTIVE'`) are filtered from the sizing
 
 ---
 
-## Model 1: `fct_snowflake__warehouse_sizing_recommendations`
+## Model 1: `fct_snowflake__warehouse_config_recommendations`
 
 ### Purpose
 
@@ -107,7 +107,7 @@ From `int_snowflake__warehouse_daily`, the model surfaces idle credit percentage
 
 ---
 
-## Model 2: `fct_snowflake__warehouse_spillage_recommendations`
+## Model 2: `fct_snowflake__warehouse_performance_recommendations`
 
 ### Purpose
 
@@ -209,7 +209,7 @@ select
     dml_pct_30d,
     total_credits_30d,
     recommendation_reason
-from <your_schema>.fct_snowflake__warehouse_sizing_recommendations
+from <your_schema>.fct_snowflake__warehouse_config_recommendations
 where recommendation != 'Stable — no sizing change recommended'
 order by total_queries_30d desc;
 ```
@@ -226,7 +226,7 @@ select
     spill_trend,
     total_runs,
     recommendation_reason
-from <your_schema>.fct_snowflake__warehouse_spillage_recommendations
+from <your_schema>.fct_snowflake__warehouse_performance_recommendations
 where recommendation like 'Critical%'
 order by total_gb_spilled_remote desc;
 ```

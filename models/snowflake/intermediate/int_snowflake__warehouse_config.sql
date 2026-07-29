@@ -1,13 +1,18 @@
 {#--
-  Derives current warehouse configuration state from WAREHOUSE_EVENTS_HISTORY.
-  One row per warehouse with its current size, type, Gen2 status, and multi-cluster state.
+  Derives current warehouse configuration state from WAREHOUSE_EVENTS_HISTORY
+  and enriches with live settings from SHOW WAREHOUSES (via post-hook macro).
 
-  This is the authoritative source for warehouse metadata — more reliable than
-  warehouse_size from QUERY_HISTORY which can be null for many queries.
+  One row per warehouse with: current size, type, Gen2 status, multi-cluster state,
+  auto_suspend, auto_resume, scaling_policy, min/max cluster counts.
+
+  The base SQL derives what it can from events. The post-hook (refresh_warehouse_config)
+  runs SHOW WAREHOUSES and merges auto_suspend/resume/scaling settings that aren't
+  available in any ACCOUNT_USAGE view.
 --#}
 {{
   config(
     materialized='table',
+    post_hook="{{ refresh_warehouse_config() }}"
   )
 }}
 
@@ -53,7 +58,13 @@ select
         when coalesce(mc.max_observed_clusters, coalesce(lc.cluster_count, 1)) > 1 then 'multi_cluster'
         when coalesce(lc.resource_constraint, '') = 'STANDARD_GEN_2' then 'gen2'
         else 'standard'
-    end as warehouse_category
+    end as warehouse_category,
+    -- SHOW WAREHOUSES columns (populated by post-hook, null until then)
+    cast(null as int) as auto_suspend_seconds,
+    cast(null as boolean) as auto_resume,
+    cast(null as varchar) as scaling_policy,
+    cast(null as int) as min_cluster_count,
+    cast(null as int) as max_cluster_count
 from latest_consistent as lc
 left join multicluster_evidence as mc
     on lc.warehouse_name = mc.warehouse_name

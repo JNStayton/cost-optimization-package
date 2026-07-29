@@ -122,7 +122,7 @@ Key properties:
 
 ### Impact on Current Package
 
-**Warehouse sizing recommendations (`fct_snowflake__warehouse_sizing_recommendations`):**
+**Warehouse sizing recommendations (`fct_snowflake__warehouse_config_recommendations`):**
 - Recommendations to "scale up," "scale down," "enable multi-cluster," or "enable Gen2" do not apply to adaptive warehouses
 - Current fix: filter adaptive warehouses from the sizing intermediate (`warehouse_size != 'ADAPTIVE'`)
 - Future: produce a separate recommendation category for adaptive warehouses
@@ -132,7 +132,7 @@ Key properties:
 - `QUERY_METERING_HISTORY` provides per-query credits natively for adaptive warehouses (more precise than elapsed-time proration)
 - `warehouse_size = 'ADAPTIVE'` should be noted in output rather than displayed as a t-shirt size
 
-**Spillage recommendations (`fct_snowflake__warehouse_spillage_recommendations`):**
+**Spillage recommendations (`fct_snowflake__warehouse_performance_recommendations`):**
 - Fully relevant — spillage is a query-level phenomenon regardless of warehouse type
 - No changes needed
 
@@ -169,7 +169,7 @@ vars:
 
 #### New Recommendation Tier in Sizing DAG
 
-When adaptive warehouses are GA and broadly available, add a tier to the existing `fct_snowflake__warehouse_sizing_recommendations`:
+When adaptive warehouses are GA and broadly available, add a tier to the existing `fct_snowflake__warehouse_config_recommendations`:
 
 ```
 Recommendation: "Convert to Adaptive Compute"
@@ -204,7 +204,7 @@ SHOW WAREHOUSES;
 
 ### Impact on Current Package
 
-The "Enable Gen2" recommendation in `fct_snowflake__warehouse_sizing_recommendations` remains valid for:
+The "Enable Gen2" recommendation in `fct_snowflake__warehouse_config_recommendations` remains valid for:
 - Existing Gen1 warehouses that haven't been converted
 - Accounts in organizations created before the default changed
 

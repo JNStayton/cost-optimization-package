@@ -5,14 +5,16 @@
 }}
 
 {#--
-  Spillage recommendations for dbt-managed tables, with warehouse-level trend
-  context. The actionable unit is the table (which model's SQL is spilling),
-  not the warehouse — fixing the query is almost always cheaper than scaling up.
+  Performance recommendations for dbt-managed tables, focused on spillage with
+  size-aware branching. The actionable unit is the table (which model's SQL is
+  causing performance issues), not the warehouse.
 
-  Recommendation tiers (same as find_spillage_candidates macro):
-    Critical — Remote Spillage  (warn) — any meaningful remote spillage (> 0.1 GB)
-    Warn — Heavy Local Spillage (warn) — local spillage > 5 GB total in window
-    Monitor — Moderate Spillage (info) — above floor but not severe
+  Recommendation tiers (from docs/snowflake/warehouse_recommendations_mapping.md section 4):
+    4.1 Remote spillage — scale up warehouse (remote spill = severe latency)
+    4.2 Heavy local spillage on small warehouse — scale up
+    4.3 Heavy local spillage on large warehouse — SQL optimization needed
+    4.4 Moderate spillage, worsening — monitor + SQL review
+    4.5 Minor spillage, stable — no action
 
   Trend direction (30-day window, comparing first 15 days to last 15 days):
     Worsening  — recent 15-day spill > prior 15-day spill by more than 20%
@@ -186,15 +188,25 @@ scored as (
         case
             when ts.total_gb_spilled_remote > 0.1
                 then 'remote_spill'
-            when ts.total_gb_spilled_local > 5
-                then 'local_heavy'
-            else 'local_moderate'
-        end                                                         as recommendation_key
+            when ts.total_gb_spilled_local > 50
+                 and lower(coalesce(wc_size.current_size, '')) in ('x-large', 'xlarge', '2x-large', '2xlarge', '3x-large', '3xlarge', '4x-large', '4xlarge')
+                then 'local_heavy_large_wh'
+            when ts.total_gb_spilled_local > 50
+                then 'local_heavy_small_wh'
+            when ts.total_gb_spilled_local > 1 and trs.spill_gb_recent > trs.spill_gb_prior * 1.2
+                then 'local_moderate_worsening'
+            when ts.total_gb_spilled_local > 1
+                then 'local_moderate_stable'
+            else 'local_minor'
+        end                                                         as recommendation_key,
+        coalesce(wc_size.current_size, 'unknown') as warehouse_current_size
     from table_spillage_summary as ts
     left join dbt_relations      as dr  on dr.table_fqn  = ts.table_fqn
     left join table_warehouse    as tw  on tw.table_fqn  = ts.table_fqn and tw.rn = 1
     left join trend_split        as trs on trs.table_fqn = ts.table_fqn
     left join warehouse_context  as wc  on wc.warehouse_name = coalesce(tw.warehouse_name, nullif(dr.warehouse_name, ''))
+    left join {{ ref('int_snowflake__warehouse_config') }} as wc_size
+        on wc_size.warehouse_name = coalesce(tw.warehouse_name, nullif(dr.warehouse_name, ''))
 )
 
 select
@@ -222,44 +234,71 @@ select
     warehouse_total_gb_spilled_30d,
     case
         when recommendation_key = 'remote_spill'
-            then 'Critical — Refactor SQL or scale up warehouse (remote spillage)'
-        when recommendation_key = 'local_heavy'
-            then 'Warn — Refactor SQL or scale up warehouse (heavy local spillage)'
+            then 'Scale up warehouse (remote spillage detected)'
+        when recommendation_key = 'local_heavy_small_wh'
+            then 'Scale up warehouse (heavy local spillage on ' || warehouse_current_size || ')'
+        when recommendation_key = 'local_heavy_large_wh'
+            then 'Optimize SQL (heavy spillage on large warehouse)'
+        when recommendation_key = 'local_moderate_worsening'
+            then 'Monitor — moderate spillage trending worse'
+        when recommendation_key = 'local_moderate_stable'
+            then 'Monitor — moderate spillage (stable)'
         else
-            'Monitor — Moderate local spillage'
+            'Stable — minor spillage'
     end                                                             as recommendation,
     case
         when recommendation_key = 'remote_spill'
-            then total_gb_spilled_remote || ' GB of remote spillage over '
-                || {{ lookback_days }} || ' days (' || spill_days || ' spilling day(s)) — '
-                || 'compute exhausted RAM and fell back to S3, dramatically increasing '
-                || 'elapsed time and credit consumption. '
-                || 'Trend: ' || spill_trend || '. '
-                || 'SQL-side fixes (reduce intermediate result set size, push filters '
-                || 'earlier, avoid cross joins) are usually cheaper than scaling up. '
-                || 'Warehouse ' || warehouse_name || ' had '
-                || warehouse_spill_days_30d || ' spilling query(s) totalling '
-                || warehouse_total_gb_spilled_30d || ' GB in the same window.'
-        when recommendation_key = 'local_heavy'
+            then 'Remote spillage detected (' || total_gb_spilled_remote || ' GB in '
+                || {{ lookback_days }} || ' days). Remote spill writes to cloud storage, adding significant latency and egress cost. '
+                || 'Scaling up from ' || warehouse_current_size || ' provides more local SSD cache before spilling remotely. '
+                || 'Trend: ' || spill_trend || '.'
+        when recommendation_key = 'local_heavy_small_wh'
+            then 'Heavy local spillage (' || total_gb_spilled_local || ' GB in '
+                || {{ lookback_days }} || ' days) on a ' || warehouse_current_size || ' warehouse. '
+                || 'Queries are exceeding available RAM and spilling to local SSD. '
+                || 'Scaling up doubles available memory and will reduce or eliminate spillage. '
+                || 'Trend: ' || spill_trend || '.'
+        when recommendation_key = 'local_heavy_large_wh'
+            then 'Heavy local spillage (' || total_gb_spilled_local || ' GB in '
+                || {{ lookback_days }} || ' days) on a ' || warehouse_current_size || ' warehouse. '
+                || 'At this size, further scaling has diminishing returns. '
+                || 'Review query SQL for: wide JOINs missing filters, unnecessary columns in SELECT *, exploding CTEs, or missing partition pruning. '
+                || 'Trend: ' || spill_trend || '.'
+        when recommendation_key = 'local_moderate_worsening'
+            then 'Moderate local spillage (' || total_gb_spilled_local || ' GB, trending worse). '
+                || 'Profile the top spilling queries before scaling — a SQL fix (adding filters, reducing join width) is cheaper than a permanent size increase.'
+        when recommendation_key = 'local_moderate_stable'
             then total_gb_spilled_local || ' GB of local spillage over '
-                || {{ lookback_days }} || ' days (' || spill_days || ' spilling day(s)) — '
-                || 'intermediate results exceeded RAM. '
+                || {{ lookback_days }} || ' days (' || spill_days || ' spilling day(s)). '
                 || 'Trend: ' || spill_trend || '. '
-                || 'SQL-side fixes are usually cheaper than scaling up. '
-                || 'Warehouse ' || warehouse_name || ' had '
-                || warehouse_spill_days_30d || ' spilling query(s) in the same window.'
+                || 'Tolerable but worth profiling if this model is on a critical path.'
         else
             total_gb_spilled_local || ' GB of local spillage over '
-            || {{ lookback_days }} || ' days (' || spill_days || ' spilling day(s)). '
-            || 'Trend: ' || spill_trend || '. '
-            || 'Tolerable but worth profiling if this model is on a critical path.'
-    end                                                             as recommendation_reason
+            || {{ lookback_days }} || ' days. Trend: ' || spill_trend || '. Minor — no action needed.'
+    end                                                             as recommendation_reason,
+    -- Concrete DDL (only for scale-up recommendations)
+    case
+        when recommendation_key in ('remote_spill', 'local_heavy_small_wh')
+            then 'ALTER WAREHOUSE ' || warehouse_name || ' SET WAREHOUSE_SIZE = '''
+                || case warehouse_current_size
+                    when 'X-Small' then 'SMALL'
+                    when 'Small' then 'MEDIUM'
+                    when 'Medium' then 'LARGE'
+                    when 'Large' then 'XLARGE'
+                    when 'X-Large' then '2X-LARGE'
+                    else 'MEDIUM'
+                end || ''';'
+        else null
+    end as snowflake_ddl,
+    'spillage_overflow' as symptom
 from scored
 order by
     case recommendation_key
-        when 'remote_spill'   then 1
-        when 'local_heavy'    then 2
-        else 3
+        when 'remote_spill'             then 1
+        when 'local_heavy_small_wh'     then 2
+        when 'local_heavy_large_wh'     then 3
+        when 'local_moderate_worsening' then 4
+        else 5
     end,
     total_gb_spilled_remote desc,
     total_gb_spilled_local desc
@@ -294,7 +333,9 @@ select
     'ACCESS_HISTORY is required for table-level spillage attribution. '
     || 'Set snowflake_enterprise_edition = true in dbt_project.yml vars '
     || 'to enable this model (requires Snowflake Enterprise Edition or higher).'
-                            as recommendation_reason
+                            as recommendation_reason,
+    null::string            as snowflake_ddl,
+    null::string            as symptom
 where false
 
 {% endif %}

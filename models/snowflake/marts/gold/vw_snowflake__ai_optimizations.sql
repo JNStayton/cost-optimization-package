@@ -21,7 +21,6 @@ with ranked as (
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     where ar.domain = 'ai'
       and ar.backlog_status in ('actionable', 'monitor')
-      and {{ scope_filter('ar.node_project_name', 'ar.node_id') }}
 )
 
 select

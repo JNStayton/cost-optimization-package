@@ -277,7 +277,7 @@ models:
     description: >
       Daily per-warehouse aggregate stats for dbt-authored queries. Grain: (warehouse_name, stats_date).
       Provides medians for overload, provisioning, and execution time; DML ratio; query load percent.
-      Used by fct_snowflake__warehouse_sizing_recommendations.
+      Used by fct_snowflake__warehouse_config_recommendations.
 
   # ===========================================================================
   # int_snowflake__warehouse_expensive_queries_daily

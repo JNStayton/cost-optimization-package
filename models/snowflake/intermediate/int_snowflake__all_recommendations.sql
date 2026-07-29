@@ -31,7 +31,7 @@ with warehouse_rates as (
 all_recommendations as (
 
     -- =========================================================================
-    -- WAREHOUSE SIZING
+    -- WAREHOUSE CONFIG RECOMMENDATIONS
     -- =========================================================================
     select
         'warehouse' as domain,
@@ -42,35 +42,17 @@ all_recommendations as (
         ws.warehouse_name,
         ws.recommendation,
         ws.recommendation_reason,
-        case
-            when ws.recommendation like 'Scale down%' then 'config_change'
-            when ws.recommendation like 'Enable Gen2%' then 'config_change'
-            when ws.recommendation like 'Enable multi-cluster%' then 'config_change'
-            when ws.recommendation like 'Scale up%' then 'config_change'
-            else 'config_change'
-        end as effort_category,
+        'config_change' as effort_category,
         ws.total_credits_30d as score,
-        -- Cost estimation
         ws.total_credits_30d * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         case
-            when ws.recommendation like 'Scale down%'
+            when ws.symptom = 'idle_credit_consumption'
                 then ws.total_idle_credits_30d * 12 * {{ credit_rate_usd }}
-            when ws.recommendation like 'Enable Gen2%'
-                then ws.total_credits_30d * 0.10 * 12 * {{ credit_rate_usd }}
-            else null
+            when ws.symptom = 'oversized'
+                then ws.total_idle_credits_30d * 12 * {{ credit_rate_usd }}
+            else ws.total_credits_30d * 0.10 * 12 * {{ credit_rate_usd }}
         end as estimated_annual_savings_usd,
-        -- Actionable SQL
-        case
-            when ws.recommendation like 'Scale down%'
-                then 'ALTER WAREHOUSE ' || ws.warehouse_name || ' SET WAREHOUSE_SIZE = ''X-SMALL'';'
-            when ws.recommendation like 'Enable Gen2%'
-                then 'ALTER WAREHOUSE ' || ws.warehouse_name || ' SET RESOURCE_CONSTRAINT = ''STANDARD_GEN_2'';'
-            when ws.recommendation like 'Enable multi-cluster%'
-                then 'ALTER WAREHOUSE ' || ws.warehouse_name || ' SET MIN_CLUSTER_COUNT = 1 MAX_CLUSTER_COUNT = 3;'
-            when ws.recommendation like 'Scale up%'
-                then 'ALTER WAREHOUSE ' || ws.warehouse_name || ' SET WAREHOUSE_SIZE = ''MEDIUM'';'
-            else null
-        end as snowflake_ddl,
+        ws.snowflake_ddl,
         ws.snapshot_date,
         case
             when ws.recommendation like '%Stable%' then 'stable'
@@ -79,7 +61,7 @@ all_recommendations as (
         end as backlog_status,
         null as dbt_model_config,
         null as identified_unique_key
-    from {{ ref('fct_snowflake__warehouse_sizing_recommendations') }} as ws
+    from {{ ref('fct_snowflake__warehouse_config_recommendations') }} as ws
     where ws.recommendation not like 'Stable%'
 
     union all
@@ -109,11 +91,7 @@ all_recommendations as (
         (sp.total_gb_spilled_local * 0.5 + sp.total_gb_spilled_remote * 5.0)
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
-        case
-            when sp.total_gb_spilled_remote > 0
-                then 'ALTER WAREHOUSE ' || coalesce(sp.warehouse_name, '<warehouse>') || ' SET WAREHOUSE_SIZE = ''LARGE''; -- or refactor SQL'
-            else '-- Review model SQL for wide joins, missing filters, or unnecessary columns'
-        end as snowflake_ddl,
+        sp.snowflake_ddl,
         sp.snapshot_date,
         case
             when sp.recommendation like '%Monitor%' then 'monitor'
@@ -121,7 +99,7 @@ all_recommendations as (
         end as backlog_status,
         null as dbt_model_config,
         null as identified_unique_key
-    from {{ ref('fct_snowflake__warehouse_spillage_recommendations') }} as sp
+    from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
     left join warehouse_rates as wr on wr.warehouse_name = sp.warehouse_name
     where sp.recommendation not like 'Not available%'
 
@@ -517,3 +495,4 @@ select
     *,
     coalesce(node_id, entity_name) as dedup_key
 from enriched
+where {{ scope_filter('node_project_name', 'node_id') }}

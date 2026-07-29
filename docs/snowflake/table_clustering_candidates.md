@@ -77,9 +77,11 @@ fct_snowflake__table_clustering_candidates (identifies WHICH tables)
 
 **Downstream children expansion:** The extract macro doesn't only look at queries that directly accessed the candidate table — it also finds queries against the candidate's direct child models (from `int_dbt__relations.parent_models`). This captures filter evidence from analyst queries hitting downstream marts that read from the candidate.
 
-**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter or Join operators in >= 25% of the analyzed queries. This prevents low-signal columns (used in a single query) from being surfaced as recommendations.
+**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed queries. Join-only columns are excluded entirely — filter usage is the admission ticket, join usage is the scoring bonus.
 
-**Scoring formula:** `filter_query_count * 3 + join_query_count * 1 + cardinality_bonus` where the cardinality bonus rewards columns with 100-10000 rows per distinct value (sweet spot for micropartition grouping).
+**Diminishing returns gate:** The 2nd and 3rd recommended keys must score at least 50% of the top key's score for that table. This prevents low-impact columns from riding alongside a strong primary key and ensures each additional key in the clustering spec is worth the maintenance overhead.
+
+**Scoring formula:** `filter_query_count * 3 + join_query_count * 1 + cardinality_bonus` where the cardinality bonus rewards columns with 100-10000 rows per distinct value (sweet spot for micropartition grouping). Filter usage is weighted 3x because WHERE predicates directly enable partition pruning. Join usage is weighted 1x as a secondary signal (co-location benefit for hash joins is marginal).
 
 ---
 

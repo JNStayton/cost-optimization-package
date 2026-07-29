@@ -1,10 +1,16 @@
 {#--
-  Top 3 clustering key recommendations per candidate table, scored on confirmed
+  Clustering key recommendations per candidate table, scored on confirmed
   Filter/Join operator usage (from GET_QUERY_OPERATOR_STATS) and cardinality.
 
   Requires fct_snowflake__table_clustering_candidates to build first — its
   post-hooks populate int_snowflake__column_cardinality and
   int_snowflake__query_operator_columns before this model runs.
+
+  Gating (two thresholds):
+    1. filter_query_count > 0 AND filter proportion >= 33% of analyzed queries
+       (join-only columns are excluded — filter is the admission ticket)
+    2. column_score >= 50% of the table's top-scored column
+       (prevents diminishing-returns keys from being recommended)
 
   Scoring formula:
     - filter_query_count * 3 (WHERE predicates = strongest clustering signal)
@@ -157,9 +163,9 @@ column_scored as (
                 else 0
               end as column_score
     from scored
-    where filter_query_count + join_query_count > 0
-        -- Proportion gate: column must be used in >= 25% of analyzed queries
-        and (filter_query_count + join_query_count)::float / nullif(total_queries_analyzed, 0) >= 0.25
+    where filter_query_count > 0
+        -- Proportion gate: column must be filtered on in >= 1/3 of analyzed queries
+        and filter_query_count::float / nullif(total_queries_analyzed, 0) >= 0.33
 ),
 
 final as (
@@ -182,6 +188,7 @@ final as (
             order by column_score desc
         ) as recommended_key_position,
         column_score,
+        max(column_score) over (partition by table_fqn) as top_column_score,
         distinct_values,
         avg_rows_per_value,
         cardinality_calculated_at,
@@ -213,6 +220,8 @@ select
     usage_count
 from final
 where recommended_key_position <= 3
+    -- Diminishing returns gate: 2nd/3rd keys must be >= 50% as impactful as the top key
+    and column_score::float / nullif(top_column_score, 0) >= 0.50
 {% if is_incremental() %}
     and snapshot_date >= (
         select coalesce(max(snapshot_date), '1970-01-01'::date)
