@@ -461,7 +461,7 @@ enriched as (
         ar.dbt_model_config,
         ar.identified_unique_key,
         coalesce(rh.node_id, ar.dbt_model) as node_id,
-        coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2)) as node_project_name,
+        coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2), wh_project.warehouse_project_name) as node_project_name,
         coalesce(rh.model_name, ar.model_name) as node_model_name,
         coalesce(rh.target_name, rh_fallback.target_name) as target_name,
         coalesce(rh.dbt_cloud_environment_id, rh_fallback.dbt_cloud_environment_id) as dbt_cloud_environment_id
@@ -489,6 +489,22 @@ enriched as (
     ) as build_wh
         on build_wh.node_id = ar.dbt_model
         and ar.warehouse_name is null
+    -- Warehouse-to-project mapping: for warehouse-level recs that have no model association
+    left join (
+        select
+            warehouse_name,
+            mode(split_part(
+                parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string,
+                '.', 2
+            )) as warehouse_project_name
+        from {{ ref('int_snowflake__query_history') }}
+        where query_text like '%node_id%'
+            and query_start_time >= dateadd(day, -30, current_timestamp())
+            and warehouse_name is not null
+        group by warehouse_name
+    ) as wh_project
+        on wh_project.warehouse_name = ar.warehouse_name
+        and ar.dbt_model is null
 )
 
 select

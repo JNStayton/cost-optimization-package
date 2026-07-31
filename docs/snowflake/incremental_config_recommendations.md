@@ -71,7 +71,9 @@ Detection criteria:
 - Integer or string data types preferred
 - Ranked by name specificity: surrogate/primary key names > exact `id` > `*_id` patterns
 
-**`likely_unique_key`** — confirmed by the `probe_unique_key_candidates` post-hook using `APPROX_COUNT_DISTINCT`. A column is confirmed when its approximate distinct count is ≥ 95% of the table's row count (accounting for HyperLogLog's error margin). When confirmed, `dbt_model_config` references this column and `identified_unique_key` contains the column name.
+**`likely_unique_key`** — confirmed by the `probe_unique_key_candidates` post-hook using `APPROX_COUNT_DISTINCT`. A column is confirmed when its approximate distinct count is ≥ 95% of the table's row count (accounting for HyperLogLog's error margin). When confirmed, `likely_unique_key` contains the column name for informational purposes.
+
+**`identified_unique_key`** — the actionable unique key, only populated when the recommended strategy is `merge` or `delete+insert`. For `append` strategies, this is always NULL even if a unique key passes the cardinality probe — append doesn't use a unique key, so surfacing one would be misleading. The distinction: `likely_unique_key` is informational ("this column is likely unique"), while `identified_unique_key` is actionable ("use this key in your config").
 
 When no single-column unique key is confirmed — common for fact tables where all candidate columns are foreign keys — `likely_unique_key` is null. If the initial strategy was `delete+insert` or `merge`, the post-hook **downgrades the strategy to `append`**: the safe default whose failure mode (visible duplicates) is preferable to silent data corruption. `strategy_notes` explains the downgrade and provides two paths forward:
 1. **Surrogate key path** — generate a surrogate key with `dbt_utils.generate_surrogate_key([<grain_columns>])`, configure `unique_key` on that column, then re-evaluate for `merge` or `delete+insert`

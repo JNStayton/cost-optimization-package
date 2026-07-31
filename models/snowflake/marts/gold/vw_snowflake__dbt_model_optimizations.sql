@@ -50,7 +50,11 @@ ranked as (
             order by ar.estimated_annual_savings_usd desc nulls last,
                 case ar.effort_category when 'config_change' then 1 when 'sql_refactor' then 2 else 3 end,
                 ar.score desc
-        ) as env_rank
+        ) as env_rank,
+        row_number() over (
+            partition by coalesce(ar.node_id, ar.entity_name)
+            order by ar.estimated_annual_savings_usd desc nulls last, ar.score desc
+        ) as priority
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
     left join clustering_keys as ck on ck.table_fqn = ar.table_fqn
@@ -64,6 +68,7 @@ select
     coalesce(node_model_name, model_name) as model_name,
     domain,
     effort_category,
+    priority,
     table_fqn,
     recommendation,
     recommendation_reason,
@@ -84,4 +89,4 @@ select
     snapshot_date
 from ranked
 where env_rank = 1
-order by estimated_annual_savings_usd desc nulls last, score desc
+order by coalesce(node_model_name, model_name), priority

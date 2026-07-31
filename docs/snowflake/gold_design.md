@@ -90,24 +90,43 @@ An agent should be able to pick any row from this view and:
 
 ### `vw_snowflake__dbt_model_optimizations`
 
-**dbt engineer view.** Materialization, clustering, and incremental recommendations — things you fix in dbt code.
+**dbt engineer view.** Materialization, clustering, and incremental recommendations — things you fix in dbt code. Ordered by `model_name, priority` so all optimizations for a model are grouped together.
 
 Key columns beyond the standard set:
+- `priority`: cross-domain rank per model (1 = highest-impact optimization for this model)
 - `suggested_clustering_key`: ready-to-use clustering key columns (e.g., "order_date, customer_id")
 - `dbt_model_config`: copy-paste config block (materialization, incremental, cluster_by)
-- `identified_unique_key`: detected unique key name for merge incrementals
+- `identified_unique_key`: detected unique key name (only populated for merge/delete+insert strategies; NULL for append)
 - `environment_ids`: array of dbt_cloud_environment_ids where this model exists
 
 ---
 
 ### `vw_snowflake__warehouse_optimizations`
 
-**Snowflake admin view.** Sizing, spillage, expensive queries, and provisioning queue recommendations.
+**Snowflake admin view.** One row per warehouse with the top config recommendation as the primary signal and spillage as an amplifier. Grain: 1 row per warehouse.
 
-Key columns beyond the standard set:
+Key columns:
 - `warehouse_current_size`: authoritative size from WAREHOUSE_EVENTS_HISTORY
 - `warehouse_category`: standard / gen2 / multi_cluster / adaptive
-- `symptom`: taxonomy of warehouse issues (idle_credit_consumption, queued_provisioning, query_overload, compute_inefficiency, spillage_overflow, query_cost_growth)
+- `symptom`: classified issue (idle_credit_consumption, query_overload, queued_provisioning, oversized, monitor)
+- `snowflake_ddl`: concrete ALTER WAREHOUSE DDL to apply the recommendation
+- `models_with_spillage`: count of models with spillage on this warehouse (amplifier signal)
+- `total_gb_spilled_local_30d` / `total_gb_spilled_remote_30d`: aggregate spillage volume
+- `spillage_signal`: worst spillage severity across models on this warehouse
+
+Expensive queries are surfaced separately in `vw_snowflake__top_expensive_queries`.
+
+---
+
+### `vw_snowflake__top_expensive_queries`
+
+**Cost accountability view.** Top 10 most expensive recurring queries within the project scope. Covers dbt model builds and downstream consumer queries.
+
+Key columns:
+- `query_hash`: unique identifier for this recurring query pattern
+- `estimated_annual_cost_usd`: projected annual cost at current run rate
+- `recommendation`: actionable recommendation for this query
+- `model_name` / `node_id`: the dbt model this query builds (when attributable)
 
 ---
 
@@ -460,7 +479,11 @@ Two variables control what the gold layer surfaces:
 - `false` — only entities connected to dbt queries from monitored projects
 - `true` — include account-wide signals: all warehouses (even those no dbt project uses), CoCo/Intelligence spend, all users regardless of dbt involvement
 
-The scope filter is applied consistently across all gold views via the `scope_filter()` macro. Recommendations with no project association (warehouse sizing, AI services) only appear when `include_full_platform_insights = true`.
+The scope filter is applied once in `int_snowflake__all_recommendations` via the `scope_filter()` macro. All gold views inherit this filtering.
+
+Warehouse-level config recommendations (idle credits, overload, etc.) have no direct model association. These are mapped to projects via the `wh_project` CTE in `int_snowflake__all_recommendations`, which identifies which project's models run on each warehouse by parsing dbt query comments. This means warehouse config recs automatically appear for any warehouse used by the monitored project(s).
+
+AI services and other account-wide signals with no warehouse or project association only appear when `include_full_platform_insights = true`.
 
 ### Cross-environment monitoring
 

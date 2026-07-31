@@ -180,7 +180,7 @@ For the full strategy decision matrix, key column detection logic, implementatio
 | `best_unique_key` | Top candidate by naming convention (unconfirmed) |
 | `likely_unique_key` | Cardinality-confirmed unique key (populated by post-hook) |
 | `dbt_model_config` | Copy-pasteable dbt model config block |
-| `identified_unique_key` | SQL to manually verify key uniqueness |
+| `identified_unique_key` | Confirmed unique key column name (only populated for merge/delete+insert strategies; NULL for append) |
 | `strategy_notes` | Explanation of strategy choice and next steps |
 
 ### Variables

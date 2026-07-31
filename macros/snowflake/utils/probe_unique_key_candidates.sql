@@ -100,7 +100,11 @@
             update {{ this }}
             set
               likely_unique_key       = '{{ ns.confirmed_key }}',
-              identified_unique_key = '{{ ns.confirmed_key }}',
+              identified_unique_key = case
+                when incremental_strategy in ('merge', 'delete+insert')
+                then '{{ ns.confirmed_key }}'
+                else null
+              end,
               dbt_model_config     = replace(
                 dbt_model_config,
                 'unique_key=''' || '{{ old_key_in_template }}' || '''',

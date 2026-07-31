@@ -22,7 +22,7 @@ Items below are validated as valuable but deferred from the initial release. Ord
 - Future: recursive traversal for long DAGs where filter queries land 2+ hops downstream
 
 ### Report card views
-- Top expensive builds (by credit cost per run)
+- ~~Top expensive builds (by credit cost per run)~~ — **Shipped** as `vw_snowflake__top_expensive_queries`
 - Top queried models (by SELECT frequency)
 - Top spillage models (by GB spilled)
 - Storage growth trends (month-over-month by schema)

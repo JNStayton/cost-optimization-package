@@ -63,7 +63,10 @@ models:
       dbt model-level optimizations: materialization, clustering, and incremental config.
       Actions are taken in dbt code (model configs, SQL refactors). Excludes warehouse
       and AI domain recommendations. Enriched with suggested clustering keys.
+      Ordered by model_name then priority (1 = highest-impact optimization per model).
     columns:
+      - name: priority
+        description: Cross-domain priority rank per model (1 = most impactful optimization for this model)
       - name: suggested_clustering_key
         description: Recommended clustering columns from clustering_key_candidates (e.g., 'order_date, customer_id')
       - name: dbt_model_config
@@ -75,16 +78,35 @@ models:
 
   - name: vw_snowflake__warehouse_optimizations
     description: >
-      Warehouse-level optimizations: sizing, spillage, expensive queries, provisioning.
-      Actions are taken in Snowflake (ALTER WAREHOUSE, auto-suspend settings).
-      Audience: Snowflake admins.
+      Warehouse-level optimizations: one row per warehouse with the top config
+      recommendation and spillage as an amplifier signal. Actions are taken in
+      Snowflake (ALTER WAREHOUSE, auto-suspend settings). Audience: Snowflake admins.
     columns:
       - name: warehouse_current_size
         description: Authoritative current warehouse size from WAREHOUSE_EVENTS_HISTORY
       - name: warehouse_category
         description: Warehouse type category (standard, gen2, multi_cluster, adaptive)
-      - name: estimated_annual_savings_usd
-        description: Estimated annual savings if recommendation is applied
+      - name: symptom
+        description: Classified symptom (idle_credit_consumption, query_overload, queued_provisioning, oversized, monitor)
+      - name: snowflake_ddl
+        description: Concrete ALTER WAREHOUSE DDL to apply the recommendation
+      - name: models_with_spillage
+        description: Count of models with spillage on this warehouse (amplifier signal)
+      - name: spillage_signal
+        description: Worst spillage severity across models on this warehouse
+
+  - name: vw_snowflake__top_expensive_queries
+    description: >
+      Top 10 most expensive recurring queries within the project scope. Covers
+      both dbt model builds and downstream consumer queries. Audience: dbt
+      developers and Snowflake admins.
+    columns:
+      - name: query_hash
+        description: Unique identifier for this recurring query pattern
+      - name: estimated_annual_cost_usd
+        description: Projected annual cost at current run rate
+      - name: recommendation
+        description: Actionable recommendation for this query
 
   - name: vw_snowflake__ai_optimizations
     description: >
