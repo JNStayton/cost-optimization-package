@@ -144,9 +144,10 @@
             {% set update_sql %}
               update {{ this }}
               set
-                incremental_strategy = 'append',
-                strategy_notes       = '{{ downgrade_note | replace("'", "''") }}',
-                dbt_model_config  = '{{ append_template | replace("'", "''") }}'
+                incremental_strategy  = 'append',
+                identified_unique_key = null,
+                strategy_notes        = '{{ downgrade_note | replace("'", "''") }}',
+                dbt_model_config   = '{{ append_template | replace("'", "''") }}'
               where table_fqn = '{{ table_fqn }}'
             {% endset %}
 

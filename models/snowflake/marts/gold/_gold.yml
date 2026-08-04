@@ -3,18 +3,20 @@ version: 2
 models:
   - name: vw_snowflake__top_recommendations
     description: >
-      Flagship gold-layer view. Ranked list of actionable optimization recommendations
-      across all domains, deduplicated by logical dbt model (node_id) using impact-based
-      ranking (highest savings wins). Ordered by estimated annual savings.
+      Flagship gold-layer view. P1 (actionable now) signals only, deduplicated
+      per entity (highest savings as representative). Includes related_signals_count
+      to indicate additional optimizations available.
     columns:
       - name: priority_rank
         description: Rank by estimated annual savings (1 = highest savings)
-      - name: domain
-        description: Optimization domain (warehouse, materialization, clustering, ai)
-      - name: effort_category
-        description: Effort required (config_change, sql_refactor, architecture)
-      - name: environment_ids
-        description: Array of dbt_cloud_environment_ids where this model exists
+      - name: signal_id
+        description: Unique signal identifier matching the optimization priorities mapping
+      - name: related_signals_count
+        description: Total P1 signals for this entity (1 = only this one, 2+ = more available)
+      - name: snowflake_ddl
+        description: Ready-to-execute ALTER statement (when applicable)
+      - name: dbt_model_config
+        description: Copy-paste dbt config block (when applicable)
 
   - name: vw_snowflake__cost_savings_summary
     description: >
@@ -30,16 +32,17 @@ models:
 
   - name: vw_snowflake__optimization_backlog
     description: >
-      Full optimization backlog for sprint planning and agent consumption.
-      Includes ALL tiers (actionable, monitor, stable). Each row is self-contained —
-      an agent can create a ticket from any single row.
+      Sprint-planning backlog. Shows P1 (actionable now) and P2 (root cause fix)
+      signals. Each row is self-contained — an agent can create a ticket from it.
     columns:
+      - name: signal_id
+        description: Unique signal identifier
+      - name: priority_tier
+        description: 1 = actionable now, 2 = root cause fix
       - name: effort_category
         description: Effort required — used for sprint planning grouping
-      - name: backlog_status
-        description: Current status (actionable, monitor, stable)
-      - name: snowflake_ddl
-        description: Ready-to-execute SQL or dbt config change
+      - name: action_type
+        description: Type of fix (snowflake_ddl, dbt_config, investigation)
 
   - name: vw_snowflake__cross_domain_insights
     description: >

@@ -5,18 +5,12 @@
 }}
 
 {#--
-  Full optimization backlog for sprint planning and agent consumption.
-  Includes ALL tiers (actionable + monitor + stable) with full context.
-  Grouped by effort_category (quick wins first), then by estimated savings.
-
+  Optimization backlog for sprint planning and agent consumption.
+  Shows P1 (actionable now) and P2 (root cause fix) signals.
   Each row is self-contained — an agent can create a ticket from any single row.
-  Filtered to dbt_monitored_projects (excludes installed package models by default).
---#}
 
-{% set monitored_projects = var('dbt_monitored_projects', []) %}
-{% if monitored_projects | length == 0 %}
-  {% set monitored_projects = [project_name] %}
-{% endif %}
+  Ordered by priority_tier first (P1 before P2), then by savings.
+--#}
 
 with env_counts as (
     select
@@ -34,17 +28,20 @@ ranked as (
         coalesce(ec.environment_count, 1) as environment_count,
         ec.environment_ids,
         row_number() over (
-            partition by ar.dedup_key, ar.domain, ar.recommendation
+            partition by ar.dedup_key, ar.domain, ar.signal_id
             order by ar.estimated_annual_savings_usd desc nulls last, ar.score desc
         ) as env_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
+    where ar.priority_tier in (1, 2)
+      and ar.backlog_status = 'actionable'
 )
 
 select
     domain,
+    signal_id,
+    priority_tier,
     effort_category,
-    backlog_status,
     node_id,
     coalesce(node_model_name, model_name) as model_name,
     node_project_name as project_name,
@@ -69,17 +66,4 @@ select
     snapshot_date
 from ranked
 where env_rank = 1
-order by
-    case effort_category
-        when 'config_change' then 1
-        when 'sql_refactor' then 2
-        when 'architecture' then 3
-        else 4
-    end,
-    case backlog_status
-        when 'actionable' then 1
-        when 'monitor' then 2
-        else 3
-    end,
-    estimated_annual_savings_usd desc nulls last,
-    score desc
+order by priority_tier, estimated_annual_savings_usd desc nulls last, score desc

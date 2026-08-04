@@ -6,17 +6,29 @@
 
 {#--
   Unified recommendation surface that normalizes recommendations from all domain-specific
-  fact models into a single interface with cost estimation and effort classification.
+  fact models into a single interface with cost estimation, effort classification,
+  signal identification, and priority tier assignment.
 
   This intermediate model is the shared foundation for all gold-layer views.
   Each gold view selects from this model with different filters/aggregations.
 
+  Priority logic (v1 — stateless):
+    - Rule 1: Co-signal deferral (blocking P2 model signals defer P3 warehouse config)
+    - Rule 2: SQL refactor non-blocking (if only sql_refactor remains, promote P3→P2)
+    - Rule 3: Savings-based promotion (P2→P1 when savings >= threshold)
+  See docs/snowflake/optimization_priorities_mapping.md for full mapping.
+
   Grain: one row per (table_fqn or warehouse_name, domain, recommendation)
-  Sources: warehouse sizing, spillage, expensive queries, materialization v2,
+  Sources: warehouse config, spillage, expensive queries, materialization v2,
            incremental candidates, incremental config, clustering, AI spend
 --#}
 
 {% set credit_rate_usd = var('credit_rate_usd', 2) %}
+{% set min_savings_threshold = var('min_savings_threshold_annual', 100) %}
+{% set monitored_projects = var('dbt_monitored_projects', []) %}
+{% if monitored_projects | length == 0 %}
+  {% set monitored_projects = [project_name] %}
+{% endif %}
 
 with warehouse_rates as (
     -- Derive credits-per-second per warehouse from actual metering data
@@ -60,7 +72,8 @@ all_recommendations as (
             else 'actionable'
         end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        ws.recommendation_key as signal_id
     from {{ ref('fct_snowflake__warehouse_config_recommendations') }} as ws
     where ws.recommendation not like 'Stable%'
 
@@ -84,7 +97,6 @@ all_recommendations as (
             else 'config_change'
         end as effort_category,
         sp.total_gb_spilled_local + sp.total_gb_spilled_remote as score,
-        -- Cost: estimate spill overhead as added query time
         (sp.total_gb_spilled_local * 0.5 + sp.total_gb_spilled_remote * 5.0)
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
@@ -98,7 +110,13 @@ all_recommendations as (
             else 'actionable'
         end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        case
+            when sp.recommendation like '%Scale up%' then 'spillage_scale_up'
+            when sp.recommendation like '%moderate%' and sp.recommendation like '%worse%' then 'spillage_moderate_worsening'
+            when sp.recommendation like '%Stable%' or sp.recommendation like '%minor%' then 'spillage_moderate_stable'
+            else 'spillage_scale_up'
+        end as signal_id
     from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
     left join warehouse_rates as wr on wr.warehouse_name = sp.warehouse_name
     where sp.recommendation not like 'Not available%'
@@ -128,7 +146,11 @@ all_recommendations as (
             else 'actionable'
         end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        case
+            when eq.recommendation like '%Monitor%' then 'expensive_query_monitor'
+            else 'expensive_query_actionable'
+        end as signal_id
     from {{ ref('fct_snowflake__expensive_query_recommendations') }} as eq
     left join {{ ref('int_dbt__relations') }} as dr_eq
         on dr_eq.dbt_model = eq.dbt_node_id
@@ -149,7 +171,6 @@ all_recommendations as (
         tm.recommendation_reason,
         'config_change' as effort_category,
         tm.materialization_score as score,
-        -- Cost: view recomputes on every SELECT
         tm.select_count * tm.avg_query_duration_s
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
@@ -163,9 +184,9 @@ all_recommendations as (
             else 'actionable'
         end as backlog_status,
         '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        'materialize_as_table' as signal_id
     from {{ ref('fct_snowflake__table_materialization_candidates_v2') }} as tm
-    -- Use the warehouse that queries this view most (approximation: use any available rate)
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
@@ -189,16 +210,11 @@ all_recommendations as (
             else 'Evaluate incremental materialization'
         end as recommendation,
         ic.recommendation_reason,
-        case
-            when ic.recommendation like 'Strong%' then 'architecture'
-            else 'architecture'
-        end as effort_category,
+        'architecture' as effort_category,
         ic.compute_waste_score as score,
-        -- Cost: full rebuild every time
         ic.avg_build_time_sec * ic.builds_per_day * 365
             * coalesce(wr.credits_per_second, 0.000278)
             * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        -- Savings: proportional to redundancy rate
         ic.avg_build_time_sec * ic.builds_per_day * 365
             * coalesce(ic.rebuild_redundancy_rate, 0.5)
             * coalesce(wr.credits_per_second, 0.000278)
@@ -210,7 +226,8 @@ all_recommendations as (
             else 'actionable'
         end as backlog_status,
         icr_lookup.dbt_model_config as dbt_model_config,
-        icr_lookup.identified_unique_key
+        icr_lookup.identified_unique_key,
+        'convert_to_incremental' as signal_id
     from {{ ref('fct_snowflake__incremental_materialization_candidates') }} as ic
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
@@ -254,7 +271,8 @@ all_recommendations as (
         icr.snapshot_date,
         'actionable' as backlog_status,
         icr.dbt_model_config,
-        icr.identified_unique_key
+        icr.identified_unique_key,
+        'apply_incremental_' || icr.incremental_strategy as signal_id
     from {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
@@ -280,11 +298,9 @@ all_recommendations as (
         tc.recommendation_reason,
         'config_change' as effort_category,
         tc.score,
-        -- Cost: full scans on every query
         tc.select_count * tc.avg_query_duration_s
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        -- Savings: proportional to scan ratio reduction (target 0.2)
         tc.select_count * tc.avg_query_duration_s
             * greatest(tc.scan_ratio_pct / 100.0 - 0.2, 0)
             * coalesce(wr.credits_per_second, 0.000278)
@@ -293,7 +309,12 @@ all_recommendations as (
         tc.snapshot_date,
         'actionable' as backlog_status,
         '{% raw %}{{ config(cluster_by=[{% endraw %}' || coalesce('''' || replace(tc.clustering_key, ', ', ''', ''') || '''', '''<recommended_columns>''') || '{% raw %}]) }}{% endraw %}' as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        case
+            when tc.recommendation_tier = 'Strong' then 'add_clustering_key_strong'
+            when tc.recommendation_tier = 'Good' then 'add_clustering_key_good'
+            else 'add_clustering_key_evaluate'
+        end as signal_id
     from {{ ref('fct_snowflake__table_clustering_candidates') }} as tc
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
@@ -330,7 +351,8 @@ all_recommendations as (
             else 'stable'
         end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        'ai_spend_' || lower(ai.wow_trend) as signal_id
     from {{ ref('fct_snowflake__ai_spend_overview') }} as ai
     where ai.wow_trend in ('Growing', 'New')
 
@@ -365,7 +387,8 @@ all_recommendations as (
         amc.snapshot_date,
         case when amc.recommendation like '%Monitor%' then 'stable' else 'actionable' end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        'ai_model_cost' as signal_id
     from {{ ref('fct_snowflake__ai_model_cost_recommendations') }} as amc
     where amc.recommendation not like '%Monitor%'
 
@@ -400,7 +423,8 @@ all_recommendations as (
         ate.snapshot_date,
         case when ate.recommendation like '%efficient%' then 'stable' else 'actionable' end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        'ai_token_efficiency' as signal_id
     from {{ ref('fct_snowflake__ai_token_efficiency_recommendations') }} as ate
     where ate.recommendation not like '%efficient%'
 
@@ -435,7 +459,8 @@ all_recommendations as (
         aao.snapshot_date,
         case when aao.recommendation like '%Healthy%' then 'stable' else 'actionable' end as backlog_status,
         null as dbt_model_config,
-        null as identified_unique_key
+        null as identified_unique_key,
+        'ai_agent_optimization' as signal_id
     from {{ ref('fct_snowflake__ai_agent_optimization_recommendations') }} as aao
     where aao.recommendation not like '%Healthy%'
 ),
@@ -460,6 +485,7 @@ enriched as (
         ar.backlog_status,
         ar.dbt_model_config,
         ar.identified_unique_key,
+        ar.signal_id,
         coalesce(rh.node_id, ar.dbt_model) as node_id,
         coalesce(rh.project_name, split_part(ar.dbt_model, '.', 2), wh_project.warehouse_project_name) as node_project_name,
         coalesce(rh.model_name, ar.model_name) as node_model_name,
@@ -490,25 +516,195 @@ enriched as (
         on build_wh.node_id = ar.dbt_model
         and ar.warehouse_name is null
     -- Warehouse-to-project mapping: for warehouse-level recs that have no model association
+    -- Checks if the warehouse has been used by any monitored project (not MODE across all projects)
     left join (
-        select
+        select distinct
             warehouse_name,
-            mode(split_part(
-                parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string,
-                '.', 2
-            )) as warehouse_project_name
+            '{{ monitored_projects[0] }}' as warehouse_project_name
         from {{ ref('int_snowflake__query_history') }}
         where query_text like '%node_id%'
             and query_start_time >= dateadd(day, -30, current_timestamp())
             and warehouse_name is not null
-        group by warehouse_name
+            and split_part(
+                parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string,
+                '.', 2
+            ) in (
+                {%- for proj in monitored_projects -%}
+                    '{{ proj }}'{% if not loop.last %}, {% endif %}
+                {%- endfor -%}
+            )
     ) as wh_project
         on wh_project.warehouse_name = ar.warehouse_name
         and ar.dbt_model is null
+),
+
+-- =========================================================================
+-- PRIORITY TIER LOGIC (v1 — stateless)
+-- =========================================================================
+
+-- Models/tables with blocking P2 signals (non-sql_refactor model-level fixes)
+blocking_model_signals_by_table as (
+    select distinct table_fqn
+    from enriched
+    where domain in ('materialization', 'clustering')
+      and effort_category not in ('sql_refactor', 'monitoring')
+      and backlog_status = 'actionable'
+      and table_fqn is not null
+),
+
+-- Warehouses where at least one model has a blocking P2 signal
+blocking_model_signals_by_warehouse as (
+    select distinct warehouse_name
+    from enriched
+    where domain in ('materialization', 'clustering')
+      and effort_category not in ('sql_refactor', 'monitoring')
+      and backlog_status = 'actionable'
+      and warehouse_name is not null
+),
+
+-- Models with spillage (for clustering P1 promotion)
+models_with_spillage as (
+    select distinct table_fqn
+    from enriched
+    where signal_id in ('spillage_scale_up', 'spillage_moderate_worsening')
+      and table_fqn is not null
+),
+
+prioritized as (
+    select
+        e.*,
+        coalesce(e.node_id, e.entity_name) as dedup_key,
+        case
+            -- =================================================================
+            -- P1: Always-actionable warehouse config (safe regardless of model state)
+            -- =================================================================
+            when e.signal_id in (
+                'idle_reduce_auto_suspend', 'idle_switch_scaling_policy',
+                'idle_reduce_max_clusters', 'idle_reduce_min_clusters',
+                'idle_enable_mcw_bursty',
+                'provisioning_enable_auto_resume', 'provisioning_increase_suspend',
+                'provisioning_increase_suspend_300', 'provisioning_warm_cluster',
+                'overload_switch_scaling_policy'
+            ) then 1
+
+            -- =================================================================
+            -- P3 base: Conditional warehouse config (Rule 1: co-signal deferral)
+            -- Promoted to P2 if no blocking model-level signals exist
+            -- =================================================================
+            -- Spillage scale-up: defer if the SPILLING MODEL has clustering/materialization signal
+            when e.signal_id = 'spillage_scale_up'
+                and e.table_fqn in (select table_fqn from blocking_model_signals_by_table)
+                then 3
+            when e.signal_id = 'spillage_scale_up'
+                then 2
+
+            -- Overload/oversized config: defer if models on this warehouse have blocking signals
+            when e.signal_id in (
+                'overload_enable_mcw', 'overload_scale_up_standard',
+                'overload_increase_clusters', 'overload_scale_up_large_mcw',
+                'oversized_scale_down', 'oversized_disable_mcw'
+            ) and e.warehouse_name in (select warehouse_name from blocking_model_signals_by_warehouse)
+                then 3
+            when e.signal_id in (
+                'overload_enable_mcw', 'overload_scale_up_standard',
+                'overload_increase_clusters', 'overload_scale_up_large_mcw',
+                'oversized_scale_down', 'oversized_disable_mcw'
+            ) then 2
+
+            -- =================================================================
+            -- P3: Architecture changes (not promotable in v1)
+            -- =================================================================
+            when e.signal_id in (
+                'overload_at_max_standard', 'idle_consolidate_standard',
+                'idle_consolidate_underloaded'
+            ) then 3
+
+            -- =================================================================
+            -- P4: Monitor signals
+            -- =================================================================
+            when e.signal_id in (
+                'spillage_moderate_worsening', 'spillage_moderate_stable',
+                'expensive_query_monitor'
+            ) then 4
+
+            -- =================================================================
+            -- Model domain: P2 base, P1 if savings >= threshold
+            -- Clustering promoted to P1 if spillage co-occurs (resolves root cause)
+            -- =================================================================
+            when e.signal_id in ('add_clustering_key_strong', 'add_clustering_key_good')
+                and e.table_fqn in (select table_fqn from models_with_spillage)
+                then 1
+            when e.signal_id in ('add_clustering_key_strong', 'add_clustering_key_good')
+                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
+                then 1
+            when e.signal_id in ('add_clustering_key_strong', 'add_clustering_key_good')
+                then 2
+
+            -- Incremental config: inherits parent priority (P1 if parent convert_to_incremental is P1)
+            when e.signal_id like 'apply_incremental_%'
+                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
+                then 1
+            when e.signal_id like 'apply_incremental_%'
+                then 2
+
+            -- Other materialization signals: savings threshold
+            when e.domain = 'materialization'
+                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
+                then 1
+            when e.domain = 'materialization'
+                then 2
+
+            -- =================================================================
+            -- Expensive queries (sql_refactor): P2 base, P1 if savings >= threshold
+            -- =================================================================
+            when e.signal_id = 'expensive_query_actionable'
+                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
+                then 1
+            when e.signal_id = 'expensive_query_actionable'
+                then 2
+
+            -- =================================================================
+            -- Other warehouse signals: P2
+            -- =================================================================
+            when e.signal_id = 'provisioning_gen2' then 2
+
+            -- =================================================================
+            -- AI domain: P4 (monitor) for spend overview, P2 for actionable
+            -- =================================================================
+            when e.domain = 'ai' and e.backlog_status = 'monitor' then 4
+            when e.domain = 'ai' then 2
+
+            -- Default
+            else 3
+        end as priority_tier
+    from enriched as e
 )
 
 select
-    *,
-    coalesce(node_id, entity_name) as dedup_key
-from enriched
+    domain,
+    entity_name,
+    table_fqn,
+    dbt_model,
+    model_name,
+    warehouse_name,
+    recommendation,
+    recommendation_reason,
+    effort_category,
+    score,
+    estimated_annual_cost_usd,
+    estimated_annual_savings_usd,
+    snowflake_ddl,
+    snapshot_date,
+    backlog_status,
+    dbt_model_config,
+    identified_unique_key,
+    signal_id,
+    priority_tier,
+    node_id,
+    node_project_name,
+    node_model_name,
+    target_name,
+    dbt_cloud_environment_id,
+    dedup_key
+from prioritized
 where {{ scope_filter('node_project_name', 'node_id') }}

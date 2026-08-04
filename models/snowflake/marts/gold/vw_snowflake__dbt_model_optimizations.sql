@@ -9,13 +9,13 @@
   These are actions taken IN dbt code (model configs, SQL changes).
   Excludes warehouse-level and AI-level recommendations.
 
+  Shows ALL signals per model with priority_tier for ordering.
   Enriched with clustering key detail from fct_snowflake__clustering_key_candidates.
---#}
 
-{% set monitored_projects = var('dbt_monitored_projects', []) %}
-{% if monitored_projects | length == 0 %}
-  {% set monitored_projects = [project_name] %}
-{% endif %}
+  Priority tiers:
+    P1 = actionable now (high savings or spillage co-occurrence)
+    P2 = root cause fix (standard model-level optimization)
+--#}
 
 with env_counts as (
     select
@@ -47,14 +47,10 @@ ranked as (
         ck.suggested_clustering_key,
         row_number() over (
             partition by ar.dedup_key, ar.domain
-            order by ar.estimated_annual_savings_usd desc nulls last,
-                case ar.effort_category when 'config_change' then 1 when 'sql_refactor' then 2 else 3 end,
+            order by ar.priority_tier,
+                ar.estimated_annual_savings_usd desc nulls last,
                 ar.score desc
-        ) as env_rank,
-        row_number() over (
-            partition by coalesce(ar.node_id, ar.entity_name)
-            order by ar.estimated_annual_savings_usd desc nulls last, ar.score desc
-        ) as priority
+        ) as env_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
     left join clustering_keys as ck on ck.table_fqn = ar.table_fqn
@@ -67,8 +63,9 @@ select
     node_project_name as project_name,
     coalesce(node_model_name, model_name) as model_name,
     domain,
+    signal_id,
+    priority_tier,
     effort_category,
-    priority,
     table_fqn,
     recommendation,
     recommendation_reason,
@@ -89,4 +86,4 @@ select
     snapshot_date
 from ranked
 where env_rank = 1
-order by coalesce(node_model_name, model_name), priority
+order by coalesce(node_model_name, model_name), priority_tier, estimated_annual_savings_usd desc nulls last

@@ -20,6 +20,8 @@ select
     coalesce(ar.node_model_name, ar.model_name) as model_name,
     ar.table_fqn,
     ar.entity_name as query_hash,
+    ar.signal_id,
+    ar.priority_tier,
     ar.estimated_annual_cost_usd,
     ar.estimated_annual_savings_usd,
     ar.score as total_credits_30d,

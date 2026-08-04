@@ -15,8 +15,8 @@
     4. Resize warehouse / reduce spillage (config-level fix)
     5. Refactor SQL (highest effort, last resort)
 
+  Only shows entities where at least one signal is P1 (actionable now).
   One row per table_fqn — naturally deduped.
-  Warehouse-level insights (oversized + idle) included with table_fqn = NULL.
 --#}
 
 {% set monitored_projects = var('dbt_monitored_projects', []) %}
