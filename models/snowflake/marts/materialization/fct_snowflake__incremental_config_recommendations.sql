@@ -285,13 +285,13 @@ select
     -- populated post-build by probe_unique_key_candidates() — null until macro runs
     null::string                                                            as likely_unique_key,
     -- confidence system
-    confidence_score,
+    case when incremental_strategy is null then null else confidence_score end as confidence_score,
     case
-        when incremental_strategy is null then 'do_not_recommend'
         when roi_tier = 'low' then 'do_not_recommend'
+        when incremental_strategy is null then 'investigate'
         when confidence_score >= 60 then 'actionable_review'
         when confidence_score >= 30 then 'investigate'
-        else 'do_not_recommend'
+        else 'investigate'
     end                                                                     as recommendation_status,
     assumptions,
     blocking_signals,

@@ -24,7 +24,6 @@
 --#}
 
 {% set credit_rate_usd = var('credit_rate_usd', 2) %}
-{% set min_savings_threshold = var('min_savings_threshold_annual', 100) %}
 {% set monitored_projects = var('dbt_monitored_projects', []) %}
 {% if monitored_projects | length == 0 %}
   {% set monitored_projects = [project_name] %}
@@ -283,9 +282,10 @@ all_recommendations as (
         case
             when icr_lookup.recommendation_status = 'actionable_review' then 'actionable'
             when icr_lookup.recommendation_status = 'investigate' then 'monitor'
+            when icr_lookup.recommendation_status = 'do_not_recommend' then 'stable'
             when ic.recommendation like '%Insufficient%' then 'monitor'
             when ic.roi_tier = 'low' then 'stable'
-            else 'actionable'
+            else 'monitor'
         end as backlog_status,
         icr_lookup.dbt_model_config as dbt_model_config,
         icr_lookup.identified_unique_key,
@@ -599,45 +599,18 @@ enriched as (
 ),
 
 -- =========================================================================
--- PRIORITY TIER LOGIC (v1 — stateless)
+-- PRIORITY TIER LOGIC — Per-entity relative ordering
+-- Priority is determined by hierarchy rank within each entity (model/warehouse).
+-- A signal alone on an entity is P1. Co-occurring signals are ranked by hierarchy.
 -- =========================================================================
-
--- Models/tables with blocking P2 signals (non-sql_refactor model-level fixes)
-blocking_model_signals_by_table as (
-    select distinct table_fqn
-    from enriched
-    where domain in ('materialization', 'clustering')
-      and effort_category not in ('sql_refactor', 'monitoring')
-      and backlog_status = 'actionable'
-      and table_fqn is not null
-),
-
--- Warehouses where at least one model has a blocking P2 signal
-blocking_model_signals_by_warehouse as (
-    select distinct warehouse_name
-    from enriched
-    where domain in ('materialization', 'clustering')
-      and effort_category not in ('sql_refactor', 'monitoring')
-      and backlog_status = 'actionable'
-      and warehouse_name is not null
-),
-
--- Models with spillage (for clustering P1 promotion)
-models_with_spillage as (
-    select distinct table_fqn
-    from enriched
-    where signal_id in ('spillage_scale_up', 'spillage_moderate_worsening')
-      and table_fqn is not null
-),
 
 prioritized as (
     select
         e.*,
         coalesce(e.node_id, e.entity_name) as dedup_key,
+        -- Fixed hierarchy rank per signal type (lower = do first)
         case
-            -- =================================================================
-            -- P1: Always-actionable warehouse config (safe regardless of model state)
-            -- =================================================================
+            -- Rank 1: Always-safe warehouse config (no dependencies)
             when e.signal_id in (
                 'idle_reduce_auto_suspend', 'idle_switch_scaling_policy',
                 'idle_reduce_max_clusters', 'idle_reduce_min_clusters',
@@ -646,97 +619,69 @@ prioritized as (
                 'provisioning_increase_suspend_300', 'provisioning_warm_cluster',
                 'overload_switch_scaling_policy'
             ) then 1
-
-            -- =================================================================
-            -- P3 base: Conditional warehouse config (Rule 1: co-signal deferral)
-            -- Promoted to P2 if no blocking model-level signals exist
-            -- =================================================================
-            -- Spillage scale-up: defer if the SPILLING MODEL has clustering/materialization signal
-            when e.signal_id = 'spillage_scale_up'
-                and e.table_fqn in (select table_fqn from blocking_model_signals_by_table)
-                then 3
-            when e.signal_id = 'spillage_scale_up'
+            -- Rank 2: Incremental/materialization (root cause — reduces rebuild waste)
+            when e.signal_id in ('convert_to_incremental', 'materialize_as_table')
+                or e.signal_id like 'apply_incremental_%'
                 then 2
-
-            -- Overload/oversized config: defer if models on this warehouse have blocking signals
+            -- Rank 3: Clustering (reduces scan width — do after incremental)
             when e.signal_id in (
-                'overload_enable_mcw', 'overload_scale_up_standard',
-                'overload_increase_clusters', 'overload_scale_up_large_mcw',
-                'oversized_scale_down', 'oversized_disable_mcw'
-            ) and e.warehouse_name in (select warehouse_name from blocking_model_signals_by_warehouse)
-                then 3
-            when e.signal_id in (
-                'overload_enable_mcw', 'overload_scale_up_standard',
-                'overload_increase_clusters', 'overload_scale_up_large_mcw',
-                'oversized_scale_down', 'oversized_disable_mcw'
-            ) then 2
-
-            -- =================================================================
-            -- P3: Architecture changes (not promotable in v1)
-            -- =================================================================
-            when e.signal_id in (
-                'overload_at_max_standard', 'idle_consolidate_standard',
-                'idle_consolidate_underloaded'
+                'add_clustering_key_strong', 'add_clustering_key_good',
+                'add_clustering_key_evaluate'
             ) then 3
-
-            -- =================================================================
-            -- P4: Monitor signals
-            -- =================================================================
+            -- Rank 4: Conditional warehouse config (deferred behind model fixes)
+            when e.signal_id in (
+                'spillage_scale_up', 'overload_enable_mcw', 'overload_scale_up_standard',
+                'overload_increase_clusters', 'overload_scale_up_large_mcw',
+                'oversized_scale_down', 'oversized_disable_mcw',
+                'overload_at_max_standard', 'idle_consolidate_standard',
+                'idle_consolidate_underloaded', 'provisioning_gen2'
+            ) then 4
+            -- Rank 5: Monitor/investigate signals
             when e.signal_id in (
                 'spillage_moderate_worsening', 'spillage_moderate_stable',
-                'expensive_query_monitor'
-            ) then 4
-
-            -- =================================================================
-            -- Model domain: P2 base, P1 if savings >= threshold
-            -- Clustering promoted to P1 if spillage co-occurs (resolves root cause)
-            -- =================================================================
-            when e.signal_id in ('add_clustering_key_strong', 'add_clustering_key_good')
-                and e.table_fqn in (select table_fqn from models_with_spillage)
-                then 1
-            when e.signal_id in ('add_clustering_key_strong', 'add_clustering_key_good')
-                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
-                then 1
-            when e.signal_id in ('add_clustering_key_strong', 'add_clustering_key_good')
-                then 2
-
-            -- Incremental config: inherits parent priority (P1 if parent convert_to_incremental is P1)
-            when e.signal_id like 'apply_incremental_%'
-                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
-                then 1
-            when e.signal_id like 'apply_incremental_%'
-                then 2
-
-            -- Other materialization signals: savings threshold
-            when e.domain = 'materialization'
-                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
-                then 1
-            when e.domain = 'materialization'
-                then 2
-
-            -- =================================================================
-            -- Expensive queries (sql_refactor): P2 base, P1 if savings >= threshold
-            -- =================================================================
-            when e.signal_id = 'expensive_query_actionable'
-                and e.estimated_annual_savings_usd >= {{ min_savings_threshold }}
-                then 1
-            when e.signal_id = 'expensive_query_actionable'
-                then 2
-
-            -- =================================================================
-            -- Other warehouse signals: P2
-            -- =================================================================
-            when e.signal_id = 'provisioning_gen2' then 2
-
-            -- =================================================================
-            -- AI domain: P4 (monitor) for spend overview, P2 for actionable
-            -- =================================================================
-            when e.domain = 'ai' and e.backlog_status = 'monitor' then 4
-            when e.domain = 'ai' then 2
-
+                'expensive_query_monitor', 'expensive_query_actionable'
+            ) then 5
+            -- Rank 6: AI domain
+            when e.domain = 'ai' then 6
             -- Default
-            else 3
-        end as priority_tier
+            else 5
+        end as hierarchy_rank,
+        -- Per-entity priority: rank 1 = do first for this entity
+        row_number() over (
+            partition by coalesce(e.node_id, e.entity_name)
+            order by
+                case
+                    when e.signal_id in (
+                        'idle_reduce_auto_suspend', 'idle_switch_scaling_policy',
+                        'idle_reduce_max_clusters', 'idle_reduce_min_clusters',
+                        'idle_enable_mcw_bursty',
+                        'provisioning_enable_auto_resume', 'provisioning_increase_suspend',
+                        'provisioning_increase_suspend_300', 'provisioning_warm_cluster',
+                        'overload_switch_scaling_policy'
+                    ) then 1
+                    when e.signal_id in ('convert_to_incremental', 'materialize_as_table')
+                        or e.signal_id like 'apply_incremental_%'
+                        then 2
+                    when e.signal_id in (
+                        'add_clustering_key_strong', 'add_clustering_key_good',
+                        'add_clustering_key_evaluate'
+                    ) then 3
+                    when e.signal_id in (
+                        'spillage_scale_up', 'overload_enable_mcw', 'overload_scale_up_standard',
+                        'overload_increase_clusters', 'overload_scale_up_large_mcw',
+                        'oversized_scale_down', 'oversized_disable_mcw',
+                        'overload_at_max_standard', 'idle_consolidate_standard',
+                        'idle_consolidate_underloaded', 'provisioning_gen2'
+                    ) then 4
+                    when e.signal_id in (
+                        'spillage_moderate_worsening', 'spillage_moderate_stable',
+                        'expensive_query_monitor', 'expensive_query_actionable'
+                    ) then 5
+                    when e.domain = 'ai' then 6
+                    else 5
+                end,
+                e.estimated_annual_savings_usd desc nulls last
+        ) as priority_tier
     from enriched as e
 )
 
@@ -759,6 +704,7 @@ select
     dbt_model_config,
     identified_unique_key,
     signal_id,
+    hierarchy_rank,
     priority_tier,
     node_id,
     node_project_name,

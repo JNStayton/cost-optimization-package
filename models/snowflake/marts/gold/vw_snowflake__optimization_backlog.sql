@@ -33,8 +33,7 @@ ranked as (
         ) as env_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
-    where ar.priority_tier in (1, 2)
-      and ar.backlog_status = 'actionable'
+    where ar.backlog_status in ('actionable', 'monitor')
 )
 
 select

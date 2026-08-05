@@ -29,9 +29,15 @@ with spillage_models as (
         sp.recommendation,
         sp.recommendation_reason,
         sp.snowflake_ddl,
-        sp.snapshot_date
+        sp.snapshot_date,
+        case
+            when split_part(sp.dbt_model, '.', 2) = '{{ project_name }}'
+                then 'project'
+            else 'installed_package'
+        end as model_source
     from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
     where sp.recommendation not like 'Not available%'
+      and sp.dbt_model is not null
 ),
 
 -- Find the most recent spilling build query per model for run_id traceability
@@ -68,6 +74,7 @@ select
     sm.table_fqn,
     sm.node_id,
     sm.warehouse_name,
+    sm.model_source,
     sm.total_gb_spilled_local,
     sm.total_gb_spilled_remote,
     sm.total_gb_spilled,

@@ -61,9 +61,9 @@ ranked as (
     left join clustering_keys as ck on ck.table_fqn = ar.table_fqn
     left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
         on icr.table_fqn = ar.table_fqn
-        and ar.signal_id like 'apply_incremental%' or ar.signal_id = 'convert_to_incremental'
+        and (ar.signal_id like 'apply_incremental%' or ar.signal_id = 'convert_to_incremental')
     where ar.domain in ('materialization', 'clustering')
-      and ar.backlog_status in ('actionable', 'monitor')
+      and ar.backlog_status = 'actionable'
 )
 
 select
