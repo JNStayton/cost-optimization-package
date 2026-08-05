@@ -65,9 +65,9 @@ with_dbt_model as (
         dm.dbt_model
     from with_po_status as wp
     left join {{ ref('int_dbt__relations') }} as dm
-        on wp.database_name = dm.database_name
-        and wp.schema_name = dm.schema_name
-        and wp.table_name = dm.table_name
+        on lower(wp.database_name) = lower(dm.database_name)
+        and lower(wp.schema_name) = lower(dm.schema_name)
+        and lower(wp.table_name) = lower(dm.table_name)
 ),
 
 final as (
