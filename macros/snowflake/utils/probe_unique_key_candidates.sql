@@ -92,7 +92,7 @@
               likely_unique_key     = '{{ ns.confirmed_key }}',
               identified_unique_key = '{{ ns.confirmed_key }}',
               confidence_score      = {{ new_score }},
-              blocking_signals      = array_remove(blocking_signals, 'key_pending_exact_validation'),
+              blocking_signals      = array_except(blocking_signals, array_construct('key_pending_exact_validation')),
               dbt_model_config      = replace(
                 dbt_model_config,
                 'unique_key=''' || '{{ old_key_in_template }}' || '''',
@@ -120,9 +120,9 @@
                 when {{ new_score }} >= 30 then 'investigate'
                 else 'do_not_recommend'
               end,
-              blocking_signals      = array_append(
-                array_remove(blocking_signals, 'key_pending_exact_validation'),
-                'key_not_exact_or_nullable'
+              blocking_signals      = array_cat(
+                array_except(blocking_signals, array_construct('key_pending_exact_validation')),
+                array_construct('key_not_exact_or_nullable')
               ),
               identified_unique_key = null,
               strategy_notes        = 'Key probe failed: no single-column candidate passed exact uniqueness '
