@@ -124,6 +124,65 @@ all_recommendations as (
     union all
 
     -- =========================================================================
+    -- WAREHOUSE AGGREGATE SPILLAGE (warehouse-level signal)
+    -- When total spillage across all models on a warehouse exceeds threshold,
+    -- emit a warehouse-level scale-up recommendation even if no single model
+    -- individually qualifies as "heavy."
+    -- =========================================================================
+    select
+        'warehouse' as domain,
+        sp_agg.warehouse_name as entity_name,
+        null as table_fqn,
+        null as dbt_model,
+        null as model_name,
+        sp_agg.warehouse_name,
+        'Scale up warehouse (aggregate spillage across models)' as recommendation,
+        sp_agg.models_spilling || ' model(s) collectively spilling '
+            || sp_agg.total_gb_spilled || ' GB over 30 days on ' || sp_agg.warehouse_name
+            || '. No single model exceeds the heavy threshold, but the aggregate load indicates '
+            || 'the warehouse is undersized for the combined workload.' as recommendation_reason,
+        'config_change' as effort_category,
+        sp_agg.total_gb_spilled as score,
+        sp_agg.total_gb_spilled * 0.5
+            * coalesce(wr.credits_per_second, 0.000278)
+            * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+        sp_agg.total_gb_spilled * 0.5
+            * coalesce(wr.credits_per_second, 0.000278)
+            * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
+        'ALTER WAREHOUSE ' || sp_agg.warehouse_name || ' SET WAREHOUSE_SIZE = '''
+            || case sp_agg.warehouse_current_size
+                when 'X-Small' then 'SMALL'
+                when 'Small' then 'MEDIUM'
+                when 'Medium' then 'LARGE'
+                when 'Large' then 'XLARGE'
+                when 'X-Large' then '2X-LARGE'
+                else 'MEDIUM'
+            end || ''';' as snowflake_ddl,
+        current_date() as snapshot_date,
+        'actionable' as backlog_status,
+        null as dbt_model_config,
+        null as identified_unique_key,
+        'spillage_scale_up' as signal_id
+    from (
+        select
+            sp.warehouse_name,
+            count(distinct sp.table_fqn) as models_spilling,
+            round(sum(sp.total_gb_spilled_local + sp.total_gb_spilled_remote), 2) as total_gb_spilled,
+            max(wc.current_size) as warehouse_current_size
+        from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
+        left join {{ ref('int_snowflake__warehouse_config') }} as wc
+            on wc.warehouse_name = sp.warehouse_name
+        where sp.recommendation not like 'Not available%'
+          and sp.recommendation not like 'Stable%'
+        group by sp.warehouse_name
+        having sum(sp.total_gb_spilled_local + sp.total_gb_spilled_remote) >= {{ var('spillage_aggregate_threshold_gb', 100) }}
+            and max(case when sp.total_gb_spilled_local > 50 then 1 else 0 end) = 0
+    ) as sp_agg
+    left join warehouse_rates as wr on wr.warehouse_name = sp_agg.warehouse_name
+
+    union all
+
+    -- =========================================================================
     -- EXPENSIVE QUERIES
     -- =========================================================================
     select
@@ -210,8 +269,8 @@ all_recommendations as (
             else 'Evaluate incremental materialization'
         end as recommendation,
         ic.recommendation_reason,
-        'architecture' as effort_category,
-        ic.compute_waste_score as score,
+        'actionable_review' as effort_category,
+        ic.rebuild_pressure_score as score,
         ic.avg_build_time_sec * ic.builds_per_day * 365
             * coalesce(wr.credits_per_second, 0.000278)
             * {{ credit_rate_usd }} as estimated_annual_cost_usd,
@@ -222,7 +281,10 @@ all_recommendations as (
         null as snowflake_ddl,
         ic.snapshot_date,
         case
-            when ic.recommendation like '%Monitor%' or ic.recommendation like '%Insufficient%' then 'monitor'
+            when icr_lookup.recommendation_status = 'actionable_review' then 'actionable'
+            when icr_lookup.recommendation_status = 'investigate' then 'monitor'
+            when ic.recommendation like '%Insufficient%' then 'monitor'
+            when ic.roi_tier = 'low' then 'stable'
             else 'actionable'
         end as backlog_status,
         icr_lookup.dbt_model_config as dbt_model_config,
@@ -235,6 +297,7 @@ all_recommendations as (
     left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr_lookup
         on icr_lookup.table_fqn = ic.table_fqn
     where ic.recommendation not like '%Insufficient%'
+      and ic.roi_tier != 'low'
 
     union all
 
@@ -249,16 +312,8 @@ all_recommendations as (
         icr.model_name,
         null as warehouse_name,
         'Apply incremental config: ' || icr.incremental_strategy as recommendation,
-        round(coalesce(icr.rebuild_redundancy_rate, 0.5) * 100, 0) || '% of each rebuild reprocesses unchanged rows ('
-            || round(coalesce(icr.est_daily_redundant_gb_scanned, 0), 2) || ' GB/day redundant). '
-            || 'Strategy: ' || icr.incremental_strategy
-            || case
-                when icr.incremental_strategy in ('merge', 'delete+insert') and icr.best_unique_key is not null
-                    then '. Unique key: ' || icr.best_unique_key
-                else ''
-            end
-            || '.' as recommendation_reason,
-        'config_change' as effort_category,
+        icr.strategy_notes as recommendation_reason,
+        icr.effort_category,
         icr.table_size_gb as score,
         icr.avg_build_time_sec * coalesce(icr.builds_per_day, 1) * 365
             * coalesce(wr.credits_per_second, 0.000278)
@@ -269,7 +324,11 @@ all_recommendations as (
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         icr.snapshot_date,
-        'actionable' as backlog_status,
+        case
+            when icr.recommendation_status = 'actionable_review' then 'actionable'
+            when icr.recommendation_status = 'investigate' then 'monitor'
+            else 'stable'
+        end as backlog_status,
         icr.dbt_model_config,
         icr.identified_unique_key,
         'apply_incremental_' || icr.incremental_strategy as signal_id
@@ -277,6 +336,7 @@ all_recommendations as (
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
+    where icr.recommendation_status != 'do_not_recommend'
 
     union all
 

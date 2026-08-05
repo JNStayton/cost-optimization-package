@@ -37,7 +37,7 @@
 
 {% set lookback_days        = var('expensive_query_lookback_days', 30) %}
 {% set credit_rate_usd      = var('credit_rate_usd', 2) %}
-{% set high_cost_threshold  = var('expensive_query_high_cost_threshold', 10000) %}
+{% set high_cost_threshold  = var('expensive_query_high_cost_threshold', 500) %}
 {% set min_total_credits    = var('expensive_query_min_total_credits', 0.1) %}
 {% set top_n                = var('expensive_query_top_n', 50) %}
 

@@ -3,51 +3,42 @@
   {#--
     Post-hook for fct_snowflake__incremental_config_recommendations.
 
-    For each candidate table, probes the unique_key_candidates array using
-    APPROX_COUNT_DISTINCT to find the first column whose cardinality is
-    approximately equal to the row count (>= 95% threshold, accounting for
-    HyperLogLog's error margin). All candidate columns for a table are probed
-    in a single scan to minimise compute cost.
+    For each candidate table with a proposed merge strategy, runs an EXACT
+    uniqueness probe: count(*) = count(distinct key) AND count_if(key IS NULL) = 0.
 
-    When a likely unique key is confirmed it updates:
-      - likely_unique_key       — the confirmed column name
-      - identified_unique_key — re-pointed to the confirmed column
-      - dbt_model_config     — unique_key parameter swapped to confirmed column
+    When a key is confirmed:
+      - likely_unique_key set to the confirmed column
+      - identified_unique_key set (merge strategy only)
+      - confidence_score increased by 10 (validated signal)
+      - blocking_signals: removes 'key_pending_exact_validation'
+      - dbt_model_config: unique_key parameter updated
 
-    When no single-column unique key is found and the initial strategy was
-    delete+insert or merge, downgrades to append and updates:
-      - incremental_strategy    — changed to 'append'
-      - strategy_notes          — explains the downgrade and provides next steps
-                                  (surrogate key path via dbt_utils.generate_surrogate_key,
-                                   incremental_predicates path for clean date windows)
-      - dbt_model_config     — rebuilt as an append config template
+    When no single-column key passes:
+      - strategy downgraded to investigate (recommendation_status updated)
+      - confidence_score decreased by 30
+      - blocking_signals: adds 'key_not_exact_or_nullable'
+      - identified_unique_key cleared
 
-    append is the safe default when no unique key is confirmed: its failure mode
-    (visible duplicates) is preferable to silent data corruption from merge or
-    delete+insert on an unconfirmed key.
-
-    Variables:
-      incremental_unique_key_probe_threshold (default 0.95)
+    Only probes tables where incremental_strategy = 'merge' (append doesn't
+    require a key). This keeps compute cost proportional to actionable candidates.
   --#}
 
   {% if execute and target.type == 'snowflake' %}
 
-    {% set threshold = var('incremental_unique_key_probe_threshold', 0.95) %}
+    {{ log("probe_unique_key_candidates: starting exact uniqueness probe...", info=true) }}
 
-    {{ log("probe_unique_key_candidates: starting uniqueness probe...", info=true) }}
-
-    {# Fetch every candidate table and its unique key candidates as a CSV string.
-       array_to_string avoids having to parse a Snowflake ARRAY in Python/Jinja. #}
     {% set candidates_sql %}
       select
         table_fqn,
         best_unique_key,
         array_to_string(unique_key_candidates, ',') as candidates_csv,
         incremental_strategy,
-        lower(suggested_filter_column)              as suggested_filter_column
+        lower(suggested_filter_column)              as suggested_filter_column,
+        confidence_score
       from {{ this }}
       where unique_key_candidates is not null
         and array_size(unique_key_candidates) > 0
+        and incremental_strategy = 'merge'
     {% endset %}
 
     {% set candidates = run_query(candidates_sql) %}
@@ -62,30 +53,29 @@
         {% set candidate_cols = candidates_csv.split(',') %}
         {% set current_strat  = row['INCREMENTAL_STRATEGY'] %}
         {% set filter_col     = row['SUGGESTED_FILTER_COLUMN'] if row['SUGGESTED_FILTER_COLUMN'] else none %}
+        {% set current_score  = row['CONFIDENCE_SCORE'] | int %}
 
-        {{ log("probe_unique_key_candidates: probing " ~ (candidate_cols | length) ~ " candidate(s) for " ~ table_fqn, info=true) }}
+        {{ log("probe_unique_key_candidates: exact probe for " ~ (candidate_cols | length) ~ " candidate(s) on " ~ table_fqn, info=true) }}
 
-        {# Scan the table once — one APPROX_COUNT_DISTINCT per candidate column #}
-        {% set probe_sql %}
-          select
-            count(*) as total_rows
-            {% for col in candidate_cols %}
-              , approx_count_distinct({{ adapter.quote(col) }}) as col_{{ loop.index }}_distinct
-            {% endfor %}
-          from {{ table_fqn }}
-        {% endset %}
-
-        {% set probe_result = run_query(probe_sql) %}
-        {% set total_rows = probe_result.rows[0][0] | string | int %}
-
-        {# Walk candidates in rank order; stop at the first likely-unique column.
-           namespace() is required to mutate a variable inside a Jinja for loop. #}
+        {# Probe each candidate with exact count distinct + null check #}
         {% set ns = namespace(confirmed_key=none) %}
 
         {% for col in candidate_cols %}
           {% if ns.confirmed_key is none %}
-            {% set approx_distinct = probe_result.rows[0][loop.index] | string | int %}
-            {% if total_rows > 0 and (approx_distinct / total_rows) >= threshold %}
+            {% set probe_sql %}
+              select
+                count(*) as total_rows,
+                count(distinct {{ adapter.quote(col) }}) as distinct_count,
+                count_if({{ adapter.quote(col) }} is null) as null_count
+              from {{ table_fqn }}
+            {% endset %}
+
+            {% set probe_result = run_query(probe_sql) %}
+            {% set total_rows    = probe_result.rows[0][0] | int %}
+            {% set distinct_count = probe_result.rows[0][1] | int %}
+            {% set null_count    = probe_result.rows[0][2] | int %}
+
+            {% if total_rows > 0 and distinct_count == total_rows and null_count == 0 %}
               {% set ns.confirmed_key = col | lower %}
             {% endif %}
           {% endif %}
@@ -93,19 +83,17 @@
 
         {% if ns.confirmed_key is not none %}
 
-          {% set new_validate_sql = 'select count(*) = count(distinct ' ~ ns.confirmed_key ~ ') as is_unique from ' ~ table_fqn | lower %}
           {% set old_key_in_template = (best_conv_key | lower) if best_conv_key else '<unique_key>' %}
+          {% set new_score = [current_score + 10, 100] | min %}
 
           {% set update_sql %}
             update {{ this }}
             set
-              likely_unique_key       = '{{ ns.confirmed_key }}',
-              identified_unique_key = case
-                when incremental_strategy in ('merge', 'delete+insert')
-                then '{{ ns.confirmed_key }}'
-                else null
-              end,
-              dbt_model_config     = replace(
+              likely_unique_key     = '{{ ns.confirmed_key }}',
+              identified_unique_key = '{{ ns.confirmed_key }}',
+              confidence_score      = {{ new_score }},
+              blocking_signals      = array_remove(blocking_signals, 'key_pending_exact_validation'),
+              dbt_model_config      = replace(
                 dbt_model_config,
                 'unique_key=''' || '{{ old_key_in_template }}' || '''',
                 'unique_key=''' || '{{ ns.confirmed_key }}' || ''''
@@ -114,54 +102,43 @@
           {% endset %}
 
           {% do run_query(update_sql) %}
-          {{ log("probe_unique_key_candidates: confirmed '" ~ ns.confirmed_key ~ "' as likely unique key for " ~ table_fqn, info=true) }}
+          {{ log("probe_unique_key_candidates: CONFIRMED '" ~ ns.confirmed_key ~ "' (exact unique, zero nulls) for " ~ table_fqn, info=true) }}
 
         {% else %}
 
-          {{ log("probe_unique_key_candidates: no single-column unique key found for " ~ table_fqn ~ " — composite key likely needed", info=true) }}
+          {{ log("probe_unique_key_candidates: FAILED — no exact unique key for " ~ table_fqn, info=true) }}
 
-          {# Downgrade delete+insert or merge to append when no unique key is confirmed.
-             Using an unconfirmed key with merge/delete+insert risks silent data corruption
-             (phantom deletes or missed upserts); append failure mode (visible duplicates)
-             is the safer default. strategy_notes guides the user to the correct next step. #}
-          {% if current_strat in ('delete+insert', 'merge') %}
+          {# Key probe failed: downgrade confidence and update status #}
+          {% set new_score = [current_score - 30, 0] | max %}
 
-            {% set downgrade_note = 'No single-column unique key confirmed by cardinality probe — strategy downgraded from ' ~ current_strat ~ ' to append. To implement a scoped strategy: (1) generate a surrogate key with dbt_utils.generate_surrogate_key([<grain_columns>]) and configure unique_key on that column, then re-evaluate for merge or delete+insert' %}
-            {% if filter_col %}
-              {% set downgrade_note = downgrade_note ~ '; or (2) use incremental_predicates with delete+insert to scope deletes to the ' ~ filter_col ~ ' window if records arrive cleanly with no late-arriving data outside the window.' %}
-            {% else %}
-              {% set downgrade_note = downgrade_note ~ '.' %}
-            {% endif %}
+          {% set update_sql %}
+            update {{ this }}
+            set
+              confidence_score      = {{ new_score }},
+              recommendation_status = case
+                when {{ new_score }} >= 60 then 'actionable_review'
+                when {{ new_score }} >= 30 then 'investigate'
+                else 'do_not_recommend'
+              end,
+              blocking_signals      = array_append(
+                array_remove(blocking_signals, 'key_pending_exact_validation'),
+                'key_not_exact_or_nullable'
+              ),
+              identified_unique_key = null,
+              strategy_notes        = 'Key probe failed: no single-column candidate passed exact uniqueness '
+                || '(count(*) = count(distinct key) AND null_count = 0). '
+                || 'Consider a composite surrogate key via dbt_utils.generate_surrogate_key([<grain_columns>]).'
+            where table_fqn = '{{ table_fqn }}'
+          {% endset %}
 
-            {% if filter_col %}
-              {% set nl = '\n' %}
-              {% set append_template = '{{' ~ nl ~ '  config(' ~ nl ~ '    materialized=\'incremental\',' ~ nl ~ '    incremental_strategy=\'append\'' ~ nl ~ '  )' ~ nl ~ '}}' ~ nl ~ nl ~ '{' ~ '% if is_incremental() %' ~ '}' ~ nl ~ 'where ' ~ filter_col ~ ' > (select max(' ~ filter_col ~ ') from ' ~ '{' ~ '{ this }' ~ '}' ~ ')' ~ nl ~ '{' ~ '% endif %' ~ '}' %}
-            {% else %}
-              {% set nl = '\n' %}
-              {% set append_template = '{{' ~ nl ~ '  config(' ~ nl ~ '    materialized=\'incremental\',' ~ nl ~ '    incremental_strategy=\'append\'' ~ nl ~ '  )' ~ nl ~ '}}' ~ nl ~ nl ~ '-- TODO: add a filter column (timestamp/date) to scope incremental loads' ~ nl ~ '-- TODO: verify data is truly append-only before using this strategy' %}
-            {% endif %}
-
-            {% set update_sql %}
-              update {{ this }}
-              set
-                incremental_strategy  = 'append',
-                identified_unique_key = null,
-                strategy_notes        = '{{ downgrade_note | replace("'", "''") }}',
-                dbt_model_config   = '{{ append_template | replace("'", "''") }}'
-              where table_fqn = '{{ table_fqn }}'
-            {% endset %}
-
-            {% do run_query(update_sql) %}
-            {{ log("probe_unique_key_candidates: downgraded " ~ table_fqn ~ " from " ~ current_strat ~ " to append — no confirmed unique key", info=true) }}
-
-          {% endif %}
+          {% do run_query(update_sql) %}
 
         {% endif %}
 
       {% endfor %}
 
     {% else %}
-      {{ log("probe_unique_key_candidates: no candidates with unique key candidates found, skipping.", info=true) }}
+      {{ log("probe_unique_key_candidates: no merge candidates with key candidates found, skipping.", info=true) }}
     {% endif %}
 
   {% endif %}

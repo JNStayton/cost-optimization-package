@@ -154,10 +154,10 @@ These explain why a recommendation was NOT made. They do not appear as rows in `
 | signal_id | effort_category | Recommendation | Condition to fire | Promotion condition (v1) | Notes |
 |-----------|----------------|---------------|-------------------|--------------------------|-------|
 | `materialize_as_table` | config_change | Materialize as TABLE | View with high select count, score above threshold | P1 if savings >= threshold | Reduces downstream recomputation |
-| `convert_to_incremental` | architecture | Convert to incremental (strong/good) | High rebuild redundancy | P1 if savings >= threshold AND config template available | Biggest single savings lever |
-| `apply_incremental_append` | config_change | Apply incremental config: append | Strategy = append, filter column identified | P1 when parent `convert_to_incremental` is P1 (i.e., savings >= threshold) | Inherits parent promotion; not independently promoted |
-| `apply_incremental_merge` | config_change | Apply incremental config: merge | Strategy = merge, unique key confirmed | P1 when parent `convert_to_incremental` is P1 (i.e., savings >= threshold) | Inherits parent promotion; not independently promoted |
-| `apply_incremental_delete_insert` | config_change | Apply incremental config: delete+insert | Strategy = delete+insert, key + filter | P1 when parent `convert_to_incremental` is P1 (i.e., savings >= threshold) | Inherits parent promotion; not independently promoted |
+| `convert_to_incremental` | actionable_review | Convert to incremental (strong/good) | High rebuild redundancy + confidence_score >= 60 | P1 if savings >= threshold AND recommendation_status = 'actionable_review' | Only actionable_review recs participate in cross-domain deferral |
+| `apply_incremental_append` | actionable_review | Apply incremental config: append | Strategy = append, filter column identified, confidence >= 60 | P1 when parent `convert_to_incremental` is P1 (savings >= threshold) | Template includes assumptions to verify |
+| `apply_incremental_merge` | actionable_review | Apply incremental config: merge | Strategy = merge, key probe pending/passed, confidence >= 60 | P1 when parent `convert_to_incremental` is P1 (savings >= threshold) | Template includes assumptions to verify |
+| `apply_incremental_delete_insert` | actionable_review | Apply incremental config: delete+insert | Investigate only in v1 (requires slice recomputability) | Not promotable in v1 | Phase 2: upgradeable with validated slice selectivity |
 
 ### Model Domain — Clustering (Base: P2)
 
@@ -182,10 +182,12 @@ How signals from different domains interact on the same entity:
 |-------------|-----------------|---------------|-----------|-----------|
 | Clustering candidate exists for spilling model | spillage_scale_up | P3 (deferred) | table_fqn match: spillage fact → clustering candidates | Cluster first, then evaluate |
 | No clustering candidate for spilling model | spillage_scale_up | P2 (promoted) | Same join, no match found | No root-cause fix available |
-| Incremental candidate exists for queuing model | overload_enable_mcw | P3 (deferred) | model warehouse_name → incremental candidates table_fqn | Reduce rebuild waste first |
+| Incremental candidate exists (actionable_review) for queuing model | overload_enable_mcw | P3 (deferred) | model warehouse_name → incremental candidates table_fqn | Reduce rebuild waste first |
+| Incremental candidate exists (investigate only) for queuing model | overload_enable_mcw | NOT deferred | investigate recs don't block warehouse config | Low-confidence signals don't gate infrastructure |
 | Only sql_refactor for affected models | Any P3 warehouse config | P2 (promoted) | Rule 2 applies after Rule 1 | sql_refactor is non-blocking |
 | No model-level signals exist | Any warehouse config | Base tier applies | No P2 signals found for models on warehouse | Nothing to defer behind |
-| convert_to_incremental (architecture) exists | oversized_scale_down | P3 (deferred) | Model on this warehouse has incremental signal | Load may decrease once applied — premature to scale down |
+| convert_to_incremental (actionable_review) exists | oversized_scale_down | P3 (deferred) | Model on this warehouse has validated incremental signal | Load may decrease once applied — premature to scale down |
+| convert_to_incremental (investigate only) exists | oversized_scale_down | NOT deferred | investigate recs don't block | Low-confidence signal doesn't gate |
 
 ### Mutually Exclusive Symptoms
 

@@ -174,12 +174,12 @@ scored as (
                 then false
             else true
         end                                                                    as growth_signal_reliable,
-        -- composite waste score: size × frequency (dimensionless ranking signal)
+        -- rebuild pressure score: size × frequency (dimensionless ranking signal, not eligibility)
         round(
             coalesce(ts.size_gb, 0)
                 * (coalesce(bs.table_build_count, 0) / {{ lookback_days }}::float),
             2
-        )                                                                      as compute_waste_score,
+        )                                                                      as rebuild_pressure_score,
         -- trigger flags — transparent about why each table was surfaced
         coalesce(bs.max_build_time_ms, 0) / 1000.0 >= {{ min_build_time_sec }} as triggered_by_build_time,
         coalesce(ts.size_gb, 0) >= {{ min_size_gb }}                           as triggered_by_size,
@@ -190,7 +190,26 @@ scored as (
                 2
             ) >= {{ min_compute_waste_score }}
             and coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= {{ min_compute_waste_avg_build_sec }}
-        )                                                                      as triggered_by_compute_waste
+        )                                                                      as triggered_by_compute_waste,
+        -- ROI tier: determines maximum recommendation status
+        case
+            when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= 300
+                 and coalesce(bs.qualified_build_days, 0) >= 3
+                 and case
+                        when coalesce(bs.qualified_build_days, 0) >= {{ min_qualified_build_days }}
+                             and bs.rows_at_period_end >= bs.rows_at_period_start
+                        then round(bs.rows_at_period_start / nullif(bs.rows_at_period_end, 0), 4)
+                     end >= 0.70
+                then 'high'
+            when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= 120
+                 and case
+                        when coalesce(bs.qualified_build_days, 0) >= {{ min_qualified_build_days }}
+                             and bs.rows_at_period_end >= bs.rows_at_period_start
+                        then round(bs.rows_at_period_start / nullif(bs.rows_at_period_end, 0), 4)
+                     end >= 0.70
+                then 'medium'
+            else 'low'
+        end                                                                    as roi_tier
     from table_candidates as tc
     left join build_stats  as bs  on bs.table_fqn  = tc.table_fqn
     left join table_size   as ts  on ts.table_fqn  = tc.table_fqn
@@ -235,7 +254,8 @@ select
     rows_at_period_end,
     rebuild_redundancy_rate,
     growth_signal_reliable,
-    compute_waste_score,
+    rebuild_pressure_score,
+    roi_tier,
     est_daily_redundant_gb_scanned,
     case
         when growth_signal_reliable and rebuild_redundancy_rate >= 0.9
@@ -286,7 +306,7 @@ select
                 || ' GB) with slow builds (max ' || max_build_time_sec
                 || 's) — growth signal not yet available'
         else
-            'Compute waste score ' || compute_waste_score
+            'Rebuild pressure score ' || rebuild_pressure_score
                 || ' (size × builds/day) — growth signal not yet available'
     end                                                                        as recommendation_reason,
     triggered_by_build_time,
@@ -298,4 +318,4 @@ where triggered_by_compute_waste
 order by
     case when est_daily_redundant_gb_scanned is not null then 0 else 1 end,
     coalesce(est_daily_redundant_gb_scanned, 0) desc,
-    compute_waste_score desc
+    rebuild_pressure_score desc

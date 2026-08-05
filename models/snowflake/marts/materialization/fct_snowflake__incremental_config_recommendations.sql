@@ -147,38 +147,101 @@ strategy_labeled as (
         tuk.best_unique_key is not null                                     as has_unique_key_candidate,
         ca.delete_count > 0                                                 as has_external_deletes,
         ca.dml_count > 0                                                    as has_external_dml,
+        -- target DML evidence (risk signal, not source proof)
+        ca.update_count > 0 or ca.merge_count > 0                           as has_target_mutations,
+        ca.insert_count > 0
+            and ca.update_count = 0
+            and ca.delete_count = 0
+            and ca.merge_count = 0                                          as is_insert_only_target,
         (
             ca.total_rows > {{ large_row_threshold }}
             or ca.table_size_gb > {{ large_gb_threshold }}
         )                                                                   as is_large_table,
+        -- Strategy inference (by data-change semantics, not table size)
         case
-            when ca.delete_count > 0 and bfk.filter_column is not null
-                then 'delete+insert'
-            when ca.delete_count > 0
+            -- S.1: watermark + key + no deletes/mutations → merge
+            when bfk.filter_column is not null
+                and tuk.best_unique_key is not null
+                and ca.delete_count = 0
+                and ca.update_count = 0
+                and ca.merge_count = 0
                 then 'merge'
-            when tuk.best_unique_key is not null
-                and bfk.filter_column is not null
-                and (ca.total_rows > {{ large_row_threshold }} or ca.table_size_gb > {{ large_gb_threshold }})
-                then 'delete+insert'
-            when tuk.best_unique_key is not null and bfk.filter_column is not null
-                then 'merge'
+            -- S.2: watermark + INSERT-only → append
             when bfk.filter_column is not null
                 and ca.dml_count = 0
-                and ca.total_rows > {{ large_row_threshold }}
-                then 'microbatch'
-            when bfk.filter_column is not null and ca.dml_count = 0
                 then 'append'
+            -- S.3: watermark + key + deletes observed → merge (with delete warning)
             when bfk.filter_column is not null
-                then 'append'
-            when tuk.best_unique_key is not null
+                and tuk.best_unique_key is not null
+                and ca.delete_count > 0
                 then 'merge'
-            else 'append'
+            -- S.4: watermark + INSERT-only but no key → append (weaker)
+            when bfk.filter_column is not null
+                and ca.delete_count = 0
+                then 'append'
+            -- S.5: no watermark → cannot propose strategy
+            else null
         end                                                                 as incremental_strategy
     from candidates                                                         as ca
     left join best_filter_key                                               as bfk
         on bfk.table_fqn = ca.table_fqn
     left join top_unique_keys                                               as tuk
         on tuk.table_fqn = ca.table_fqn
+),
+
+confidence_scored as (
+    select
+        *,
+        -- Base confidence: 100, then deductions and bonuses
+        100
+            -- Assumptions (inferred, not proven)
+            + case when has_filter_column then -10 else 0 end               -- watermark inferred from naming
+            + case when has_filter_column and incremental_strategy is not null then -10 else 0 end  -- time-local assumed
+            + case when incremental_strategy is not null then -10 else 0 end  -- lookback assumed
+            + case when is_insert_only_target and incremental_strategy = 'append' then -15 else 0 end  -- append-only inferred from DML
+            + case when has_unique_key_candidate and incremental_strategy = 'merge' then -10 else 0 end  -- key inferred from naming (pre-probe)
+            -- Blocking signals (observed risks)
+            + case when has_external_deletes then -25 else 0 end            -- deletes without reconciliation
+            + case when has_target_mutations and not has_unique_key_candidate then -20 else 0 end  -- mutations without key
+            + case when builds_per_day < 0.2 then -10 else 0 end            -- low frequency
+            -- Bonuses (validated later by post-hook; start without them)
+            + case when is_insert_only_target and not has_external_deletes then 5 else 0 end  -- INSERT-only for 30+ days
+        as confidence_score_raw,
+        -- Cannot exceed 100 or go below 0
+        greatest(0, least(100,
+            100
+            + case when has_filter_column then -10 else 0 end
+            + case when has_filter_column and incremental_strategy is not null then -10 else 0 end
+            + case when incremental_strategy is not null then -10 else 0 end
+            + case when is_insert_only_target and incremental_strategy = 'append' then -15 else 0 end
+            + case when has_unique_key_candidate and incremental_strategy = 'merge' then -10 else 0 end
+            + case when has_external_deletes then -25 else 0 end
+            + case when has_target_mutations and not has_unique_key_candidate then -20 else 0 end
+            + case when builds_per_day < 0.2 then -10 else 0 end
+            + case when is_insert_only_target and not has_external_deletes then 5 else 0 end
+        )) as confidence_score,
+        -- Assumptions array
+        array_construct_compact(
+            iff(has_filter_column and incremental_strategy is not null,
+                suggested_filter_column || ' is a reliable change boundary', null),
+            iff(incremental_strategy is not null,
+                'Data is time-local (historical output does not change outside lookback)', null),
+            iff(incremental_strategy is not null,
+                'Configured lookback captures late-arriving records', null),
+            iff(is_insert_only_target and incremental_strategy = 'append',
+                'Source is append-only (INSERT-only target DML observed)', null),
+            iff(has_unique_key_candidate and incremental_strategy = 'merge',
+                best_unique_key || ' is unique and non-null (pending validation)', null)
+        ) as assumptions,
+        -- Blocking signals array (accumulated, not short-circuited)
+        array_construct_compact(
+            iff(not has_filter_column, 'missing_filter_column', null),
+            iff(has_external_deletes, 'deletes_observed_without_reconciliation', null),
+            iff(has_target_mutations and not has_unique_key_candidate, 'mutations_observed_without_key', null),
+            iff(has_unique_key_candidate and incremental_strategy = 'merge', 'key_pending_exact_validation', null),
+            iff(builds_per_day < 0.2, 'low_build_frequency', null)
+        ) as blocking_signals
+    from strategy_labeled
 )
 
 select
@@ -203,7 +266,7 @@ select
     builds_per_day,
     max_build_time_sec,
     avg_build_time_sec,
-    -- dml breakdown — used to infer strategy; passed through for transparency
+    -- dml breakdown (target DML evidence — risk signal, not source proof)
     dml_count,
     insert_count,
     update_count,
@@ -221,56 +284,59 @@ select
     best_unique_key,
     -- populated post-build by probe_unique_key_candidates() — null until macro runs
     null::string                                                            as likely_unique_key,
+    -- confidence system
+    confidence_score,
+    case
+        when incremental_strategy is null then 'do_not_recommend'
+        when roi_tier = 'low' then 'do_not_recommend'
+        when confidence_score >= 60 then 'actionable_review'
+        when confidence_score >= 30 then 'investigate'
+        else 'do_not_recommend'
+    end                                                                     as recommendation_status,
+    assumptions,
+    blocking_signals,
+    roi_tier,
     -- strategy rationale
     case
-        when incremental_strategy = 'delete+insert' and has_external_deletes
-            then 'External deletes detected — delete+insert scoped to '
-                || suggested_filter_column
-                || ' filter window; records deleted outside the window require a periodic full-refresh to propagate'
-        when incremental_strategy = 'delete+insert'
-            then 'Large table ('
-                || table_size_gb || ' GB / ' || total_rows || ' rows'
-                || ') — delete+insert scoped to ' || suggested_filter_column
-                || ' window avoids full-target merge scan'
+        when incremental_strategy is null
+            then 'No timestamp/date column detected — cannot propose a bounded change set. '
+                || 'Add a watermark column (e.g., _loaded_at, updated_at) to enable incremental.'
         when incremental_strategy = 'merge' and has_external_deletes
-            then 'External deletes detected, no filter column available — merge on '
-                || coalesce(best_unique_key, 'unique key')
-                || ' is the safest option; add a timestamp column to enable delete+insert instead'
-        when incremental_strategy = 'merge' and has_filter_column
-            then 'Unique key candidate detected — merge on '
-                || best_unique_key
-                || ' scoped to ' || suggested_filter_column || ' filter window'
+            then 'Merge on ' || coalesce(best_unique_key, '<key>') || ' scoped to '
+                || suggested_filter_column || '. WARNING: target DELETEs observed — merge does NOT '
+                || 'propagate source deletions. Rows deleted from source will remain in target unless '
+                || 'a reconciliation mechanism is implemented.'
         when incremental_strategy = 'merge'
-            then 'Unique key candidate (' || best_unique_key
-                || ') but no filter column found — merge scans the full target table on each run;'
-                || ' adding a timestamp column would enable a scoped delete+insert'
-        when incremental_strategy = 'microbatch'
-            then 'Append-only pattern at large scale ('
-                || total_rows || ' rows) — microbatch processes data in self-healing time batches'
-                || ' (dbt Core 1.9+); set begin to the earliest date you need to backfill'
-        when incremental_strategy = 'append' and has_filter_column and has_external_dml
-            then 'External DML detected but no unique key candidate found — append with '
-                || suggested_filter_column
-                || ' filter is the starting point; if records are updated after insert,'
-                || ' identify a unique key and switch to merge to prevent duplicates'
-        when incremental_strategy = 'append' and has_filter_column
-            then 'No external DML detected — append inserts new rows only; '
-                || suggested_filter_column
-                || ' scopes the load window; verify data is truly append-only before implementing'
-        when incremental_strategy = 'append' and has_unique_key_candidate
-            then 'No filter column detected — append is the safest default; unique key candidate '
-                || best_unique_key
-                || ' is available if merge is needed; add a timestamp column to scope incremental loads'
-        else
-            'No filter column or unique key candidate detected — append is the safest default;'
-                || ' manual key identification required before implementing'
+            then 'Merge on ' || coalesce(best_unique_key, '<key>') || ' scoped to '
+                || suggested_filter_column || ' lookback window. Assumes upsert semantics (inserts + updates).'
+        when incremental_strategy = 'append' and is_insert_only_target
+            then 'Append new rows scoped to ' || suggested_filter_column
+                || '. INSERT-only target DML observed (supporting evidence, not proof of source contract). '
+                || 'Verify source is truly append-only and no late arrivals occur beyond the lookback window.'
+        when incremental_strategy = 'append'
+            then 'Append new rows scoped to ' || suggested_filter_column
+                || '. No key candidate available — append is the proposed strategy. '
+                || 'Duplicates will occur if source rows arrive more than once.'
+        else 'Strategy inference failed — investigate manually.'
     end                                                                     as strategy_notes,
-    -- Only relevant for merge/delete+insert strategies (append doesn't use a unique key)
-    case when incremental_strategy in ('merge', 'delete+insert') then best_unique_key end as identified_unique_key,
-    -- copy-pasteable dbt config template (logic in macro to keep model clean)
-    {{ build_incremental_config_template() }}                                as dbt_model_config
-from strategy_labeled
+    -- Only relevant for merge strategies with a validated key
+    case when incremental_strategy = 'merge' then best_unique_key end       as identified_unique_key,
+    -- Config template: always generated when a strategy can be proposed (confidence gates label, not content)
+    case
+        when incremental_strategy is not null
+            then {{ build_incremental_config_template() }}
+        else null
+    end                                                                     as dbt_model_config,
+    -- Effort category: incremental is always actionable_review (requires human verification)
+    'actionable_review'                                                     as effort_category
+from confidence_scored
+where roi_tier != 'low'
 order by
-    case when est_daily_redundant_gb_scanned is not null then 0 else 1 end,
+    case recommendation_status
+        when 'actionable_review' then 1
+        when 'investigate' then 2
+        else 3
+    end,
+    confidence_score desc,
     coalesce(est_daily_redundant_gb_scanned, 0) desc,
-    compute_waste_score desc
+    rebuild_pressure_score desc
