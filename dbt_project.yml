@@ -120,9 +120,10 @@ vars:
   spillage_lookback_days: 30
   spillage_min_total_gb: 0.05
   spillage_min_runs: 1
+  spillage_aggregate_threshold_gb: 100  # Total spillage across all models to trigger warehouse-level scale-up
   expensive_query_lookback_days: 30
   credit_rate_usd: 2
-  expensive_query_high_cost_threshold: 10000
+  expensive_query_high_cost_threshold: 500
   expensive_query_min_total_credits: 0.1
   expensive_query_top_n: 50
 

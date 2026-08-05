@@ -298,6 +298,7 @@ all_recommendations as (
         on icr_lookup.table_fqn = ic.table_fqn
     where ic.recommendation not like '%Insufficient%'
       and ic.roi_tier != 'low'
+      and coalesce(icr_lookup.recommendation_status, 'investigate') != 'do_not_recommend'
 
     union all
 
@@ -337,6 +338,7 @@ all_recommendations as (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
     where icr.recommendation_status != 'do_not_recommend'
+      and icr.incremental_strategy is not null
 
     union all
 
@@ -647,9 +649,15 @@ prioritized as (
             else 5
         end as hierarchy_rank,
         -- Per-entity priority: rank 1 = do first for this entity
+        -- Actionable items always rank above monitor/stable regardless of hierarchy
         row_number() over (
             partition by coalesce(e.node_id, e.entity_name)
             order by
+                case e.backlog_status
+                    when 'actionable' then 1
+                    when 'monitor' then 2
+                    else 3
+                end,
                 case
                     when e.signal_id in (
                         'idle_reduce_auto_suspend', 'idle_switch_scaling_policy',

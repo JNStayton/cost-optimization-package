@@ -69,50 +69,55 @@ Expected output: 4-5 rows (one per domain with data).
 
 ### `vw_snowflake__optimization_backlog`
 
-**Sprint planning / agent intake view.** Every recommendation with full context.
+**Sprint planning / agent intake view.** Full optimization inventory across ALL priority tiers.
 
-Same columns as `top_recommendations` plus:
-- Includes ALL tiers (actionable + "Monitor" + "Stable")
-- `backlog_status`: actionable / monitor / stable
-- `dbt_model_config`: copy-pasteable dbt config block (goes in your model file)
-- `snowflake_ddl`: SQL to execute directly in Snowflake (ALTER WAREHOUSE, etc.)
-- `identified_unique_key`: detected unique key name for merge incrementals
+Includes all detected signals (actionable + monitor). Users filter by `priority_tier` to focus on specific tiers. Each row is self-contained — an agent can create a ticket from any single row.
+
+Key columns:
+- `priority_tier`: per-entity relative priority (1 = do first for this entity)
+- `hierarchy_rank`: fixed position in the optimization decision hierarchy
+- `signal_id`: machine-readable signal identifier
+- `effort_category`: config_change / actionable_review / sql_refactor / investigation
 - `action_type`: 'snowflake_ddl' / 'dbt_config' / 'investigation' — makes clear which column to use
+- `dbt_model_config`: copy-pasteable dbt config block
+- `snowflake_ddl`: SQL to execute directly in Snowflake
+- `blocking_signals` / `next_evidence_needed`: for investigate items
 
-Ordered by: `effort_category ASC` (quick wins first), then `estimated_annual_savings_usd DESC`.
-
-An agent should be able to pick any row from this view and:
-- For `config_change`: auto-generate a PR
-- For `sql_refactor`: investigate the model SQL and propose changes
-- For `architecture`: create a ticket with all evidence attached
+Ordered by: `priority_tier ASC`, then `estimated_annual_savings_usd DESC`.
 
 ---
 
 ### `vw_snowflake__dbt_model_optimizations`
 
-**dbt engineer view.** Materialization, clustering, and incremental recommendations — things you fix in dbt code. Ordered by `model_name, priority` so all optimizations for a model are grouped together.
+**dbt engineer view.** Only ACTIONABLE items — things with templates ready to copy-paste and test. Excludes `investigate` and `do_not_recommend` statuses (those are in the backlog).
 
-Key columns beyond the standard set:
-- `priority`: cross-domain rank per model (1 = highest-impact optimization for this model)
-- `suggested_clustering_key`: ready-to-use clustering key columns (e.g., "order_date, customer_id")
+Covers: materialization changes, clustering keys, and incremental configs with `actionable_review` status.
+Ordered by `model_name, priority_tier` so all optimizations for a model are grouped together.
+
+Key columns:
+- `priority_tier`: per-entity relative priority (1 = do first for this model based on hierarchy)
+- `suggested_clustering_key`: ready-to-use clustering key columns
 - `dbt_model_config`: copy-paste config block (materialization, incremental, cluster_by)
-- `identified_unique_key`: detected unique key name (only populated for merge/delete+insert strategies; NULL for append)
+- `identified_unique_key`: confirmed unique key name (NULL for append strategies)
+- `incremental_confidence_score`: 0-100 confidence in incremental template (NULL if no strategy proposed)
+- `incremental_blocking_signals`: factors reducing confidence
 - `environment_ids`: array of dbt_cloud_environment_ids where this model exists
 
 ---
 
 ### `vw_snowflake__warehouse_optimizations`
 
-**Snowflake admin view.** One row per warehouse with the top config recommendation as the primary signal and spillage as an amplifier. Grain: 1 row per warehouse.
+**Snowflake admin view.** One row per (warehouse, signal category). Config recs are standalone. Model-level signals (spillage, expensive queries) are aggregated with linked model context.
 
 Key columns:
 - `warehouse_current_size`: authoritative size from WAREHOUSE_EVENTS_HISTORY
 - `warehouse_category`: standard / gen2 / multi_cluster / adaptive
-- `symptom`: classified issue (idle_credit_consumption, query_overload, queued_provisioning, oversized, monitor)
-- `snowflake_ddl`: concrete ALTER WAREHOUSE DDL to apply the recommendation
-- `models_with_spillage`: count of models with spillage on this warehouse (amplifier signal)
-- `total_gb_spilled_local_30d` / `total_gb_spilled_remote_30d`: aggregate spillage volume
-- `spillage_signal`: worst spillage severity across models on this warehouse
+- `signal_id`: signal type (idle_reduce_auto_suspend, spillage_moderate_worsening, etc.)
+- `priority_tier`: per-warehouse relative priority
+- `snowflake_ddl`: concrete ALTER WAREHOUSE DDL (for config recs)
+- `affected_model_count`: count of models contributing to this signal
+- `affected_models`: comma-separated list of affected model names
+- `recommendation_reason`: for aggregated signals, includes "resolve model-level optimizations first" guidance
 
 Expensive queries are surfaced separately in `vw_snowflake__top_expensive_queries`.
 

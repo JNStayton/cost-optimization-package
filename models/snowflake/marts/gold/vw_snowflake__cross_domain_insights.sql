@@ -53,10 +53,14 @@ materialization_set as (
 ),
 
 incremental_set as (
-    select distinct table_fqn
-    from {{ ref('fct_snowflake__incremental_materialization_candidates') }}
-    where recommendation not like '%Insufficient%'
-      and recommendation != 'Low ROI — Minimal Rebuild Redundancy'
+    select distinct ic.table_fqn
+    from {{ ref('fct_snowflake__incremental_materialization_candidates') }} as ic
+    left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
+        on icr.table_fqn = ic.table_fqn
+    where ic.recommendation not like '%Insufficient%'
+      and ic.recommendation != 'Low ROI — Minimal Rebuild Redundancy'
+      and ic.roi_tier != 'low'
+      and coalesce(icr.recommendation_status, 'investigate') != 'do_not_recommend'
 ),
 
 expensive_set as (

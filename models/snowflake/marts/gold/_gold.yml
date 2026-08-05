@@ -32,13 +32,14 @@ models:
 
   - name: vw_snowflake__optimization_backlog
     description: >
-      Sprint-planning backlog. Shows P1 (actionable now) and P2 (root cause fix)
-      signals. Each row is self-contained — an agent can create a ticket from it.
+      Full optimization backlog for sprint planning. Shows ALL priority tiers.
+      Each row is self-contained — an agent can create a ticket from it.
+      Users filter by priority_tier to focus on specific tiers.
     columns:
       - name: signal_id
         description: Unique signal identifier
       - name: priority_tier
-        description: 1 = actionable now, 2 = root cause fix
+        description: Per-entity relative priority (1 = do first for this entity, 2 = do second, etc.)
       - name: effort_category
         description: Effort required — used for sprint planning grouping
       - name: action_type
@@ -64,39 +65,43 @@ models:
   - name: vw_snowflake__dbt_model_optimizations
     description: >
       dbt model-level optimizations: materialization, clustering, and incremental config.
-      Actions are taken in dbt code (model configs, SQL refactors). Excludes warehouse
-      and AI domain recommendations. Enriched with suggested clustering keys.
-      Ordered by model_name then priority (1 = highest-impact optimization per model).
+      Only shows ACTIONABLE items (excludes investigate and do_not_recommend statuses).
+      Excludes warehouse and AI domain recommendations. Enriched with suggested clustering keys.
+      Ordered by model_name then priority_tier (1 = do first for this model).
     columns:
-      - name: priority
-        description: Cross-domain priority rank per model (1 = most impactful optimization for this model)
+      - name: priority_tier
+        description: Per-entity relative priority (1 = highest priority for this model based on hierarchy)
       - name: suggested_clustering_key
         description: Recommended clustering columns from clustering_key_candidates (e.g., 'order_date, customer_id')
       - name: dbt_model_config
         description: Full dbt config block for incremental conversion (when applicable)
       - name: identified_unique_key
-        description: SQL to validate unique key before applying incremental config
+        description: Confirmed unique key name for merge incrementals (NULL for append)
+      - name: incremental_confidence_score
+        description: Confidence in the incremental recommendation (0-100; NULL if no strategy proposed)
+      - name: incremental_blocking_signals
+        description: Array of factors reducing confidence (e.g., low_build_frequency, key_not_exact_or_nullable)
       - name: environment_ids
         description: Array of dbt_cloud_environment_ids where this model exists
 
   - name: vw_snowflake__warehouse_optimizations
     description: >
-      Warehouse-level optimizations: one row per warehouse with the top config
-      recommendation and spillage as an amplifier signal. Actions are taken in
-      Snowflake (ALTER WAREHOUSE, auto-suspend settings). Audience: Snowflake admins.
+      Warehouse-level optimizations: one row per (warehouse, signal category).
+      Config recs are standalone rows. Model-level signals (spillage, expensive queries)
+      are aggregated with affected_models context. Audience: Snowflake admins.
     columns:
       - name: warehouse_current_size
         description: Authoritative current warehouse size from WAREHOUSE_EVENTS_HISTORY
       - name: warehouse_category
         description: Warehouse type category (standard, gen2, multi_cluster, adaptive)
-      - name: symptom
-        description: Classified symptom (idle_credit_consumption, query_overload, queued_provisioning, oversized, monitor)
+      - name: signal_id
+        description: Signal type (idle_reduce_auto_suspend, spillage_moderate_worsening, etc.)
       - name: snowflake_ddl
-        description: Concrete ALTER WAREHOUSE DDL to apply the recommendation
-      - name: models_with_spillage
-        description: Count of models with spillage on this warehouse (amplifier signal)
-      - name: spillage_signal
-        description: Worst spillage severity across models on this warehouse
+        description: Concrete ALTER WAREHOUSE DDL (for config recs)
+      - name: affected_model_count
+        description: Count of models contributing to this signal (for aggregated model-level signals)
+      - name: affected_models
+        description: Comma-separated list of affected model names
 
   - name: vw_snowflake__top_expensive_queries
     description: >

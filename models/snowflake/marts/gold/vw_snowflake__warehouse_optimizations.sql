@@ -46,7 +46,7 @@ config_recs as (
           'idle_enable_mcw_bursty',
           'provisioning_enable_auto_resume', 'provisioning_increase_suspend',
           'provisioning_increase_suspend_300', 'provisioning_warm_cluster',
-          'overload_switch_scaling_policy', 'spillage_scale_up',
+          'overload_switch_scaling_policy',
           'overload_enable_mcw', 'overload_scale_up_standard',
           'overload_increase_clusters', 'overload_scale_up_large_mcw',
           'oversized_scale_down', 'oversized_disable_mcw',
@@ -56,28 +56,40 @@ config_recs as (
       and ar.backlog_status in ('actionable', 'monitor')
 ),
 
--- Model-level signals: aggregate to 1 row per (warehouse, signal_id)
+-- Model-level signals: aggregate to 1 row per (warehouse, signal category)
+-- Spillage signals are grouped together (scale_up + moderate = one "spillage" row)
 model_signals as (
     select
         ar.warehouse_name,
-        ar.signal_id,
+        case
+            when ar.signal_id like 'spillage%' then 'spillage'
+            when ar.signal_id like 'expensive_query%' then 'expensive_query'
+            else ar.signal_id
+        end as signal_id,
         min(ar.priority_tier) as priority_tier,
         min(ar.hierarchy_rank) as hierarchy_rank,
         max(ar.effort_category) as effort_category,
         max(ar.backlog_status) as backlog_status,
+        max(case when ar.signal_id = 'spillage_scale_up' then ar.recommendation else null end) as scale_up_rec,
         max(ar.recommendation) as recommendation,
         count(distinct ar.node_id) as affected_model_count,
         listagg(distinct coalesce(ar.node_model_name, ar.model_name), ', ')
             within group (order by coalesce(ar.node_model_name, ar.model_name)) as affected_models,
         sum(ar.estimated_annual_cost_usd) as estimated_annual_cost_usd,
         sum(ar.estimated_annual_savings_usd) as estimated_annual_savings_usd,
+        max(ar.snowflake_ddl) as snowflake_ddl,
         max(ar.snapshot_date) as snapshot_date
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     where ar.domain = 'warehouse'
-      and ar.signal_id in ('spillage_moderate_worsening', 'spillage_moderate_stable', 'expensive_query_monitor', 'expensive_query_actionable')
+      and ar.signal_id in ('spillage_scale_up', 'spillage_moderate_worsening', 'spillage_moderate_stable', 'expensive_query_monitor', 'expensive_query_actionable')
       and ar.backlog_status in ('actionable', 'monitor')
       and ar.warehouse_name is not null
-    group by ar.warehouse_name, ar.signal_id
+    group by ar.warehouse_name,
+        case
+            when ar.signal_id like 'spillage%' then 'spillage'
+            when ar.signal_id like 'expensive_query%' then 'expensive_query'
+            else ar.signal_id
+        end
 ),
 
 combined as (
@@ -97,11 +109,12 @@ combined as (
 
     select
         warehouse_name, signal_id, priority_tier, hierarchy_rank, effort_category,
-        backlog_status, recommendation,
+        backlog_status,
+        coalesce(scale_up_rec, recommendation) as recommendation,
         affected_model_count || ' model(s) affected: ' || affected_models
             || '. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.' as recommendation_reason,
         estimated_annual_cost_usd, estimated_annual_savings_usd,
-        null as snowflake_ddl,
+        snowflake_ddl,
         affected_model_count, affected_models, snapshot_date
     from model_signals
 )

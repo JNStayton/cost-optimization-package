@@ -208,12 +208,12 @@ Note: `idle_enable_mcw_bursty` is a sub-recommendation within the `idle_credit_c
 
 | View | Shows | Priority filter | Order |
 |------|-------|----------------|-------|
-| `vw_snowflake__warehouse_optimizations` | ALL warehouse signals per warehouse | None — shows all tiers | priority_tier, savings desc |
-| `vw_snowflake__dbt_model_optimizations` | ALL model signals per model | None — shows all tiers | model_name, priority_tier |
-| `vw_snowflake__top_expensive_queries` | Top 10 expensive queries | None — cost-ranked | cost desc |
-| `vw_snowflake__top_recommendations` | Highest-impact across all domains | P1 only + promoted; deduplicated per entity (highest savings as representative), `related_signals_count` | savings desc |
-| `vw_snowflake__optimization_backlog` | Sprint-planning view | P1 + P2 only | priority_tier, savings desc |
-| `vw_snowflake__cross_domain_insights` | Multi-signal correlation | P1 only — shows WHY signals co-occur | signal_count desc |
+| `vw_snowflake__warehouse_optimizations` | 1 row per (warehouse, signal category); aggregated affected_models for model-level signals | None — shows all tiers | warehouse, hierarchy_rank, priority_tier |
+| `vw_snowflake__dbt_model_optimizations` | ACTIONABLE model signals only (excludes investigate/do_not_recommend) | Actionable only | model_name, priority_tier |
+| `vw_snowflake__top_expensive_queries` | Top 10 expensive queries with co-signal enrichment | None — cost-ranked | cost desc |
+| `vw_snowflake__top_recommendations` | Highest-impact across all domains | P1 + P2 per entity | priority_tier, savings desc |
+| `vw_snowflake__optimization_backlog` | Full inventory — ALL tiers (users filter by priority_tier) | None — shows all | priority_tier, savings desc |
+| `vw_snowflake__cross_domain_insights` | Multi-signal correlation | Multi-signal tables only | signal_count desc |
 
 ---
 
