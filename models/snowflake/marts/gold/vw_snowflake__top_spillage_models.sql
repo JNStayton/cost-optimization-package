@@ -86,7 +86,7 @@ select
     sm.snapshot_date
 from spillage_models as sm
 left join recent_spilling_builds as rsb
-    on rsb.node_id = sm.dbt_model
+    on rsb.node_id = sm.node_id
     and rsb.rn = 1
 left join priority_context as pc
     on pc.table_fqn = sm.table_fqn

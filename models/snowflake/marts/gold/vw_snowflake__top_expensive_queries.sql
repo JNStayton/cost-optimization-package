@@ -57,7 +57,7 @@ co_signals as (
                 when ar.signal_id like 'spillage%' then 'spillage'
                 else ar.domain
             end, ' + '
-        ) within group (order by ar.priority_tier) as fix_categories
+        ) as fix_categories
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     where ar.domain in ('materialization', 'clustering')
       and ar.backlog_status = 'actionable'
