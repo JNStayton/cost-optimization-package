@@ -343,9 +343,10 @@ models:
   # ===========================================================================
   - name: int_bigquery__table_query_stats_daily
     description: >
-      Incremental daily query statistics per BigQuery table. Attribution uses query-text
-      LOWER(query_text) LIKE LOWER(table_name) matching (same approach as Snowflake Standard
-      edition; referenced_tables is not in stg_bigquery__jobs_by_project). Column names mirror
+      Incremental daily query statistics per BigQuery table. Attribution uses
+      JOBS_BY_PROJECT.referenced_tables (engine-populated, exact) for reads and
+      destination_table for writes — a job's own destination is excluded from its reads
+      so MERGE/CTAS don't double-count. Column names mirror
       int_snowflake__table_query_stats_daily for cross-platform compatibility. Column names
       follow Snowflake convention; a future refactor could make them platform-neutral.
     columns:
@@ -362,11 +363,14 @@ models:
       - name: table_name
         description: BigQuery table name
       - name: total_query_count
-        description: Total count of successful queries matched to the table
+        description: select_count + dml_count
       - name: select_count
-        description: Count of SELECT queries
+        description: >
+          Count of distinct jobs that read the table via referenced_tables (any statement
+          type — a CREATE_TABLE_AS_SELECT reading this table as a source counts here too),
+          excluding jobs whose own destination_table is this table
       - name: dml_count
-        description: Count of INSERT/UPDATE/DELETE/MERGE/CREATE_TABLE_AS_SELECT queries
+        description: Count of distinct INSERT/UPDATE/DELETE/MERGE/CREATE_TABLE_AS_SELECT jobs whose destination_table is this table
       - name: select_execution_time_ms_sum
         description: >
           Sum of total_slot_ms for matched SELECT jobs. BigQuery equivalent of Snowflake
@@ -460,13 +464,15 @@ models:
   # ===========================================================================
   - name: int_bigquery__column_query_access
     description: >
-      One row per (query_id, table_fqn, column_name) extracted heuristically from
-      JOBS_BY_PROJECT.query_text. BigQuery has no equivalent of Snowflake's
-      ACCESS_HISTORY column-level lineage; this model regex-extracts substrings
-      rooted at WHERE / JOIN ON / ORDER BY clauses, then matches column names
-      with word-boundary regex against int_bigquery__table_columns. Heuristic;
-      may over-match on comments embedded in filter clauses, and cannot resolve
-      CTE / alias mappings. Disable by setting use_query_text_attribution=false.
+      One row per (query_id, table_fqn, column_name). The table match is exact —
+      JOBS_BY_PROJECT.referenced_tables, excluding a write statement's own
+      destination_table — but the column match is still heuristic: BigQuery has no
+      equivalent of Snowflake's ACCESS_HISTORY column-level lineage, so this model
+      regex-extracts substrings rooted at WHERE / JOIN ON / ORDER BY clauses from the
+      already-correctly-attributed query's text, then matches column names with
+      word-boundary regex against int_bigquery__table_columns. May over-match on
+      comments embedded in filter clauses, and cannot resolve CTE / alias mappings.
+      Disable by setting use_query_text_attribution=false.
     config:
       enabled: "{{ target.type == 'bigquery' and var('use_query_text_attribution', true) }}"
     columns:

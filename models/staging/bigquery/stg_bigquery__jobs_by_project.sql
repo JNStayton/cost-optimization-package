@@ -18,7 +18,9 @@ select
     state,
     error_result,
     reservation_id,
-    bi_engine_statistics
+    bi_engine_statistics,
+    referenced_tables,
+    destination_table
 from {{ source('bigquery_region_info', 'JOBS_BY_PROJECT') }}
 
 {% if is_incremental() %}

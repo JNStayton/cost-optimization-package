@@ -40,11 +40,23 @@ with column_access as (
     {% else %}
         where query_start_time >= timestamp_sub(current_timestamp(), interval {{ initial_lookback_days }} day)
     {% endif %}
+),
+
+column_access_dated as (
+    select
+        query_id,
+        table_fqn,
+        table_database,
+        table_schema,
+        table_name,
+        column_name,
+        cast(query_start_time as date) as access_date
+    from column_access
 )
 
 select
     to_hex(md5(
-        cast(cast(query_start_time as date) as string) || '|' ||
+        cast(access_date as string) || '|' ||
         coalesce(table_fqn, '') || '|' ||
         coalesce(column_name, '')
     )) as column_query_stats_daily_key,
@@ -53,9 +65,9 @@ select
     table_schema,
     table_name,
     column_name,
-    cast(query_start_time as date) as access_date,
+    access_date,
     count(distinct query_id) as query_count
-from column_access
+from column_access_dated
 group by
     table_fqn,
     table_database,

@@ -106,9 +106,12 @@ scored as (
         and lt.schema_name = tqs.schema_name
         and lt.table_name = tqs.table_name
     left join {{ ref('int_dbt__relations') }} as dm
-        on lt.database_name = dm.database_name
-        and lt.schema_name = dm.schema_name
-        and lt.table_name = dm.table_name
+        -- int_dbt__relations always upper()s identifiers (a Snowflake convention);
+        -- BigQuery identifiers are case-sensitive and typically lowercase, so compare
+        -- case-insensitively rather than assuming a case convention.
+        on upper(lt.database_name) = dm.database_name
+        and upper(lt.schema_name) = dm.schema_name
+        and upper(lt.table_name) = dm.table_name
 ),
 
 final as (

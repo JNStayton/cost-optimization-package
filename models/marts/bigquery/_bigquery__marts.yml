@@ -124,7 +124,7 @@ models:
 
       - name: avg_gb_billed_per_query
         description: >
-          Average total_bytes_billed (converted to GB) per SELECT query over the
+          Average total_bytes_billed (converted to GB) per read query over the
           lookback window. BigQuery's primary cost signal — higher values mean each
           query against this table is more expensive.
 
@@ -132,12 +132,16 @@ models:
       # Query activity
       # ---------------------------------------------------------------------------
       - name: select_count
-        description: Total number of SELECT queries against this table in the lookback window.
+        description: >
+          Total number of distinct queries that read this table via
+          JOBS_BY_PROJECT.referenced_tables in the lookback window — any statement
+          type counts (e.g. a CREATE_TABLE_AS_SELECT reading this table as a source),
+          excluding queries whose own write target is this table.
 
       - name: dml_count
         description: >
           Total number of INSERT, UPDATE, DELETE, MERGE, and CREATE_TABLE_AS_SELECT
-          queries against this table in the lookback window.
+          queries whose destination_table is this table, in the lookback window.
 
       - name: query_to_dml_ratio
         description: >

@@ -24,4 +24,4 @@ select
     cast(null as int64)     as distinct_values,
     cast(null as int64)     as total_rows,
     cast(null as timestamp) as calculated_at
-where 1 = 0
+limit 0

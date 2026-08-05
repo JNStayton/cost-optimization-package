@@ -43,8 +43,10 @@ can fix.
 
 A table is `is_candidate = true` when **all** of these hold:
 
-- ≥ 1 SELECT in the lookback window
-- read/write ratio > 1 (more SELECTs than DML)
+- ≥ 1 read in the lookback window (any statement type reading the table via
+  `referenced_tables`, not just `SELECT` — e.g. a `CREATE_TABLE_AS_SELECT` reading it
+  as a source counts too)
+- read/write ratio > 1 (more reads than writes to the table itself)
 - `size_gb >= clustering_candidates_min_size_gb` (default 1000 GB)
 
 ### Stage 2 — which columns within those tables

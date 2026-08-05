@@ -15,6 +15,8 @@ select
     cast(null as int64) as bytes_spilled_local,
     cast(null as int64) as bytes_spilled_remote,
     query as query_text,
+    referenced_tables,
+    destination_table,
     cast(null as string) as session_id,
     case
         when state = 'DONE' and error_result is null then 'SUCCESS'

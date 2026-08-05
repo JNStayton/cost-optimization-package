@@ -6,13 +6,16 @@
 }}
 
 {#--
-  BigQuery column-level access attribution from query text. Heuristic — BigQuery has
-  no engine-attested column lineage in JOBS_BY_PROJECT (no equivalent of Snowflake's
-  ACCESS_HISTORY.columns[]). We extract substrings rooted at filter contexts (WHERE,
-  JOIN ON, ORDER BY) from query_text, then check column-name presence with a
+  BigQuery column-level access attribution from query text. The table match itself uses
+  JOBS_BY_PROJECT.referenced_tables (engine-populated, exact) rather than LIKE-matching
+  query text — see int_bigquery__table_query_stats_daily for why the text heuristic was
+  dropped there. Column-level attribution stays a text heuristic, though: BigQuery has
+  no engine-attested column lineage (no equivalent of Snowflake's ACCESS_HISTORY.columns[]),
+  so which columns of a correctly-identified table were actually filtered on still has to
+  be extracted from filter-context substrings (WHERE, JOIN ON, ORDER BY) with a
   word-boundary-aware regex.
 
-  Caveats:
+  Caveats (apply to the column extraction only, not the table match):
     - Cannot resolve aliases or CTEs; matches by raw column name within filter substrings.
     - May over-match when a column name appears inside a comment inside a filter clause.
     - Word-boundary matching prevents 'id' from matching 'customer_id'.
@@ -26,14 +29,16 @@ with query_text_window as (
     select
         query_id,
         query_start_time,
-        query_text
+        query_text,
+        referenced_tables,
+        destination_table,
+        statement_type
     from {{ ref('int_bigquery__query_history') }}
     where execution_status = 'SUCCESS'
         and query_start_time >= timestamp_sub(current_timestamp(), interval {{ lookback_days }} day)
 ),
 
 candidate_tables as (
-    -- distinct (table_fqn → table_name) pairs for substring-match attribution
     select distinct
         table_fqn,
         database_name as table_database,
@@ -43,7 +48,7 @@ candidate_tables as (
 ),
 
 queries_to_tables as (
-    select
+    select distinct
         qtw.query_id,
         qtw.query_start_time,
         qtw.query_text,
@@ -52,9 +57,19 @@ queries_to_tables as (
         ct.table_schema,
         ct.table_name
     from query_text_window as qtw
+    cross join unnest(qtw.referenced_tables) as rt
     inner join candidate_tables as ct
-        -- mirrors the table-text matcher in int_bigquery__table_query_stats_daily
-        on lower(qtw.query_text) like '%' || lower(ct.table_name) || '%'
+        on lower(rt.project_id) = lower(ct.table_database)
+        and lower(rt.dataset_id) = lower(ct.table_schema)
+        and lower(rt.table_id) = lower(ct.table_name)
+    where not (
+        -- exclude a write statement's own destination table, consistent with the reads
+        -- vs. writes split in int_bigquery__table_query_stats_daily
+        qtw.statement_type in ('INSERT', 'UPDATE', 'DELETE', 'MERGE', 'CREATE_TABLE_AS_SELECT')
+        and rt.project_id = qtw.destination_table.project_id
+        and rt.dataset_id = qtw.destination_table.dataset_id
+        and rt.table_id = qtw.destination_table.table_id
+    )
 ),
 
 -- Concatenate every WHERE / JOIN-ON / ORDER BY substring into a single haystack per
