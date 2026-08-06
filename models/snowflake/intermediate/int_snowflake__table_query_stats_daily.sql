@@ -17,6 +17,7 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='table_query_stats_daily_key',
+    cluster_by=['stats_date'],
     on_schema_change='append_new_columns',
   )
 }}

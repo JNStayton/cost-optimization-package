@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='event_key',
+    cluster_by=['to_date(timestamp)'],
     on_schema_change='append_new_columns'
 ) }}
 

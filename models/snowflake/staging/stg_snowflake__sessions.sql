@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key='session_id',
+    cluster_by=['to_date(created_on)'],
     on_schema_change='append_new_columns',
 ) }}
 

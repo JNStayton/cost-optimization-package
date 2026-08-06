@@ -1,6 +1,7 @@
 {{ config(
     materialized='incremental',
     unique_key=['service_type', 'entity_name', 'start_time'],
+    cluster_by=['to_date(start_time)'],
     on_schema_change='append_new_columns',
 ) }}
 

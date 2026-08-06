@@ -1,6 +1,9 @@
 {{
   config(
-    materialized='view',
+    materialized='incremental',
+    unique_key=['query_id', 'table_fqn'],
+    incremental_strategy='merge',
+    cluster_by=['to_date(query_start_time)'],
   )
 }}
 
@@ -14,7 +17,7 @@
   how many queries hit a given view.
 
   Enterprise+ only (requires ACCESS_HISTORY).
-  Grain: one row per (query_id, table_fqn, access_type)
+  Grain: one row per (query_id, table_fqn)
 --#}
 
 with direct_access as (
@@ -29,6 +32,9 @@ with direct_access as (
       and f.value:objectDomain::string in ('View', 'Table', 'Materialized View')
       and f.value:objectName::string is not null
       and trim(f.value:objectName::string) != ''
+      {% if is_incremental() %}
+        and query_start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})
+      {% endif %}
 )
 
 select distinct

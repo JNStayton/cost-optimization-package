@@ -1,13 +1,20 @@
-{#
+{{
+  config(
+    materialized='incremental',
+    unique_key=['query_id', 'table_database', 'table_schema', 'table_name'],
+    incremental_strategy='merge',
+    cluster_by=['to_date(query_start_time)'],
+  )
+}}
+
+{#--
   Flattens access_history into one row per (query_id, table) for object-level attribution.
   Replaces query_text ILIKE matching with exact engine-reported base_objects_accessed and
   objects_modified. Used by table_query_stats_daily and other recommendation marts.
-#}
-{{
-  config(
-    materialized='view',
-  )
-}}
+
+  Enterprise+ only (requires ACCESS_HISTORY view).
+  Grain: one row per (query_id, table_database, table_schema, table_name)
+--#}
 
 with access_base as (
     select
@@ -18,6 +25,9 @@ with access_base as (
     from {{ ref('stg_snowflake__access_history') }}
     left join lateral flatten(input => base_objects_accessed) as base
     where base_objects_accessed is not null
+      {% if is_incremental() %}
+        and query_start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})
+      {% endif %}
 ),
 
 access_modified as (
@@ -29,6 +39,9 @@ access_modified as (
     from {{ ref('stg_snowflake__access_history') }}
     left join lateral flatten(input => objects_modified) as mod
     where objects_modified is not null
+      {% if is_incremental() %}
+        and query_start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})
+      {% endif %}
 ),
 
 unioned as (

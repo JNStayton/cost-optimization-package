@@ -1,13 +1,15 @@
 {{
   config(
-    materialized='view',
+    materialized='incremental',
+    unique_key=['query_id', 'table_fqn', 'column_name'],
+    incremental_strategy='merge',
+    cluster_by=['to_date(query_start_time)'],
   )
 }}
 
 {#--
   One row per (query_id, table_fqn, column_name) from Snowflake ACCESS_HISTORY.
-  Extends int_snowflake__query_table_access by flattening one level deeper —
-  from object-level down to the columns[] array within each accessed object.
+  Flattens base_objects_accessed down to the columns[] array within each accessed object.
 
   This gives exact engine-reported column-level read attribution without any
   query_text parsing. Used by int_snowflake__column_query_stats to produce
@@ -15,6 +17,8 @@
 
   Enterprise+ only (requires ACCESS_HISTORY view). Disabled when
   snowflake_enterprise_edition = false.
+
+  Grain: one row per (query_id, table_fqn, column_name)
 --#}
 
 with objects_flattened as (
@@ -27,6 +31,9 @@ with objects_flattened as (
     where base_objects_accessed is not null
         and upper(trim(coalesce(obj.value:objectDomain::string, ''))) in ('TABLE', 'MATERIALIZED VIEW')
         and obj.value:columns is not null
+        {% if is_incremental() %}
+          and query_start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})
+        {% endif %}
 ),
 
 columns_flattened as (

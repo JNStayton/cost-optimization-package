@@ -3,6 +3,7 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='column_query_stats_daily_key',
+    cluster_by=['access_date'],
     on_schema_change='append_new_columns',
   )
 }}
