@@ -100,7 +100,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `table_query_stats_full_account` | `false` | When `false` (default), only collects query stats for tables that are dbt models in the current project. Set to `true` to scan all tables in the Snowflake account. |
-| `table_query_stats_initial_lookback_days` | `30` (Enterprise) / `7` (Standard) | Number of days of query history to process on the first build. Subsequent incremental runs pick up from the last processed date. Override to widen or narrow the initial window. |
+| `incremental_overlap_days` | `31` | Number of days of data to process on every build (including first). Set to your longest gap between package builds. |
 
 ### Fact model tuning
 

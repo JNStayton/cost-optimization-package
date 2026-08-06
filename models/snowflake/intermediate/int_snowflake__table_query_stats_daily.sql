@@ -6,11 +6,6 @@
   Scope:
     - Default: only tables that are dbt models in the current project.
     - Set vars.table_query_stats_full_account = true to scan all tables in the account.
-
-  Initial lookback:
-    - Enterprise (access_history): 30 days
-    - Standard (query_text): 7 days
-    - Override with vars.table_query_stats_initial_lookback_days
 --#}
 {{
   config(
@@ -24,8 +19,7 @@
 
 {% set is_enterprise = var('snowflake_enterprise_edition', true) %}
 {% set full_account = var('table_query_stats_full_account', false) %}
-{% set default_lookback = 30 if is_enterprise else 7 %}
-{% set initial_lookback_days = var('table_query_stats_initial_lookback_days', default_lookback) %}
+{% set overlap_days = var('incremental_overlap_days', 31) %}
 
 with candidate_tables as (
     {% if full_account %}
@@ -72,7 +66,7 @@ query_history as (
             )
         )
     {% else %}
-        where query_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
+        where query_start_time >= dateadd(day, -{{ overlap_days }}, current_timestamp())
     {% endif %}
 ),
 
@@ -157,7 +151,7 @@ table_pruning as (
             )
         )
     {% else %}
-        where prh.interval_start_time >= dateadd(day, -{{ initial_lookback_days }}, current_timestamp())
+        where prh.interval_start_time >= dateadd(day, -{{ overlap_days }}, current_timestamp())
     {% endif %}
     group by prh.database_name, prh.schema_name, prh.table_name, cast(prh.interval_start_time as date)
 )

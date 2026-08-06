@@ -40,5 +40,5 @@ where execution_status = 'SUCCESS'
 {% if is_incremental() %}
   and start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(start_time)) from {{ this }})
 {% else %}
-  and start_time >= dateadd(day, -{{ var('query_history_initial_lookback_days', 30) }}, current_timestamp())
+  and start_time >= dateadd(day, -{{ var('incremental_overlap_days', 31) }}, current_timestamp())
 {% endif %}

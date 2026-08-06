@@ -169,7 +169,7 @@ models/
 vars:
   # Lookback windows
   ai_spend_lookback_days: 30
-  ai_spend_initial_lookback_days: 30
+  incremental_overlap_days: 31
 
   # Model recommendation thresholds
   ai_model_downgrade_output_token_threshold: 100
