@@ -44,3 +44,5 @@ archived/
 
 .claude/
 .snowflake/
+
+.dbtignore
