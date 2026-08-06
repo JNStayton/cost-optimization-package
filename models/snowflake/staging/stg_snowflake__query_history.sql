@@ -31,11 +31,14 @@ select
     rows_inserted,
     -- dbt Cloud context parsed from query comment
     parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_run_id::string as dbt_cloud_run_id,
-    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_job_id::string as dbt_cloud_job_id
+    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_job_id::string as dbt_cloud_job_id,
+    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as dbt_node_id,
+    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):target_name::string as dbt_target_name,
+    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_environment_id::string as dbt_cloud_environment_id
 from {{ source('snowflake_usage', 'query_history') }}
 where execution_status = 'SUCCESS'
 {% if is_incremental() %}
-  and start_time >= (select dateadd(day, -7, max(start_time)) from {{ this }})
+  and start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(start_time)) from {{ this }})
 {% else %}
-  and start_time >= dateadd(day, -14, current_timestamp())
+  and start_time >= dateadd(day, -{{ var('query_history_initial_lookback_days', 30) }}, current_timestamp())
 {% endif %}

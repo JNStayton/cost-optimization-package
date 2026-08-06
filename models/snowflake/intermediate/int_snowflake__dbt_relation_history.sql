@@ -10,15 +10,12 @@
 {#--
   Cross-environment dbt relation history.
 
-  Parses dbt query comment JSON from QUERY_HISTORY to discover all physical
-  materializations of dbt models across environments (dev, staging, prod).
+  Discovers all physical materializations of dbt models across environments
+  (dev, staging, prod) by parsing DDL statements from the staged query history.
 
-  The dbt query comment format:
-    /* {"app": "dbt", "node_id": "model.project.name", "target_name": "prod", ...} */
-
-  This model maps each logical dbt model (node_id) to every physical FQN where
-  it has been materialized. Enables cross-environment recommendation deduplication
-  and identification of models that exist in non-prod but haven't reached prod yet.
+  Maps each logical dbt model (node_id) to every physical FQN where it has been
+  materialized. Enables cross-environment recommendation deduplication and
+  identification of models that exist in non-prod but haven't reached prod yet.
 
   Grain: one row per (node_id, table_fqn)
 --#}
@@ -36,18 +33,17 @@ with dbt_build_queries as (
         start_time,
         query_text,
         query_type,
-        -- Extract dbt comment JSON fields
-        regexp_substr(query_text, '"node_id":\\s*"([^"]+)"', 1, 1, 'e') as node_id,
-        regexp_substr(query_text, '"target_name":\\s*"([^"]+)"', 1, 1, 'e') as target_name,
-        regexp_substr(query_text, '"dbt_cloud_environment_id":\\s*"([^"]+)"', 1, 1, 'e') as dbt_cloud_environment_id,
+        dbt_node_id as node_id,
+        dbt_target_name as target_name,
+        dbt_cloud_environment_id,
         -- Extract the materialized FQN from the DDL statement
         -- Handles: CREATE [OR REPLACE] [TRANSIENT] TABLE|VIEW db.schema.name
         upper(regexp_substr(query_text, '(view|table)\\s+([a-z0-9_]+\\.[a-z0-9_]+\\.[a-z0-9_]+)', 1, 1, 'ie', 2)) as ddl_fqn
-    from {{ source('snowflake_usage', 'query_history') }}
-    where query_text ilike '%"app": "dbt"%'
+    from {{ ref('stg_snowflake__query_history') }}
+    where dbt_node_id is not null
       and query_type in ('CREATE_TABLE_AS_SELECT', 'CREATE_VIEW', 'INSERT', 'MERGE')
       {% if is_incremental() %}
-        and start_time >= (select dateadd(day, -1, max(last_built_at)) from {{ this }})
+        and start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(last_built_at)) from {{ this }})
       {% else %}
         and start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
       {% endif %}
@@ -68,8 +64,7 @@ parsed as (
         split_part(node_id, '.', 2) as project_name,
         split_part(node_id, '.', 3) as model_name
     from dbt_build_queries
-    where node_id is not null
-      and node_id like 'model.%'
+    where node_id like 'model.%'
       and ddl_fqn is not null
       and ddl_fqn not like '%__DBT_BACKUP'
       -- Filter to monitored projects

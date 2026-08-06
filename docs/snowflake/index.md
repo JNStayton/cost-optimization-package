@@ -281,6 +281,8 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 | `table_materialization_min_query_count` | `10` | Minimum queries for a view to appear in results. |
 | `table_query_stats_initial_lookback_days` | `30` | Initial load window for table_query_stats_daily on first build. |
 | `column_query_stats_initial_lookback_days` | `30` | Initial load window for column_query_stats on first build. |
+| `query_history_initial_lookback_days` | `30` | Initial load window for stg_query_history on first build. |
+| `incremental_overlap_days` | `31` | Re-scan window on incremental runs. Set to at least your longest gap between package builds. Default supports monthly cadence. |
 | `incremental_unique_key_probe_threshold` | `0.95` | Uniqueness ratio threshold for key candidate detection. |
 | `incremental_candidates_lookback_days` | `60` | Lookback window for table rebuild history. |
 | `incremental_candidates_min_build_time_sec` | `300` | Min max build time for build-time trigger. |
@@ -349,9 +351,13 @@ Detailed documentation for each optimization path:
 
 | Doc | Covers |
 |-----|--------|
-| [Table Clustering Candidates](table_clustering_candidates.md) | Clustering candidate scoring (V3), key recommendations |
-| [Materialization Recommendations](materialization_recommendations.md) | View→table, table→incremental candidates |
-| [Incremental Config Deep Dive](incremental_config_recommendations.md) | Strategy selection, key detection, implementation guide |
-| [Warehouse Recommendations](warehouse_recommendations.md) | Sizing, spillage, expensive queries |
-| [AI/Cortex Spend Optimization](ai_cortex_spend_optimization.md) | Token monitoring, model cost, user attribution |
-| [Future Optimizations](future_optimizations.md) | Adaptive Compute, Gen2 changes, roadmap |
+| [Table Clustering Candidates](reference/table_clustering_candidates.md) | Clustering candidate scoring (V3), key recommendations |
+| [Materialization Recommendations](reference/materialization_recommendations.md) | View→table, table→incremental candidates |
+| [Incremental Config Deep Dive](reference/incremental_config_recommendations.md) | Strategy selection, confidence scoring, implementation guide |
+| [Incremental Design](reference/incremental_recommendations_mapping.md) | Confidence system architecture, scoring model, expected outputs |
+| [Warehouse Recommendations](reference/warehouse_recommendations.md) | Sizing, spillage, expensive queries |
+| [Warehouse Signals](reference/warehouse_recommendations_mapping.md) | Signal inventory, interaction matrix, symptom classification |
+| [Optimization Priorities](reference/optimization_priorities_mapping.md) | Per-entity priority system, hierarchy ranks, cascade behavior |
+| [Gold Layer Design](reference/gold_design.md) | View specifications, cost estimation, cross-domain correlations |
+| [AI/Cortex Spend Optimization](reference/ai_cortex_spend_optimization.md) | Token monitoring, model cost, user attribution |
+| [Future Optimizations](reference/future_optimizations.md) | Adaptive Compute, Gen2, roadmap |

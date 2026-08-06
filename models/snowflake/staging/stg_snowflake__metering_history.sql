@@ -35,7 +35,7 @@ where service_type in (
     'SNOWFLAKE_INTELLIGENCE'
 )
 {% if is_incremental() %}
-  and start_time >= (select dateadd(day, -1, max(start_time)) from {{ this }})
+  and start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(start_time)) from {{ this }})
 {% else %}
   and start_time >= dateadd(day, -30, current_timestamp())
 {% endif %}

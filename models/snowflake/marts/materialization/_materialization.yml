@@ -469,7 +469,7 @@ models:
           config() block at the top of your model file. For microbatch, set the begin
           date manually.
 
-  - name: fct_snowflake__table_materialization_candidates_v2
+  - name: fct_snowflake__table_materialization_candidates
     description: >
       V2 of the table materialization recommendation model. Preserves the original
       recommendation logic while making query-text attribution more transparent via

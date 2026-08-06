@@ -327,8 +327,12 @@ select
             then {{ build_incremental_config_template() }}
         else null
     end                                                                     as dbt_model_config,
-    -- Effort category: incremental is always actionable_review (requires human verification)
-    'actionable_review'                                                     as effort_category
+    -- Effort category: aligned with recommendation status
+    case recommendation_status
+        when 'actionable_review' then 'actionable_review'
+        when 'investigate' then 'investigation'
+        else 'investigation'
+    end                                                                     as effort_category
 from confidence_scored
 where roi_tier != 'low'
 order by

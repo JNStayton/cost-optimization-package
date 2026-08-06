@@ -14,7 +14,7 @@ select
 from {{ source('snowflake_usage', 'sessions') }}
 where parse_json(client_environment):APPLICATION::string = 'dbt'
 {% if is_incremental() %}
-  and created_on >= (select dateadd(day, -1, max(created_on)) from {{ this }})
+  and created_on >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(created_on)) from {{ this }})
 {% else %}
   and created_on >= dateadd(day, -30, current_timestamp())
 {% endif %}

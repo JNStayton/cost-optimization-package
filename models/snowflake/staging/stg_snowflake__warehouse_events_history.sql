@@ -31,5 +31,5 @@ where event_name in (
     'ALTER_WAREHOUSE'
 )
 {% if is_incremental() %}
-    and timestamp >= (select dateadd(day, -7, max(event_timestamp)) from {{ this }})
+    and timestamp >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(event_timestamp)) from {{ this }})
 {% endif %}

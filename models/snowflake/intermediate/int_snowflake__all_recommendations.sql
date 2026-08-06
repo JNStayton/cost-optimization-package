@@ -244,7 +244,7 @@ all_recommendations as (
         '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as dbt_model_config,
         null as identified_unique_key,
         'materialize_as_table' as signal_id
-    from {{ ref('fct_snowflake__table_materialization_candidates_v2') }} as tm
+    from {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
@@ -268,7 +268,11 @@ all_recommendations as (
             else 'Evaluate incremental materialization'
         end as recommendation,
         ic.recommendation_reason,
-        'actionable_review' as effort_category,
+        case
+            when icr_lookup.recommendation_status = 'actionable_review' then 'actionable_review'
+            when icr_lookup.recommendation_status = 'investigate' then 'investigation'
+            else 'investigation'
+        end as effort_category,
         ic.rebuild_pressure_score as score,
         ic.avg_build_time_sec * ic.builds_per_day * 365
             * coalesce(wr.credits_per_second, 0.000278)

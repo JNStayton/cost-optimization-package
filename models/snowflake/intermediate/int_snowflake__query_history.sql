@@ -35,7 +35,7 @@ select
     dbt_cloud_job_id
 from {{ ref('stg_snowflake__query_history') }}
 {% if is_incremental() %}
-where start_time >= (select dateadd(day, -1, max(query_start_time)) from {{ this }})
+where start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})
 {% else %}
 where start_time >= dateadd(day, -60, current_timestamp())
 {% endif %}

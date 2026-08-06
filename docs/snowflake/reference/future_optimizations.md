@@ -23,8 +23,8 @@ Items below are validated as valuable but deferred from the initial release. Ord
 
 ### Report card views
 - ~~Top expensive builds (by credit cost per run)~~ — **Shipped** as `vw_snowflake__top_expensive_queries`
-- Top queried models (by SELECT frequency)
-- Top spillage models (by GB spilled)
+- ~~Top queried models (by SELECT frequency)~~ — **Shipped** as `vw_snowflake__top_queried_models`
+- ~~Top spillage models (by GB spilled)~~ — **Shipped** as `vw_snowflake__top_spillage_models`
 - Storage growth trends (month-over-month by schema)
 
 ### Storage optimization domain
@@ -232,177 +232,38 @@ Interactive warehouses are designed for low-latency, high-concurrency dashboard 
 
 ---
 
-## Recommendation Interface + Cross-Domain Prioritization (Package v2 Direction)
+## Recommendation Interface + Cross-Domain Prioritization
 
-**Status:** Planned  
-**Priority:** High  
-**Scope:** Package-wide design evolution across Snowflake optimization marts
+**Status:** Shipped (GA)  
+**Scope:** Package-wide design — implemented as `int_snowflake__all_recommendations` + gold layer views
 
-### Why This Matters
+### Implementation Summary
 
-The current package produces useful domain-specific recommendation facts — for example:
-- warehouse sizing
-- expensive queries
-- spillage
-- incremental materialization candidates
-- table materialization candidates
-- clustering candidates
-- AI usage / spend
+The cross-domain prioritization layer is now implemented:
 
-That is the right foundation, but it is still oriented primarily around individual optimization domains. The next step is to make the package easier to consume in three distinct ways:
+- **`int_snowflake__all_recommendations`** (table materialization) — unions all domain facts with normalized fields, computes per-entity `priority_tier` via `row_number()` window function
+- **10 gold views** — dashboard-ready surfaces for humans and agents (see [gold_design.md](gold_design.md))
+- **Confidence-based incremental recommendations** — `confidence_score`, `assumptions`, `blocking_signals` fields
+- **Per-entity relative priority** — hierarchy_rank + backlog_status ordering (see [optimization_priorities.md](optimization_priorities_mapping.md))
 
-1. **Humans** need clear, ranked, current action items rather than raw fact tables.
-2. **Agents** need explicit structured signals instead of relying on long-form prose alone.
-3. **Dashboards / downstream marts** need normalized fields across domains so recommendations can be compared and prioritized together.
+All domain-specific recommendation logic remains in the domain marts. The gold layer normalizes and prioritizes across domains.
 
-The long-term goal is to make every optimization fact table usable as both:
-- a human-readable recommendation source
-- a machine-readable decision interface
+### Remaining backlog
 
-### Proposed Standard Recommendation Fields
+| Item | Status | Notes |
+|------|--------|-------|
+| `vw_snowflake__recommendations_by_environment` | Planned | Filter by target_name (prod/dev/staging), `has_nonprod_only` flag |
+| Resolution detection (v2) | Planned | Requires incremental facts — detect when a signal disappears because fix was applied vs data changed |
+| Temporal promotion | Planned | Requires v2 — promote deferred warehouse config after observation window |
+| Agent auto-apply workflow | Planned | `config_change` items auto-proposed as PRs; `sql_refactor` items investigated and drafted |
 
-Add a common recommendation interface to optimization fact models where applicable:
-
-- `recommendation_state`
-  - Examples: `candidate`, `monitor`, `review_manually`, `insufficient_evidence`, `not_applicable`
-  - Purpose: normalize recommendation status across optimization domains
-
-- `recommendation_confidence`
-  - Examples: `high`, `medium`, `low`
-  - Purpose: communicate how robust the recommendation is given the available evidence
-
-- `priority_score`
-  - Numeric score used for cross-domain ranking and dashboard ordering
-  - Should be relative within a domain first, then normalized where needed for package-level ranking
-
-- `estimated_impact`
-  - Human- and agent-readable impact summary
-  - Examples: estimated GB scanned avoided, credits reduced, queue time reduced, downstream recomputation eliminated
-
-- `recommended_next_action`
-  - Concrete next step rather than only descriptive prose
-  - Examples:
-    - `materialize_as_table`
-    - `evaluate_incremental_strategy`
-    - `review_clustering_keys`
-    - `scale_up_warehouse`
-    - `investigate_query_refactor`
-    - `monitor_only`
-
-- `recommendation_reason`
-  - Human-readable explanation of why the recommendation fired
-  - Should remain narrative, but be supported by the structured fields above
-
-### Design Principle: Useful for Humans *and* Agents
-
-This package should evolve toward recommendation outputs that are immediately useful for:
-
-#### Human analytics / platform engineers
-- triaging the top current issues
-- building dashboards that answer “what should we fix next?”
-- reviewing evidence before acting on a recommendation
-
-#### Agents and automation systems
-- selecting which optimization opportunities to investigate first
-- deciding when evidence is strong enough to act automatically vs escalate for manual review
-- chaining together follow-up analysis based on `recommended_next_action`
-
-This means future models should avoid relying only on long explanatory strings. Narrative reasoning is still useful, but it should be paired with explicit status, confidence, impact, and action fields.
-
-### Proposed New Layer: Cross-Domain Prioritization
-
-After domain-specific marts are mature, add a package-level prioritization layer that unifies optimization opportunities across domains.
-
-#### Proposed mart
-- `fct_snowflake__optimization_recommendations`
-
-#### Purpose
-Create one current-state recommendation surface that unions and normalizes recommendations from multiple domains, such as:
-- warehouse sizing
-- expensive queries
-- spillage
-- table materialization
-- incremental materialization
-- clustering
-- AI cost / usage anomalies
-- future storage recommendations
-
-#### Proposed outputs
-- recommendation domain (`warehouse`, `query`, `materialization`, `clustering`, `ai`, `storage`)
-- recommendation_state
-- recommendation_confidence
-- priority_score
-- estimated_impact
-- recommended_next_action
-- owning object (`warehouse`, `table_fqn`, `dbt_model`, `query_id`, etc.)
-- recommendation_reason
-
-### Proposed Consumption Layer / “Current Action Items” Views
-
-On top of the domain marts and cross-domain fact, add lightweight current-state views for immediate use.
-
-#### Gold Layer Views (Dashboard-Ready)
-
-| View | Purpose | Audience |
-|------|---------|----------|
-| `vw_snowflake__top_recommendations` | All domains, ranked by estimated impact. One row per actionable recommendation with priority rank, domain, model/table, recommendation, estimated annual impact, effort level, and actionable snippet. | Humans (dashboard top-level) |
-| `vw_snowflake__recommendations_by_environment` | Same as above but filterable by target_name (prod, dev, staging). Surfaces `has_nonprod_only` flag for models not yet in prod. | Humans (environment-scoped) |
-| `vw_snowflake__cost_savings_summary` | Aggregates estimated credit/dollar savings per domain. One row per domain with total estimated annual savings, recommendation count, and top recommendation preview. KPI cards at dashboard top. | Humans (executive summary) |
-| `vw_snowflake__optimization_backlog` | Every recommendation classified by effort level, sortable by impact-to-effort ratio (highest value, lowest effort first). | Humans (sprint planning) + Agents (backlog creation) |
-
-#### Effort Classification
-
-Each recommendation should carry an `effort_category` that determines how it gets routed:
-
-| Category | Definition | Agent Behavior | Human Behavior |
-|----------|-----------|----------------|----------------|
-| `config_change` | One-line dbt config or DDL (warehouse resize, add clustering key, change materialization) | Auto-apply or auto-propose PR | Quick win — do it now |
-| `sql_refactor` | Model SQL needs restructuring (spillage fix, query optimization, join rewrite) | Investigate model code + propose fix | Prioritize in sprint |
-| `architecture` | Model needs to be split, converted to incremental, or restructured in the DAG | Create well-contextualized ticket with evidence | Design session required |
-
-#### Agent-Consumable Design Requirements
-
-For the agent use case (backlog ticket creation, code investigation, auto-fix proposals), each recommendation row must carry enough context that an agent does NOT need to go back to the fact models:
-
-- `node_id` — so the agent can find the file in the dbt project
-- `model_name` and `package_name` — for project navigation
-- `table_fqn` — for Snowflake object reference
-- The specific metric that triggered it (not just "spillage detected" but "321 GB spilled on 2 days")
-- The actionable snippet or investigation path (dbt config template, ALTER statement, or "check for cross joins in WHERE clause")
-- `effort_category` — determines whether the agent auto-applies, investigates, or creates a ticket
-
-An agent with access to the dbt project code would:
-1. Read the gold layer for prioritized recommendations
-2. For `config_change` items: auto-generate the dbt config change or DDL and propose a PR
-3. For `sql_refactor` items: read the model SQL, cross-reference the recommendation with actual query patterns, and draft a fix
-4. For `architecture` items: create a ticket with full context (recommendation, evidence, affected downstream models, estimated impact)
-
-This enables a workflow where the package DAG produces recommendations, and an agent acts on them — either autonomously for low-risk changes or by creating well-contextualized work items for humans.
-
-#### Environment-Aware Recommendations
-
-The `vw_snowflake__recommendations_by_environment` view should support these use cases:
-- "Show me only prod recommendations" — filter to `target_name LIKE '%prod%'`
-- "What's broken in dev that hasn't hit prod yet?" — filter to `has_nonprod_only = true`
-- "Collapse to logical model" — group by `node_id` using the existing `vw_snowflake__recommendations_by_model` pattern
-
-These views should answer questions like:
-- What are the top 10 highest-confidence optimization opportunities right now?
-- Which dbt models show multiple overlapping issues?
-- Which recommendations have the highest likely impact?
-- Which recommendations need manual review before implementation?
-
-This layer is especially useful for dashboards, executive rollups, and agent-driven triage.
-
-### Notes on Implementation Strategy
-
-- Keep domain-specific recommendation logic inside the domain marts.
-- Normalize only the output interface across domains.
-- Prefer explicit structured fields over parsing narrative text downstream.
-- Preserve domain-specific scoring, but add a package-level normalization strategy later for cross-domain ranking.
-- Roll out incrementally rather than trying to standardize every model at once.
-
-A practical first step would be to add `recommendation_state`, `recommendation_confidence`, and `recommended_next_action` to the highest-value Snowflake marts first.
+The following items from the original design are now shipped:
+- Cross-domain prioritization layer (`int_snowflake__all_recommendations`)
+- Gold layer views (top_recommendations, optimization_backlog, model_optimizations, warehouse_optimizations, cross_domain_insights, cost_savings_summary, top_expensive_queries, top_spillage_models, top_queried_models, user_level_cost_attribution)
+- Effort classification (`config_change`, `actionable_review`, `sql_refactor`, `investigation`)
+- Agent-consumable structured fields (`node_id`, `signal_id`, `dbt_model_config`, `snowflake_ddl`, `effort_category`, `action_type`)
+- Confidence-based incremental recommendations (`confidence_score`, `assumptions`, `blocking_signals`)
+- Per-entity relative priority system (`priority_tier` via hierarchy_rank + window function)
 
 ---
 

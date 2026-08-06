@@ -143,6 +143,7 @@ Override these in your project's `vars.yml` or via CLI `--vars`:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `dbt_monitored_projects` | `[]` (current project) | List of project names to monitor; `['*']` for all |
+| `incremental_overlap_days` | `31` | Re-scan window on incremental runs; set to your longest gap between builds |
 | `snowflake_enterprise_edition` | `true` | Set `false` for Standard edition (disables ACCESS_HISTORY features) |
 
 ### Thresholds (tune to your environment)
@@ -175,8 +176,9 @@ macros/
   snowflake/       Snowflake optimization macros and utilities
 
 docs/
-  snowflake/       Snowflake setup guide and domain documentation
-  redshift/        Redshift documentation
+  snowflake/
+    index.md       Setup guide, permissions, configuration, quick start
+    reference/     Architecture docs, signal inventories, design decisions
 ```
 
 ## Contributing

@@ -31,7 +31,7 @@ select
     tokens
 from {{ source('snowflake_usage', 'cortex_agent_usage_history') }}
 {% if is_incremental() %}
-  where start_time >= (select dateadd(day, -1, max(start_time)) from {{ this }})
+  where start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(start_time)) from {{ this }})
 {% else %}
   where start_time >= dateadd(day, -30, current_timestamp())
 {% endif %}

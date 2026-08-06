@@ -27,24 +27,25 @@ It transforms raw domain-specific recommendations (warehouse sizing, spillage, m
 
 ### `vw_snowflake__top_recommendations`
 
-**The flagship view.** All domains, ranked by estimated savings. One row per actionable recommendation, deduplicated by node_id where applicable.
+**The flagship view.** P1+P2 recommendations across all domains, deduplicated per entity (highest savings as representative). Includes related signal count for context.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `priority_rank` | int | Dense rank by `estimated_annual_savings_usd` DESC |
+| `priority_rank` | int | Dense rank by priority_tier ASC, savings DESC |
 | `domain` | string | warehouse / materialization / clustering / ai |
+| `signal_id` | string | Machine-readable signal identifier |
+| `priority_tier` | int | Per-entity relative priority (1 = do first) |
 | `node_id` | string | Logical dbt model identifier (nullable) |
 | `model_name` | string | Human-readable model name |
-| `project_name` | string | dbt project name |
-| `table_fqn` | string | Physical relation |
-| `warehouse_name` | string | Relevant warehouse (build warehouse for model recs) |
+| `warehouse_name` | string | Relevant warehouse |
 | `recommendation` | string | Short action text |
 | `recommendation_reason` | string | Detailed evidence with metrics |
 | `estimated_annual_cost_usd` | float | "If unchanged, expect this yearly cost" |
 | `estimated_annual_savings_usd` | float | "If fixed, save this amount yearly" |
+| `related_signals_count` | int | Other signals for this entity (shows compound opportunity) |
 | `snapshot_date` | date | When this analysis was produced |
 
-Filters out "Monitor" and "Stable" recommendations. Only actionable items appear. Pure cost-ranked — no effort or environment detail (drill into backlog for that).
+Filters to P1+P2 per entity. Ordered by priority_tier, then savings DESC. One row per entity (deduplicated to highest-savings representative).
 
 ---
 
@@ -125,13 +126,44 @@ Expensive queries are surfaced separately in `vw_snowflake__top_expensive_querie
 
 ### `vw_snowflake__top_expensive_queries`
 
-**Cost accountability view.** Top 10 most expensive recurring queries within the project scope. Covers dbt model builds and downstream consumer queries.
+**Cost accountability view.** Top 10 most expensive recurring queries within the project scope, enriched with co-occurring optimization signals.
 
 Key columns:
 - `query_hash`: unique identifier for this recurring query pattern
 - `estimated_annual_cost_usd`: projected annual cost at current run rate
 - `recommendation`: actionable recommendation for this query
 - `model_name` / `node_id`: the dbt model this query builds (when attributable)
+- `co_occurring_fixes`: when co-signals exist, shows "Actionable — clustering + incremental optimization(s) available"
+- `co_signal_count`: number of co-occurring optimization signals for this model
+
+---
+
+### `vw_snowflake__top_spillage_models`
+
+**Performance engineering view.** Models causing the most memory spillage, with dbt Cloud run traceability.
+
+Key columns:
+- `model_name` / `node_id`: the dbt model
+- `model_source`: 'project' or 'installed_package'
+- `total_gb_spilled`: aggregate spillage across runs
+- `last_spilling_run_id` / `last_spilling_job_id`: dbt Cloud run and job IDs for the most recent spilling execution
+- `warehouse_name`: warehouse where spillage occurred
+
+Filtered to models only (dbt_model IS NOT NULL). Includes installed packages since they run on your warehouse.
+
+---
+
+### `vw_snowflake__top_queried_models`
+
+**Platform engineering view.** Top 25 most-queried models by SELECT consumption pressure.
+
+Key columns:
+- `model_name` / `node_id`: the dbt model
+- `total_select_count`: SELECT queries hitting this model in the analysis window
+- `total_select_credits`: estimated credits consumed by downstream reads
+- `avg_select_duration_sec`: average query duration
+
+Joins `int_snowflake__table_query_stats_daily` to `int_dbt__relations` to identify which models receive the most downstream consumption.
 
 ---
 
@@ -145,25 +177,20 @@ Key columns: `service_or_model`, `estimated_annual_savings_usd`
 
 ### `vw_snowflake__cross_domain_insights`
 
-**Multi-signal correlation view.** For each table with 2+ optimization signals from different domains, surfaces the signals as an array and picks the primary recommendation.
+**Multi-signal correlation view.** Reads from `int_snowflake__all_recommendations` (single source of truth). For each model with 2+ optimization signals from different categories, surfaces the signal array and picks the primary recommendation based on priority_tier.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `signals` | array | Detected optimization signals (e.g., ['spillage', 'clustering']) |
-| `signal_count` | int | Number of distinct signals (2+ for this view) |
-| `primary_recommendation` | string | Highest-priority fix from the hierarchy |
+| `model_name` | string | The dbt model with multi-signal correlation |
+| `signals` | string | Comma-separated signal categories (e.g., 'spillage,clustering,incremental') |
+| `signal_count` | int | Number of distinct signal categories (2+ for this view) |
+| `primary_recommendation` | string | Recommendation text from lowest priority_tier signal |
 | `primary_domain` | string | Domain of the primary recommendation |
 | `root_cause` | string | Why these signals co-occur |
-| `recommended_action` | string | What to do first |
 
-Primary recommendation hierarchy:
-1. Materialize as table (resolves cascading effects)
-2. Convert to incremental (resolves rebuild waste)
-3. Add clustering (resolves scan inefficiency)
-4. Upsize warehouse (spillage alone, no other signals — warehouse capacity insufficient)
-5. Investigate query patterns (fallback when no clear structural fix)
+Filters to `backlog_status IN ('actionable', 'monitor')` to include spillage and expensive query signals alongside actionable recommendations. Primary recommendation is derived from `min_by(recommendation, priority_tier)` — the signal with the lowest (best) priority_tier for that entity.
 
-Note: Spillage is treated as an **amplifier**, not a standalone domain recommendation. When spillage co-occurs with another signal, it elevates that signal's urgency (marked as "high warehouse impact" in root_cause) rather than becoming the primary recommendation.
+Signal categories: spillage, clustering, incremental, materialization, expensive_query. HAVING requires 2+ distinct categories to surface a row.
 
 ---
 
@@ -326,7 +353,7 @@ These are detected by joining fact models on `table_fqn` or `node_id` and lookin
 
 ### Correlation 2: View in Chain + Downstream Spillage
 
-**Detection:** Same `table_fqn` appears in `fct_table_materialization_candidates_v2` (recommendation = 'Materialize as TABLE') AND a downstream table in `fct_warehouse_spillage_recommendations`.
+**Detection:** Same `table_fqn` appears in `fct_table_materialization_candidates` (recommendation = 'Materialize as TABLE') AND a downstream table in `fct_warehouse_spillage_recommendations`.
 
 **Root cause:** The view recomputes on every downstream build, creating large intermediate result sets that spill.
 
@@ -398,7 +425,7 @@ These are detected by joining fact models on `table_fqn` or `node_id` and lookin
 
 ### Correlation 8: Materialization Candidate + Expensive Downstream Query
 
-**Detection:** A `table_fqn` in `fct_table_materialization_candidates_v2` has a downstream table whose build queries appear in `fct_expensive_query_recommendations`.
+**Detection:** A `table_fqn` in `fct_table_materialization_candidates` has a downstream table whose build queries appear in `fct_expensive_query_recommendations`.
 
 **Root cause:** An expensive downstream query is expensive partly because it recomputes an upstream view every time it runs.
 
@@ -434,7 +461,7 @@ These are detected by joining fact models on `table_fqn` or `node_id` and lookin
 
 ### Correlation 11: Incremental + Materialization in Same Lineage
 
-**Detection:** A `table_fqn` in `fct_table_materialization_candidates_v2` is upstream (in `int_dbt__relations.parent_models`) of a `table_fqn` in `fct_incremental_materialization_candidates`.
+**Detection:** A `table_fqn` in `fct_table_materialization_candidates` is upstream (in `int_dbt__relations.parent_models`) of a `table_fqn` in `fct_incremental_materialization_candidates`.
 
 **Root cause:** A view feeds into a table that should be incremental. Both changes together compound: materializing the view reduces the incremental model's scan cost, and making it incremental reduces redundant rebuilds.
 

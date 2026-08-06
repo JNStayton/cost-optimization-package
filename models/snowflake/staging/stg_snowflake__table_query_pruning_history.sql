@@ -35,5 +35,5 @@ select
     rows_matched
 from {{ source('snowflake_usage', 'table_query_pruning_history') }}
 {% if is_incremental() %}
-where interval_start_time >= (select dateadd(day, -7, max(interval_start_time)) from {{ this }})
+where interval_start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(interval_start_time)) from {{ this }})
 {% endif %}

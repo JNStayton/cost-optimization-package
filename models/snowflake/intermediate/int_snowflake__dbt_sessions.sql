@@ -27,5 +27,5 @@ select
     client_version
 from {{ ref('stg_snowflake__sessions') }}
 {% if is_incremental() %}
-where created_on >= (select dateadd(day, -1, max(created_on)) from {{ this }})
+where created_on >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(created_on)) from {{ this }})
 {% endif %}
