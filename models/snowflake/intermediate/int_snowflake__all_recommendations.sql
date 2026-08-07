@@ -303,6 +303,8 @@ all_recommendations as (
     where ic.recommendation not like '%Insufficient%'
       and ic.roi_tier != 'low'
       and coalesce(icr_lookup.recommendation_status, 'investigate') != 'do_not_recommend'
+      -- Exclude when a specific strategy exists (apply_incremental_* will surface instead)
+      and icr_lookup.incremental_strategy is null
 
     union all
 
