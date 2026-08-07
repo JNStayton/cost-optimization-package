@@ -46,3 +46,6 @@ archived/
 .snowflake/
 
 .dbtignore
+
+# Local test seeds (not for committing)
+seeds/

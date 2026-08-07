@@ -69,6 +69,10 @@ models:
     # Databricks optimization models
     databricks:
       +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
 
 # Package variables — override in consuming project's dbt_project.yml vars: section
 vars:
