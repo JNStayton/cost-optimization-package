@@ -54,12 +54,7 @@ with candidate_tables as (
         ti.table_name
     from {{ ref('int_bigquery__table_inventory') }} as ti
     inner join {{ ref('int_dbt__relations') }} as dm
-        -- int_dbt__relations always upper()s identifiers (a Snowflake convention);
-        -- BigQuery identifiers are case-sensitive and typically lowercase, so compare
-        -- case-insensitively rather than assuming a case convention.
-        on upper(ti.database_name) = dm.database_name
-        and upper(ti.schema_name) = dm.schema_name
-        and upper(ti.table_name) = dm.table_name
+        {{ dbt_relations_case_insensitive_join('ti') }}
     {% endif %}
 ),
 

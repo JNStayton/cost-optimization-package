@@ -89,8 +89,10 @@ models:
         description: >
           Boolean flag indicating whether this table meets all criteria for a clustering
           recommendation. True when all of the following are satisfied:
-            - At least one SELECT query was executed in the lookback window
-            - Read/write query ratio > 1 (more reads than writes)
+            - At least one read query in the lookback window — any statement type that
+              read this table via referenced_tables, not only SELECT (e.g. a
+              CREATE_TABLE_AS_SELECT reading this table as a source counts too)
+            - Read/write query ratio > 1 (more reads than writes to this table itself)
             - Table size meets or exceeds clustering_candidates_min_size_gb
 
       - name: score
@@ -151,9 +153,25 @@ models:
 
       - name: avg_slot_seconds
         description: >
-          Average total_slot_ms (converted to seconds) for SELECT queries against this
-          table in the lookback window. Parallel CPU-weighted time, not wall clock —
-          not directly comparable to Snowflake's avg_query_duration_s.
+          Average total_slot_ms (converted to seconds) for read queries against this
+          table in the lookback window (any statement type that read it, not only
+          SELECT). Parallel CPU-weighted time, not wall clock — not directly comparable
+          to Snowflake's avg_query_duration_s.
+
+      - name: is_already_clustered
+        description: >
+          Whether the table already has a CLUSTER BY clause. is_candidate does not
+          factor this in — a table already clustered on a column other than what the
+          query workload actually filters on is still a genuine optimization
+          opportunity, so being clustered doesn't by itself disqualify a table.
+          Use this alongside clustering_key and
+          fct_bigquery__clustering_key_candidates' recommendation to judge whether a
+          given candidate is new signal or a table already clustered on the right key.
+
+      - name: clustering_key
+        description: >
+          The table's current clustering column(s) if is_already_clustered, parsed from
+          its DDL (regex over the CLUSTER BY clause) — null if not clustered.
 
   # ===========================================================================
   # fct_bigquery__clustering_key_candidates

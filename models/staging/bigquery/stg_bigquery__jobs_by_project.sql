@@ -1,6 +1,17 @@
+{#--
+  Upgrade note: referenced_tables/destination_table are new columns as of this change.
+  on_schema_change='append_new_columns' handles the ALTER TABLE for existing installs, but
+  rows merged in before the upgrade get NULL for both columns (dbt backfills new columns as
+  NULL, it doesn't re-derive them). Downstream, int_bigquery__table_query_stats_daily's reads
+  CTE does `cross join unnest(referenced_tables)`, and UNNEST(NULL) yields zero rows - so
+  pre-upgrade jobs silently drop out of read attribution rather than erroring. Run with
+  --full-refresh on upgrade (this model and int_bigquery__table_query_stats_daily) to
+  re-derive historical attribution from JOBS_BY_PROJECT's own history instead.
+--#}
 {{ config(
     materialized='incremental',
-    unique_key='job_id'
+    unique_key='job_id',
+    on_schema_change='append_new_columns'
 ) }}
 
 select

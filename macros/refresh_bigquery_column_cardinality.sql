@@ -75,7 +75,13 @@
           and snapshot_date = (
               select max(snapshot_date) from {{ this }}
           )
-      qualify row_number() over (order by score desc) <= {{ cardinality_limit }}
+      -- Spend the scan budget on tables that aren't already clustered first: an
+      -- already-clustered table's column-cardinality data changes far less
+      -- often (its shape is already keyed on whatever it's clustered by), so
+      -- when candidates outnumber cardinality_limit, tables that have never
+      -- been analyzed take priority over re-scanning one that's already
+      -- optimized.
+      qualify row_number() over (order by is_already_clustered asc, score desc) <= {{ cardinality_limit }}
     {% endset %}
 
     {% set candidates = run_query(candidates_sql) %}

@@ -390,7 +390,12 @@ models:
           Not present in int_snowflake__table_query_stats_daily (Snowflake bills by compute,
           not bytes). Used by fct_bigquery__table_clustering_candidates for BQ-native scoring.
       - name: bytes_scanned_sum
-        description: Sum of total_bytes_billed across all matched queries (SELECT + DML)
+        description: >
+          Sum of total_bytes_billed across read queries only (same value as
+          select_bytes_billed_sum) — writes aren't included, since their
+          destination_table's bytes reflect the write itself, not a read cost against
+          this table. Kept as a separate column for schema parity with the other
+          platforms' table_query_stats_daily models.
       - name: bytes_spilled_local_sum
         description: Always 0 for BigQuery — no local spill concept
       - name: bytes_spilled_remote_sum

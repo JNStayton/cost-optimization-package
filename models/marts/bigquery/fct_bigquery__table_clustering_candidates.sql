@@ -11,6 +11,7 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='clustering_candidates_snapshot_key',
+    on_schema_change='append_new_columns',
     enabled=(target.type == 'bigquery'),
     post_hook="{{ refresh_bigquery_column_cardinality() }}"
   )
@@ -35,6 +36,7 @@ large_tables as (
         ti.size_gb,
         ti.row_count,
         ti.is_already_clustered,
+        ti.clustering_key,
         ti.approx_micropartitions,
         ti.normalized_table_type as table_type
     from {{ ref('int_bigquery__table_inventory') }} as ti
@@ -98,6 +100,8 @@ scored as (
         coalesce(tqs.avg_bytes_billed, 0) as avg_bytes_billed,
         lt.size_gb,
         coalesce(lt.row_count, 0) as row_count,
+        lt.is_already_clustered,
+        lt.clustering_key,
         -- approx_micropartitions = total_partitions for BigQuery
         lt.approx_micropartitions as total_partitions
     from large_tables as lt
@@ -106,12 +110,7 @@ scored as (
         and lt.schema_name = tqs.schema_name
         and lt.table_name = tqs.table_name
     left join {{ ref('int_dbt__relations') }} as dm
-        -- int_dbt__relations always upper()s identifiers (a Snowflake convention);
-        -- BigQuery identifiers are case-sensitive and typically lowercase, so compare
-        -- case-insensitively rather than assuming a case convention.
-        on upper(lt.database_name) = dm.database_name
-        and upper(lt.schema_name) = dm.schema_name
-        and upper(lt.table_name) = dm.table_name
+        {{ dbt_relations_case_insensitive_join('lt') }}
 ),
 
 final as (
@@ -163,7 +162,9 @@ final as (
         select_count,
         dml_count,
         round(cast(select_count as float64) / (dml_count + 1), 1) as query_to_dml_ratio,
-        round(avg_slot_ms / 1000, 2) as avg_slot_seconds
+        round(avg_slot_ms / 1000, 2) as avg_slot_seconds,
+        is_already_clustered,
+        clustering_key
     from scored
     -- dbt_project_only filter is deferred to this final CTE (consistent with Snowflake sibling).
     -- Tables without a dbt_model join still flow through table_query_stats aggregation; they
@@ -195,7 +196,9 @@ select
     select_count,
     dml_count,
     query_to_dml_ratio,
-    avg_slot_seconds
+    avg_slot_seconds,
+    is_already_clustered,
+    clustering_key
 from final
 {% if is_incremental() %}
 where snapshot_date >= (
