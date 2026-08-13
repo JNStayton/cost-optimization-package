@@ -1,9 +1,8 @@
 # BigQuery Clustering Key Candidates
 
-`fct_bigquery__clustering_key_candidates` produces daily column-level clustering key
+`fct_bigquery__clustering_key_candidates` produces column-level clustering key
 recommendations for BigQuery tables identified as candidates by
-`fct_bigquery__table_clustering_candidates`. Output mirrors
-`fct_snowflake__clustering_key_candidates`; only the underlying signal sources differ.
+`fct_bigquery__table_clustering_candidates`.
 
 ## Pipeline
 
@@ -120,7 +119,7 @@ vars:
 
 ## BigQuery-specific caveats
 
-1. **`is_recommended` ranks 1-4** (Snowflake uses 1-3). BigQuery supports up to four
+1. **`is_recommended` ranks 1-4**. BigQuery supports up to four
    clustering columns; the column with the highest `column_score` should be listed
    first in the `CLUSTER BY` clause.
 
@@ -136,8 +135,7 @@ vars:
 4. **`usage_count` is heuristic.** BigQuery's `JOBS_BY_PROJECT` does not expose
    column-level lineage, so we regex-extract substrings rooted at `WHERE`,
    `JOIN ON`, and `ORDER BY` clauses from `query_text` and word-boundary-match
-   column names. This is materially less precise than Snowflake's
-   `ACCESS_HISTORY.columns[]`. Known false-positive: a column name appearing in a
+   column names. Known false-positive: a column name appearing in a
    comment inside a filter clause will be attributed.
 
 ## Sample queries

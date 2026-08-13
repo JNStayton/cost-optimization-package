@@ -14,17 +14,17 @@ models:
       partition density multiplier — total_partitions relative to row_count —
       is used as the fragmentation signal instead.
 
-      No row limit is applied when selecting candidate tables (unlike the
-      Snowflake sibling's limit 100); BigQuery's distributed execution handles
-      large scans efficiently. Narrow the candidate set with
-      clustering_candidates_min_size_gb if needed.
+      No row limit is applied when selecting candidate tables; BigQuery's
+      distributed execution handles large scans efficiently. Narrow the
+      candidate set with clustering_candidates_min_size_gb (in GB, default 100)
+      if needed.
 
       This model's post-hook (refresh_bigquery_column_cardinality) populates
       int_bigquery__column_cardinality for the top N candidates by score before
       fct_bigquery__clustering_key_candidates reads from it.
 
       Controlled by the following dbt variables:
-        - clustering_candidates_min_size_gb      (default 1000)
+        - clustering_candidates_min_size_gb      (default 100)
         - clustering_candidates_lookback_days    (default 7)
         - clustering_candidates_dbt_project_only (default true)
         - clustering_candidates_target_databases (default [])

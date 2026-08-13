@@ -1,19 +1,3 @@
-{#--
-  Column-level clustering key recommendations for BigQuery tables identified
-  as candidates by fct_bigquery__table_clustering_candidates.
-
-  Scoped to the top N candidates by score (clustering_key_cardinality_table_limit).
-  One row per (snapshot_date, table_fqn, column_name).
-
-  Build order: this model refs fct_bigquery__table_clustering_candidates, so dbt
-  builds that model first — including its post-hook, which runs
-  refresh_bigquery_column_cardinality and populates int_bigquery__column_cardinality
-  before this model starts.
-
-  Scoring: (distinct_values / total_rows * 100) + (usage_count * 20)
-  Mirrors fct_snowflake__clustering_key_candidates exactly. is_recommended ranks
-  positions 1-4 (BigQuery allows up to 4 clustering columns, Snowflake uses 1-3).
---#}
 {{
   config(
     materialized='incremental',

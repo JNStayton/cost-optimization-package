@@ -28,7 +28,6 @@ select
     coalesce(s.total_rows, 0) as row_count,
     t.clustering_key,
     t.clustering_key is not null as is_already_clustered,
-    false as is_transient,
     coalesce(s.active_bytes, 0) as active_bytes,
     coalesce(s.active_bytes, 0) / power(1024, 3) as size_gb,
     -- approx_micropartitions: BigQuery uses actual partition count as the data-density proxy.

@@ -198,15 +198,7 @@ select
     dml_count,
     -- select_execution_time_ms_sum: BigQuery = total_slot_ms (parallel CPU time, not wall clock)
     select_execution_time_ms_sum,
-    -- select_partitions_scanned_sum: not available at query level in BigQuery JOBS_BY_PROJECT
-    0 as select_partitions_scanned_sum,
-    -- select_partitions_total_sum: not available; scoring falls back to approx_micropartitions
-    0 as select_partitions_total_sum,
     -- select_bytes_billed_sum: BigQuery-specific primary cost signal (total_bytes_billed),
     -- attributed only from reads (see header note on why writes are kept separate)
-    select_bytes_billed_sum,
-    select_bytes_billed_sum as bytes_scanned_sum,
-    -- BigQuery has no local/remote spill concept
-    0 as bytes_spilled_local_sum,
-    0 as bytes_spilled_remote_sum
+    select_bytes_billed_sum
 from combined
