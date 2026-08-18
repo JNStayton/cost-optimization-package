@@ -31,15 +31,18 @@
 
   {% if execute and target.type == 'snowflake' %}
 
+    {% set is_enterprise = var('snowflake_enterprise_edition', true) %}
+
     {% set table_limit = var('clustering_key_operator_analysis_table_limit', 10) %}
     {% set queries_per_table = var('clustering_key_operator_queries_per_table', 20) %}
 
     {% set candidates_table = ref('fct_snowflake__table_clustering_candidates') %}
     {% set operator_table = ref('int_snowflake__query_operator_columns') %}
-    {% set col_access_table = ref('int_snowflake__column_query_access') %}
     {% set table_columns_ref = ref('int_snowflake__table_columns') %}
     {% set query_history_table = ref('int_snowflake__query_history') %}
     {% set relations_table = ref('int_dbt__relations') %}
+    {# column_query_access is Enterprise-only. Use string ref to avoid parse error on Standard. #}
+    {% set col_access_table = operator_table.database ~ '.' ~ operator_table.schema ~ '.int_snowflake__column_query_access' %}
 
     {{ log("extract_query_operator_columns: fetching top " ~ table_limit ~ " candidates...", info=true) }}
 
@@ -85,6 +88,8 @@
         {{ log("extract_query_operator_columns: searching across " ~ (search_fqns | length) ~ " FQNs (candidate + " ~ (child_fqns | length) ~ " children)", info=true) }}
 
         {# Step 2: Get representative query_ids — one per distinct parameterized hash, pooled across candidate + children #}
+        {% if is_enterprise %}
+        {# Enterprise: use ACCESS_HISTORY-derived column_query_access for exact attribution #}
         {% set queries_sql %}
           select query_id, query_start_time
           from (
@@ -105,6 +110,32 @@
           where rn = 1
           limit {{ queries_per_table }}
         {% endset %}
+        {% else %}
+        {# Standard: discover queries via query_text ILIKE matching #}
+        {% set queries_sql %}
+          select query_id, query_start_time
+          from (
+              select
+                  qh.query_id,
+                  qh.query_start_time,
+                  row_number() over (
+                      partition by qh.query_parameterized_hash
+                      order by qh.query_start_time desc
+                  ) as rn
+              from {{ query_history_table }} as qh
+              where qh.query_type = 'SELECT'
+                  and qh.query_start_time >= dateadd(day, -14, current_timestamp())
+                  and (
+                    {% for fqn in search_fqns %}
+                      qh.query_text ilike '%{{ fqn.split('.')[-1] }}%'
+                      {% if not loop.last %} or {% endif %}
+                    {% endfor %}
+                  )
+          )
+          where rn = 1
+          limit {{ queries_per_table }}
+        {% endset %}
+        {% endif %}
 
         {% set queries_result = run_query(queries_sql) %}
 
