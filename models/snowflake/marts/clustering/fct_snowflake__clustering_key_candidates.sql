@@ -116,6 +116,23 @@ column_usage as (
     where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
     group by tc.table_fqn, tc.column_name
 ),
+
+total_queries_per_table as (
+    select
+        table_fqn,
+        count(distinct query_id) as total_queries_analyzed
+    from (
+        select
+            c.table_fqn,
+            qh.query_id
+        from candidates as c
+        inner join {{ ref('int_snowflake__query_history') }} as qh
+            on qh.query_text ilike '%' || split_part(c.table_fqn, '.', 3) || '%'
+        where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
+            and qh.query_type = 'SELECT'
+    )
+    group by table_fqn
+),
 {% endif %}
 
 scored as (
@@ -143,10 +160,8 @@ scored as (
     left join column_usage as cu
         on tc.table_fqn = cu.table_fqn
         and tc.column_name = cu.column_name
-    {% if is_enterprise %}
     left join total_queries_per_table as tqa
         on tc.table_fqn = tqa.table_fqn
-    {% endif %}
 ),
 
 column_scored as (
