@@ -35,9 +35,11 @@
 
     {# Resolve table references once #}
     {% set candidates_table = ref('fct_snowflake__table_clustering_candidates') %}
-    {% set col_stats_table = ref('int_snowflake__column_query_stats') %}
     {% set col_cols_table = ref('int_snowflake__table_columns') %}
     {% set cardinality_table = ref('int_snowflake__column_cardinality') %}
+    {# column_query_stats is Enterprise-only (depends on ACCESS_HISTORY).
+       Use string reference to avoid parse error when model is disabled on Standard. #}
+    {% set col_stats_table = cardinality_table.database ~ '.' ~ cardinality_table.schema ~ '.int_snowflake__column_query_stats' %}
 
     {{ log("refresh_column_cardinality: fetching top " ~ cardinality_limit ~ " candidates...", info=true) }}
 
