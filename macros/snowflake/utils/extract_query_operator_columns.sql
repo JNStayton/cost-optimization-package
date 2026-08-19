@@ -111,7 +111,8 @@
           limit {{ queries_per_table }}
         {% endset %}
         {% else %}
-        {# Standard: discover queries via query_text ILIKE matching #}
+        {# Standard: discover queries via exact FQN matching in query_text #}
+        {# Uses contains() with normalized text to avoid ILIKE wildcard issues with underscores #}
         {% set queries_sql %}
           select query_id, query_start_time
           from (
@@ -120,19 +121,28 @@
                   qh.query_start_time,
                   row_number() over (
                       partition by qh.query_parameterized_hash
-                      order by qh.query_start_time desc
+                      order by
+                          -- Prefer executions that actually scanned data (not result-cache hits)
+                          iff(qh.bytes_scanned > 0 or qh.partitions_scanned > 0, 0, 1),
+                          qh.query_start_time desc
                   ) as rn
               from {{ query_history_table }} as qh
               where qh.query_type = 'SELECT'
                   and qh.query_start_time >= dateadd(day, -14, current_timestamp())
+                  -- Exact normalized FQN matching (candidate + children)
                   and (
-                    {% for fqn in search_fqns %}
-                      qh.query_text ilike '%{{ fqn.split('.')[-1] }}%'
-                      {% if not loop.last %} or {% endif %}
+                    contains(upper(replace(qh.query_text, '"', '')), '{{ table_fqn }}')
+                    {% for child_fqn in child_fqns %}
+                    or contains(upper(replace(qh.query_text, '"', '')), '{{ child_fqn }}')
                     {% endfor %}
                   )
+                  -- Exclude dbt tests and package introspection
+                  and qh.query_text not ilike '%dbt_internal_test%'
+                  and qh.query_text not ilike '%dbt_utils%'
+                  and qh.query_text not ilike '%int_snowflake__query_operator_columns%'
           )
           where rn = 1
+          order by query_start_time desc
           limit {{ queries_per_table }}
         {% endset %}
         {% endif %}
