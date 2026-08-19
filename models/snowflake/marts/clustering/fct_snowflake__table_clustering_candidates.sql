@@ -171,7 +171,7 @@ final as (
     select
         -- snapshot metadata
         md5(
-            to_varchar(current_date()) || '|' || coalesce(table_fqn, '')
+            to_varchar(current_date()) || '|' || coalesce(scored.table_fqn, '')
         ) as clustering_candidates_snapshot_key,
         current_date() as snapshot_date,
         current_timestamp() as analyzed_at,
@@ -179,7 +179,7 @@ final as (
         database_name,
         schema_name,
         table_name,
-        table_fqn,
+        scored.table_fqn,
         dbt_model,
         table_type,
         -- recommendation (V3 scoring — uses per-table scan_ratio from TABLE_QUERY_PRUNING_HISTORY)
@@ -291,7 +291,7 @@ final as (
         end as recommendation_status
     from scored
     left join consumption_evidence as ce
-        on ce.table_fqn = upper(scored.database_name || '.' || scored.schema_name || '.' || scored.table_name)
+        on ce.table_fqn = scored.table_fqn
     where
         {% if dbt_project_only %}
             dbt_model is not null
