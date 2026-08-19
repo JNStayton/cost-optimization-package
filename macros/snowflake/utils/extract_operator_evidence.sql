@@ -229,6 +229,67 @@
       {{ log("extract_operator_evidence: no candidates found for today, skipping.", info=true) }}
     {% endif %}
 
+    {# Step 4: Backfill consumption metrics on table_clustering_candidates #}
+    {{ log("extract_operator_evidence: backfilling consumption metrics...", info=true) }}
+
+    {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
+    {% set workload_class_table = ref('int_snowflake__query_workload_class') %}
+
+    {% set backfill_sql %}
+      update {{ candidates_table }} as tgt
+      set
+          consumption_query_count = src.consumption_query_count,
+          consumption_query_shape_count = src.consumption_query_shape_count,
+          consumption_scan_ratio_pct = src.consumption_scan_ratio_pct,
+          transformation_scan_ratio_pct = src.transformation_scan_ratio_pct,
+          transformation_query_count = src.transformation_query_count,
+          recommendation_status = src.recommendation_status
+      from (
+          select
+              oe.table_fqn,
+              count(distinct case when wc.workload_class = 'consumption' then oe.query_id end) as consumption_query_count,
+              count(distinct case when wc.workload_class = 'consumption' then oe.query_parameterized_hash end) as consumption_query_shape_count,
+              case
+                  when sum(case when wc.workload_class = 'consumption' then oe.partitions_total else 0 end) > 0
+                      then round(
+                          sum(case when wc.workload_class = 'consumption' then oe.partitions_scanned else 0 end)::float
+                          / sum(case when wc.workload_class = 'consumption' then oe.partitions_total else 0 end) * 100, 2)
+                  else null
+              end as consumption_scan_ratio_pct,
+              case
+                  when sum(case when wc.workload_class = 'dbt_model_build' then oe.partitions_total else 0 end) > 0
+                      then round(
+                          sum(case when wc.workload_class = 'dbt_model_build' then oe.partitions_scanned else 0 end)::float
+                          / sum(case when wc.workload_class = 'dbt_model_build' then oe.partitions_total else 0 end) * 100, 2)
+                  else null
+              end as transformation_scan_ratio_pct,
+              count(distinct case when wc.workload_class = 'dbt_model_build' then oe.query_id end) as transformation_query_count,
+              case
+                  when count(distinct case when wc.workload_class = 'consumption' then oe.query_id end) = 0
+                      then 'insufficient_evidence'
+                  when sum(case when wc.workload_class = 'consumption' then oe.partitions_scanned else 0 end)::float
+                      / nullif(sum(case when wc.workload_class = 'consumption' then oe.partitions_total else 0 end), 0) > 0.5
+                      then 'evaluate_clustering'
+                  when sum(case when wc.workload_class = 'consumption' then oe.partitions_scanned else 0 end)::float
+                      / nullif(sum(case when wc.workload_class = 'consumption' then oe.partitions_total else 0 end), 0) <= 0.5
+                      then 'healthy'
+                  else 'investigate'
+              end as recommendation_status
+          from {{ evidence_table }} as oe
+          inner join {{ workload_class_table }} as wc
+              on oe.query_id = wc.query_id
+          where oe.operator_type = 'TableScan'
+            and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+          group by oe.table_fqn
+      ) as src
+      where tgt.table_fqn = src.table_fqn
+        and tgt.snapshot_date = current_date()
+    {% endset %}
+
+    {% do run_query(backfill_sql) %}
+
+    {{ log("extract_operator_evidence: backfill complete.", info=true) }}
+
   {% endif %}
 
 {% endmacro %}

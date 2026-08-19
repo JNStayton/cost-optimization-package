@@ -42,7 +42,6 @@ with candidates as (
         score as table_score
     from {{ ref('fct_snowflake__table_clustering_candidates') }}
     where is_candidate = true
-        and recommendation_status in ('evaluate_clustering', 'evaluate_key_alignment')
         and snapshot_date = (
             select max(snapshot_date)
             from {{ ref('fct_snowflake__table_clustering_candidates') }}
