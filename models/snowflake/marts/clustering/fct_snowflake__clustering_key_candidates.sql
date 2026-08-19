@@ -31,7 +31,6 @@
 
 {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
 {% set cardinality_limit = var('clustering_key_cardinality_table_limit', 10) %}
-{% set is_enterprise = var('snowflake_enterprise_edition', true) %}
 
 with candidates as (
     select
@@ -72,9 +71,8 @@ table_columns as (
         )
 ),
 
-{% if is_enterprise %}
 column_usage as (
-    -- Enterprise+: exact operator stats from GET_QUERY_OPERATOR_STATS
+    -- Exact operator stats from GET_QUERY_OPERATOR_STATS (populated on both editions)
     select
         table_fqn,
         column_name,
@@ -86,7 +84,6 @@ column_usage as (
 ),
 
 total_queries_per_table as (
-    -- Total distinct queries analyzed per candidate table (for proportion gating)
     select
         table_fqn,
         count(distinct query_id) as total_queries_analyzed
@@ -94,46 +91,6 @@ total_queries_per_table as (
     where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by table_fqn
 ),
-{% else %}
-column_usage as (
-    -- Standard edition: no ACCESS_HISTORY or operator stats available.
-    -- Falls back to query_text ILIKE matching (less accurate, known false positives).
-    select
-        tc.table_fqn,
-        tc.column_name,
-        count(distinct case
-            when qh.query_text ilike '%WHERE%' || tc.column_name || '%'
-                then qh.query_id
-        end) as filter_query_count,
-        count(distinct case
-            when qh.query_text ilike '%JOIN%'
-                and qh.query_text ilike '%ON%' || tc.column_name || '%'
-                then qh.query_id
-        end) as join_query_count
-    from table_columns as tc
-    inner join {{ ref('int_snowflake__query_history') }} as qh
-        on qh.query_text ilike '%' || split_part(tc.table_fqn, '.', 3) || '%'
-    where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by tc.table_fqn, tc.column_name
-),
-
-total_queries_per_table as (
-    select
-        table_fqn,
-        count(distinct query_id) as total_queries_analyzed
-    from (
-        select
-            c.table_fqn,
-            qh.query_id
-        from candidates as c
-        inner join {{ ref('int_snowflake__query_history') }} as qh
-            on qh.query_text ilike '%' || split_part(c.table_fqn, '.', 3) || '%'
-        where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
-            and qh.query_type = 'SELECT'
-    )
-    group by table_fqn
-),
-{% endif %}
 
 scored as (
     select
