@@ -249,6 +249,14 @@ all_recommendations as (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
     where tm.recommendation != 'Monitor'
+      {% if var('suppress_staging_materialization_recs', false) %}
+      and not (
+          lower(tm.model_name) like 'stg\_%' escape '\\'
+          or lower(tm.model_name) like 'stage\_%' escape '\\'
+          or lower(tm.model_name) like 'staging\_%' escape '\\'
+          or lower(tm.schema_name) like '%staging%'
+      )
+      {% endif %}
 
     union all
 
@@ -376,7 +384,11 @@ all_recommendations as (
         null as snowflake_ddl,
         tc.snapshot_date,
         'actionable' as backlog_status,
-        '{% raw %}{{ config(cluster_by=[{% endraw %}' || coalesce('''' || replace(tc.clustering_key, ', ', ''', ''') || '''', '''<recommended_columns>''') || '{% raw %}]) }}{% endraw %}' as dbt_model_config,
+        case
+            when tc.clustering_key is not null
+                then '{% raw %}{{ config(cluster_by=[{% endraw %}' || '''' || replace(tc.clustering_key, ', ', ''', ''') || '''' || '{% raw %}]) }}{% endraw %}'
+            else null
+        end as dbt_model_config,
         null as identified_unique_key,
         case
             when tc.recommendation_tier = 'Strong' then 'add_clustering_key_strong'

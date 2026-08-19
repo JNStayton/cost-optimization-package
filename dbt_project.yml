@@ -103,6 +103,7 @@ vars:
   # --- Snowflake: Materialization ---
   table_materialization_lookback_days: 14
   table_materialization_min_query_count: 10
+  suppress_staging_materialization_recs: false  # Set true to hide staging-layer (stg_/stage_) view-to-table recommendations
   incremental_overlap_days: 31  # Re-scan window on incremental runs. Set to your longest gap between builds.
   incremental_unique_key_probe_threshold: 0.95  # Uniqueness ratio threshold for key candidates
   incremental_candidates_lookback_days: 60
