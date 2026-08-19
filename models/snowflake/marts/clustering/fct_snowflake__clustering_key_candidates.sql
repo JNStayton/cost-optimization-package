@@ -1,13 +1,13 @@
 {#--
   Clustering key recommendations per candidate table, scored on confirmed
-  Filter/Join operator usage (from GET_QUERY_OPERATOR_STATS) and cardinality.
+  Filter/Join operator usage from consumption queries only.
 
   Requires fct_snowflake__table_clustering_candidates to build first — its
   post-hooks populate int_snowflake__column_cardinality and
-  int_snowflake__query_operator_columns before this model runs.
+  int_snowflake__query_operator_evidence before this model runs.
 
   Gating (two thresholds):
-    1. filter_query_count > 0 AND filter proportion >= 33% of analyzed queries
+    1. filter_query_count > 0 AND filter proportion >= 33% of analyzed consumption queries
        (join-only columns are excluded — filter is the admission ticket)
     2. column_score >= 50% of the table's top-scored column
        (prevents diminishing-returns keys from being recommended)
@@ -16,10 +16,10 @@
     - filter_query_count * 3 (WHERE predicates = strongest clustering signal)
     - join_query_count * 1   (JOIN co-location = secondary benefit)
     - cardinality_bonus: +10 when avg_rows_per_value between 100 and 10000
-      (sweet spot for micropartition grouping — neither too unique nor too few values)
 
-  Enterprise+ only (operator stats require ACCESS_HISTORY for query discovery).
-  Standard edition falls back to query_text ILIKE matching (less accurate).
+  Only consumption queries contribute to column evidence. Build/test queries
+  are excluded to avoid false positives from dbt test patterns or full-table
+  model rebuilds.
 --#}
 {{
   config(
@@ -42,6 +42,7 @@ with candidates as (
         score as table_score
     from {{ ref('fct_snowflake__table_clustering_candidates') }}
     where is_candidate = true
+        and recommendation_status in ('evaluate_clustering', 'evaluate_key_alignment')
         and snapshot_date = (
             select max(snapshot_date)
             from {{ ref('fct_snowflake__table_clustering_candidates') }}
@@ -72,24 +73,34 @@ table_columns as (
 ),
 
 column_usage as (
-    -- Exact operator stats from GET_QUERY_OPERATOR_STATS (populated on both editions)
+    -- Filter/Join evidence from consumption queries only
     select
-        table_fqn,
-        column_name,
-        count(distinct case when operator_type = 'Filter' then query_id end) as filter_query_count,
-        count(distinct case when operator_type = 'Join' then query_id end) as join_query_count
-    from {{ ref('int_snowflake__query_operator_columns') }}
-    where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by table_fqn, column_name
+        oe.table_fqn,
+        oe.column_name,
+        count(distinct case when oe.operator_type = 'Filter' then oe.query_id end) as filter_query_count,
+        count(distinct case when oe.operator_type = 'Join' then oe.query_id end) as join_query_count
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    where wc.workload_class = 'consumption'
+      and oe.operator_type in ('Filter', 'Join')
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn, oe.column_name
 ),
 
 total_queries_per_table as (
+    -- Denominator: consumption queries with a confirmed TableScan on this FQN
+    -- (not just queries that happened to match a Filter/Join)
     select
-        table_fqn,
-        count(distinct query_id) as total_queries_analyzed
-    from {{ ref('int_snowflake__query_operator_columns') }}
-    where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by table_fqn
+        oe.table_fqn,
+        count(distinct oe.query_id) as total_queries_analyzed
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    where wc.workload_class = 'consumption'
+      and oe.operator_type = 'TableScan'
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn
 ),
 
 scored as (

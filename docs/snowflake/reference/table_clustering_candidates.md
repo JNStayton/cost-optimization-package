@@ -38,7 +38,8 @@ stg_snowflake__access_       ──► int_snowflake__query_         │      st
 | `int_snowflake__table_inventory` | Joins table metadata with storage metrics. Produces one row per active table with size, row count, micropartition estimate, and clustering state. |
 | `int_snowflake__table_query_stats_daily` | Daily aggregated query statistics per table. Attribution uses ACCESS_HISTORY (Enterprise) or `query_text` matching (Standard). |
 | `int_snowflake__query_table_access` | Flattens ACCESS_HISTORY into one row per (query, table) for exact object-level attribution. Enterprise only. |
-| `int_snowflake__query_operator_columns` | Stores parsed Filter/Join column references from GET_QUERY_OPERATOR_STATS. Populated by the `extract_query_operator_columns` macro. |
+| `int_snowflake__query_operator_evidence` | Unified operator evidence from GET_QUERY_OPERATOR_STATS: TableScan (partition pruning), Filter, Join columns. Populated by `extract_operator_evidence` macro. |
+| `int_snowflake__query_workload_class` | Classifies queries as consumption, dbt_model_build, dbt_test, or package_internal using dbt comment metadata. |
 | `int_dbt__relations` | Compile-time mapping from dbt model metadata to physical relation names. Used to attribute results back to dbt models and find downstream children for operator analysis. |
 
 The fact references the Snowflake-specific intermediate models directly.
@@ -50,7 +51,7 @@ The fact references the Snowflake-specific intermediate models directly.
 **Post-hooks (execute in order after the fact model builds):**
 
 1. **`refresh_column_cardinality()`** — profiles APPROX_COUNT_DISTINCT for columns on the top N candidate tables
-2. **`extract_query_operator_columns()`** — analyzes query plan operators (GET_QUERY_OPERATOR_STATS) to identify which columns are used in Filter/Join conditions
+2. **`extract_operator_evidence()`** — analyzes query plan operators (GET_QUERY_OPERATOR_STATS) to extract TableScan pruning metrics, Filter columns, and Join columns in a single pass
 
 **`fct_snowflake__clustering_key_candidates`** runs after the post-hooks and uses both cardinality and operator data to score individual columns and recommend clustering keys.
 
@@ -62,22 +63,24 @@ fct_snowflake__table_clustering_candidates (identifies WHICH tables)
     ├─ post-hook: refresh_column_cardinality()
     │   └─ writes to: int_snowflake__column_cardinality
     │
-    ├─ post-hook: extract_query_operator_columns()
-    │   ├─ reads: int_snowflake__column_query_access (candidate + child FQNs)
-    │   ├─ reads: int_snowflake__query_history (parameterized hash dedup)
+    ├─ post-hook: extract_operator_evidence()
+    │   ├─ reads: int_snowflake__column_query_access (Enterprise: query discovery)
+    │   ├─ reads: int_snowflake__query_history (Standard: FQN text match + dedup)
     │   ├─ reads: int_dbt__relations (downstream children lookup)
+    │   ├─ reads: int_snowflake__table_columns (column names for Filter/Join matching)
     │   ├─ calls: GET_QUERY_OPERATOR_STATS per query_id
-    │   └─ writes to: int_snowflake__query_operator_columns
+    │   └─ writes to: int_snowflake__query_operator_evidence
     │
     └─► fct_snowflake__clustering_key_candidates (scores WHICH columns)
-        ├─ reads: int_snowflake__query_operator_columns (filter/join evidence)
+        ├─ reads: int_snowflake__query_operator_evidence (filter/join evidence, consumption only)
+        ├─ reads: int_snowflake__query_workload_class (workload filtering)
         ├─ reads: int_snowflake__column_cardinality (cardinality profiles)
-        └─ applies: 25% proportion gate (column must appear in >= 25% of analyzed queries)
+        └─ applies: 33% proportion gate (column must appear in >= 33% of consumption queries)
 ```
 
 **Downstream children expansion:** The extract macro doesn't only look at queries that directly accessed the candidate table — it also finds queries against the candidate's direct child models (from `int_dbt__relations.parent_models`). This captures filter evidence from analyst queries hitting downstream marts that read from the candidate.
 
-**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed queries. Join-only columns are excluded entirely — filter usage is the admission ticket, join usage is the scoring bonus.
+**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed consumption queries. Join-only columns are excluded entirely — filter usage is the admission ticket, join usage is the scoring bonus.
 
 **Diminishing returns gate:** The 2nd and 3rd recommended keys must score at least 50% of the top key's score for that table. This prevents low-impact columns from riding alongside a strong primary key and ensures each additional key in the clustering spec is worth the maintenance overhead.
 

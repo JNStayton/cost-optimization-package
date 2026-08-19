@@ -9,7 +9,7 @@
     unique_key='clustering_candidates_snapshot_key',
     post_hook=[
       "{{ refresh_column_cardinality() }}",
-      "{{ extract_query_operator_columns() }}"
+      "{{ extract_operator_evidence() }}"
     ]
   )
 }}
@@ -146,6 +146,27 @@ scored as (
         on rh.table_fqn = upper(lt.database_name || '.' || lt.schema_name || '.' || lt.table_name)
 ),
 
+consumption_evidence as (
+    -- Per-table pruning metrics from operator evidence, split by workload class
+    select
+        oe.table_fqn,
+        -- Consumption queries (SELECT without dbt metadata)
+        sum(case when wc.workload_class = 'consumption' then oe.partitions_scanned else 0 end) as consumption_partitions_scanned,
+        sum(case when wc.workload_class = 'consumption' then oe.partitions_total else 0 end) as consumption_partitions_total,
+        count(distinct case when wc.workload_class = 'consumption' then oe.query_id end) as consumption_query_count,
+        count(distinct case when wc.workload_class = 'consumption' then oe.query_parameterized_hash end) as consumption_query_shape_count,
+        -- Transformation queries (dbt builds)
+        sum(case when wc.workload_class = 'dbt_model_build' then oe.partitions_scanned else 0 end) as transformation_partitions_scanned,
+        sum(case when wc.workload_class = 'dbt_model_build' then oe.partitions_total else 0 end) as transformation_partitions_total,
+        count(distinct case when wc.workload_class = 'dbt_model_build' then oe.query_id end) as transformation_query_count
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    where oe.operator_type = 'TableScan'
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn
+),
+
 final as (
     select
         -- snapshot metadata
@@ -236,8 +257,41 @@ final as (
         select_count,
         dml_count,
         round(select_count / (dml_count + 1), 1) as query_to_dml_ratio,
-        round(avg_execution_time_ms / 1000, 2) as avg_query_duration_s
+        round(avg_execution_time_ms / 1000, 2) as avg_query_duration_s,
+        -- Consumption-specific pruning from operator evidence
+        coalesce(ce.consumption_query_count, 0) as consumption_query_count,
+        coalesce(ce.consumption_query_shape_count, 0) as consumption_query_shape_count,
+        case
+            when coalesce(ce.consumption_partitions_total, 0) > 0
+                then round(ce.consumption_partitions_scanned::float / ce.consumption_partitions_total * 100, 2)
+            else null
+        end as consumption_scan_ratio_pct,
+        case
+            when coalesce(ce.transformation_partitions_total, 0) > 0
+                then round(ce.transformation_partitions_scanned::float / ce.transformation_partitions_total * 100, 2)
+            else null
+        end as transformation_scan_ratio_pct,
+        coalesce(ce.transformation_query_count, 0) as transformation_query_count,
+        -- Recommendation status (consumption-driven)
+        case
+            when coalesce(ce.consumption_query_count, 0) = 0 then 'insufficient_evidence'
+            when (ce.consumption_partitions_scanned::float / nullif(ce.consumption_partitions_total, 0)) > 0.5
+                and not is_already_clustered then 'evaluate_clustering'
+            when (ce.consumption_partitions_scanned::float / nullif(ce.consumption_partitions_total, 0)) > 0.5
+                and is_already_clustered then 'evaluate_key_alignment'
+            when (ce.consumption_partitions_scanned::float / nullif(ce.consumption_partitions_total, 0)) <= 0.5
+                and coalesce(ce.transformation_partitions_total, 0) > 0
+                and (ce.transformation_partitions_scanned::float / nullif(ce.transformation_partitions_total, 0)) > 0.8
+                then 'optimize_transformation'
+            when (ce.consumption_partitions_scanned::float / nullif(ce.consumption_partitions_total, 0)) <= 0.5
+                and is_already_clustered then 'keep_current_key'
+            when (ce.consumption_partitions_scanned::float / nullif(ce.consumption_partitions_total, 0)) <= 0.5
+                then 'healthy'
+            else 'investigate'
+        end as recommendation_status
     from scored
+    left join consumption_evidence as ce
+        on ce.table_fqn = upper(scored.database_name || '.' || scored.schema_name || '.' || scored.table_name)
     where
         {% if dbt_project_only %}
             dbt_model is not null
@@ -279,7 +333,14 @@ select
     select_count,
     dml_count,
     query_to_dml_ratio,
-    avg_query_duration_s
+    avg_query_duration_s,
+    -- consumption evidence
+    consumption_query_count,
+    consumption_query_shape_count,
+    consumption_scan_ratio_pct,
+    transformation_scan_ratio_pct,
+    transformation_query_count,
+    recommendation_status
 from final
 {% if is_incremental() %}
 where snapshot_date >= (

@@ -400,6 +400,7 @@ all_recommendations as (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
     where tc.is_candidate = true
+        and tc.recommendation_status in ('evaluate_clustering', 'evaluate_key_alignment', 'insufficient_evidence')
 
     union all
 
