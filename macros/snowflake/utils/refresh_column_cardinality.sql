@@ -142,6 +142,78 @@
 
       {% endfor %}
 
+      {# Step 4: Profile TO_DATE() for timestamp columns with confirmed filter usage.
+         Operator evidence is populated by extract_operator_evidence (runs before this macro).
+         This enables recommending to_date(timestamp_col) as a clustering expression. #}
+      {% set evidence_table = ref('int_snowflake__query_operator_evidence') %}
+
+      {% for row in candidates %}
+
+        {% set table_fqn   = row['TABLE_FQN'] %}
+        {% set db          = row['DATABASE_NAME'] %}
+        {% set schema      = row['SCHEMA_NAME'] %}
+        {% set table       = row['TABLE_NAME'] %}
+
+        {# Find timestamp columns on this table that have filter evidence #}
+        {% set ts_cols_sql %}
+          select distinct tc.column_name
+          from {{ col_cols_table }} as tc
+          inner join {{ evidence_table }} as oe
+              on oe.table_fqn = tc.table_fqn
+              and oe.column_name = tc.column_name
+              and oe.operator_type = 'Filter'
+          where tc.table_fqn = '{{ table_fqn }}'
+              and tc.data_type ilike 'TIMESTAMP%'
+          group by tc.column_name
+          having count(distinct oe.query_id) >= 2
+        {% endset %}
+
+        {% set ts_result = run_query(ts_cols_sql) %}
+        {% set ts_columns = ts_result.columns[0].values() if ts_result and ts_result.rows | length > 0 else [] %}
+
+        {% if ts_columns | length > 0 %}
+
+          {{ log("refresh_column_cardinality: profiling TO_DATE() for " ~ (ts_columns | length) ~ " timestamp column(s) on " ~ table_fqn, info=true) }}
+
+          {% set ts_merge_sql %}
+            merge into {{ cardinality_table }} as target
+            using (
+              select
+                  '{{ table_fqn }}' as table_fqn,
+                  column_name,
+                  distinct_values,
+                  total_rows,
+                  current_timestamp() as calculated_at
+              from (
+                  {% for col in ts_columns %}
+                    select
+                        'to_date(' || lower('{{ col }}') || ')' as column_name,
+                        approx_count_distinct(to_date({{ adapter.quote(col) }})) as distinct_values,
+                        count(*) as total_rows
+                    from {{ db }}.{{ schema }}.{{ table }}
+                    {% if not loop.last %}union all{% endif %}
+                  {% endfor %}
+              )
+            ) as source
+            on target.table_fqn = source.table_fqn
+                and target.column_name = source.column_name
+            when matched then update set
+                distinct_values = source.distinct_values,
+                total_rows      = source.total_rows,
+                calculated_at   = source.calculated_at
+            when not matched then insert
+                (table_fqn, column_name, distinct_values, total_rows, calculated_at)
+            values
+                (source.table_fqn, source.column_name, source.distinct_values, source.total_rows, source.calculated_at)
+          {% endset %}
+
+          {% do run_query(ts_merge_sql) %}
+          {{ log("refresh_column_cardinality: merged TO_DATE() cardinality for " ~ (ts_columns | length) ~ " timestamp column(s) on " ~ table_fqn, info=true) }}
+
+        {% endif %}
+
+      {% endfor %}
+
     {% else %}
       {{ log("refresh_column_cardinality: no candidates found for today, skipping.", info=true) }}
     {% endif %}

@@ -50,6 +50,7 @@ with candidates as (
 ),
 
 table_columns as (
+    -- Regular columns
     select
         tc.table_fqn,
         tc.column_name,
@@ -69,6 +70,26 @@ table_columns as (
             cc.distinct_values is null
             or cc.distinct_values < cc.total_rows * 0.5
         )
+
+    union all
+
+    -- Expression candidates: timestamp columns profiled as TO_DATE(col)
+    select
+        cc.table_fqn,
+        cc.column_name,
+        tc.ordinal_position,
+        'DATE' as data_type,
+        cc.distinct_values,
+        cc.total_rows as cardinality_total_rows,
+        cc.calculated_at as cardinality_calculated_at
+    from {{ ref('int_snowflake__column_cardinality') }} as cc
+    inner join candidates as c
+        on cc.table_fqn = c.table_fqn
+    inner join {{ ref('int_snowflake__table_columns') }} as tc
+        on cc.table_fqn = tc.table_fqn
+        and upper(tc.column_name) = upper(replace(replace(cc.column_name, 'to_date(', ''), ')', ''))
+    where cc.column_name like 'to_date(%)'
+        and cc.distinct_values < cc.total_rows * 0.5
 ),
 
 column_usage as (
@@ -85,6 +106,26 @@ column_usage as (
       and oe.operator_type in ('Filter', 'Join')
       and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
     group by oe.table_fqn, oe.column_name
+
+    union all
+
+    -- Expression usage: map raw timestamp filter evidence to to_date(col) form
+    select
+        oe.table_fqn,
+        'to_date(' || lower(oe.column_name) || ')' as column_name,
+        count(distinct case when oe.operator_type = 'Filter' then oe.query_id end) as filter_query_count,
+        count(distinct case when oe.operator_type = 'Join' then oe.query_id end) as join_query_count
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    inner join {{ ref('int_snowflake__table_columns') }} as tc
+        on oe.table_fqn = tc.table_fqn
+        and oe.column_name = tc.column_name
+    where wc.workload_class = 'consumption'
+      and oe.operator_type in ('Filter', 'Join')
+      and tc.data_type ilike 'TIMESTAMP%'
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn, 'to_date(' || lower(oe.column_name) || ')'
 ),
 
 total_queries_per_table as (
@@ -148,6 +189,14 @@ column_scored as (
     where filter_query_count > 0
         -- Proportion gate: column must be filtered on in >= 1/3 of analyzed queries
         and filter_query_count::float / nullif(total_queries_analyzed, 0) >= 0.33
+        -- Selectivity gate: column must have low enough cardinality for clustering benefit
+        -- High-selectivity columns (near-unique) can't consolidate into micropartitions
+        and (
+            distinct_values is null
+            or cardinality_total_rows is null
+            or cardinality_total_rows = 0
+            or distinct_values::float / cardinality_total_rows <= 0.05
+        )
 ),
 
 final as (

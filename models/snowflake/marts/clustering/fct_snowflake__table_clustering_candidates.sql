@@ -8,8 +8,8 @@
     incremental_strategy='merge',
     unique_key='clustering_candidates_snapshot_key',
     post_hook=[
-      "{{ refresh_column_cardinality() }}",
-      "{{ extract_operator_evidence() }}"
+      "{{ extract_operator_evidence() }}",
+      "{{ refresh_column_cardinality() }}"
     ]
   )
 }}
