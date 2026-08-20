@@ -100,7 +100,7 @@ select
     suggested_clustering_key,
     additional_clustering_candidates,
     case
-        when domain = 'clustering' and suggested_clustering_key is not null
+        when domain = 'clustering' and nullif(suggested_clustering_key, '') is not null
             then '{% raw %}{{ config(cluster_by=[{% endraw %}''' || replace(suggested_clustering_key, ', ', ''', ''') || '''{% raw %}]) }}{% endraw %}'
         else dbt_model_config
     end as dbt_model_config,
@@ -116,4 +116,6 @@ select
     snapshot_date
 from ranked
 where env_rank = 1
+    -- Suppress clustering recommendations with no actionable key
+    and not (domain = 'clustering' and nullif(suggested_clustering_key, '') is null)
 order by coalesce(node_model_name, model_name), priority_tier, estimated_annual_savings_usd desc nulls last
