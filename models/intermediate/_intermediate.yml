@@ -54,6 +54,69 @@ models:
         description: Fully-qualified relation name (database.schema.table)
 
   # ===========================================================================
+  # int_dbt__snapshots
+  # ===========================================================================
+  - name: int_dbt__snapshots
+    description: >
+      Vendor-neutral graph metadata for dbt snapshot nodes. Mirrors the shape of
+      int_dbt__relations but exposes snapshot-specific config (strategy, check_cols,
+      updated_at, unique_key, invalidate_hard_deletes) plus parent and child FQN
+      arrays. Compiled from the dbt manifest at parse time — does not require a
+      warehouse round-trip.
+    config:
+      materialized: table
+    columns:
+      - name: platform
+        description: Active adapter platform (snowflake, bigquery, redshift, databricks).
+      - name: database_name
+        description: Database / catalog where the snapshot table lives (uppercased).
+      - name: schema_name
+        description: Schema where the snapshot table lives (uppercased).
+      - name: table_name
+        description: Snapshot relation identifier (alias if present, otherwise the snapshot name) — uppercased.
+      - name: table_fqn
+        description: Fully-qualified snapshot identifier in DATABASE.SCHEMA.TABLE format (uppercased).
+      - name: dbt_snapshot
+        description: dbt unique_id for the snapshot node (e.g. snapshot.my_project.orders_snapshot).
+        tests:
+          - not_null
+          - unique
+      - name: snapshot_name
+        description: Snapshot file name (before alias resolution).
+      - name: alias
+        description: Configured dbt alias used for the relation name.
+      - name: package_name
+        description: dbt package where the snapshot is defined.
+      - name: strategy
+        description: "Snapshot strategy as configured. One of: 'timestamp' or 'check'."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['timestamp', 'check']
+      - name: updated_at
+        description: >
+          Column used by the timestamp strategy to detect changes. Empty string
+          when the snapshot uses the check strategy.
+      - name: check_cols
+        description: >
+          Array of columns compared by the check strategy. Contains the single
+          element 'all' when the snapshot was configured with the sentinel value
+          to compare every column. Empty array when the snapshot uses the
+          timestamp strategy.
+      - name: unique_key
+        description: >
+          Configured unique key. Composite keys (list values in dbt config) are
+          joined with commas into a single string.
+      - name: invalidate_hard_deletes
+        description: Boolean flag from the snapshot config. When true, dbt closes valid_to on rows missing from the source.
+      - name: parent_models
+        description: Array of fully-qualified names for each upstream dependency (sources, models, seeds).
+      - name: child_models
+        description: Array of fully-qualified names for each downstream model or snapshot that refs this snapshot.
+      - name: downstream_model_count
+        description: Count of downstream nodes that depend on this snapshot. Useful for prioritizing optimization work on snapshots with broader blast radius.
+
+  # ===========================================================================
   # int_snowflake__table_inventory
   # ===========================================================================
   - name: int_snowflake__table_inventory
@@ -263,3 +326,73 @@ models:
         description: Total row count of the table at time of scan
       - name: calculated_at
         description: Timestamp when the macro last populated or updated this record
+
+  # ===========================================================================
+  # int_databricks__model_relationships
+  # ===========================================================================
+  - name: int_databricks__model_relationships
+    description: >
+      One row per directed edge in the dbt model graph. Flattens the parent_models
+      and child_models array columns from int_dbt__relations into individual
+      (model_fqn, neighbor_fqn) pairs and joins back to int_dbt__relations to
+      enrich each edge with the neighbor's materialization. Used by
+      int_databricks__view_chains for view-chain analysis, and available for any
+      downstream model that needs to walk parent/child edges.
+    config:
+      materialized: table
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      - name: model_fqn
+        description: Fully-qualified name of the model that owns this edge (DATABASE.SCHEMA.TABLE, uppercased).
+      - name: model_materialized
+        description: Materialization of the model that owns the edge (table, view, ephemeral, incremental, etc.).
+      - name: neighbor_fqn
+        description: Fully-qualified name of the model on the other side of the edge.
+      - name: relationship
+        description: "Direction of the edge from the model_fqn's perspective. One of: 'parent' (neighbor is upstream) or 'child' (neighbor is downstream)."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['parent', 'child']
+      - name: neighbor_materialized
+        description: >
+          Materialization of the neighbor model. May be null if the neighbor is referenced
+          in the dbt graph but not present in int_dbt__relations (e.g. a disabled model).
+
+  # ===========================================================================
+  # int_databricks__view_chains
+  # ===========================================================================
+  - name: int_databricks__view_chains
+    description: >
+      For each view or ephemeral model, identifies all downstream tables reachable
+      through chains of intermediate views/ephemerals. Uses a recursive CTE that
+      walks the dbt graph from each view, following only view/ephemeral edges and
+      stopping at the first table encountered on each path. Output captures
+      min_hops_to_table (the shortest distance to any downstream table, handling
+      diamond DAGs) and downstream_table_count (distinct terminal tables reachable).
+
+      Consumed by fct_databricks__table_materialization_candidates to compute the
+      composite_chain_score that surfaces views whose recomputation is cascading
+      through downstream view chains.
+    config:
+      materialized: table
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      - name: model_fqn
+        description: Fully-qualified name of the view or ephemeral model (DATABASE.SCHEMA.TABLE, uppercased).
+        tests:
+          - not_null
+      - name: downstream_table_count
+        description: >
+          Distinct count of terminal tables reachable from this view through any chain of
+          view/ephemeral hops. Higher values indicate the view's recomputation cost cascades
+          across more downstream rebuilds.
+      - name: downstream_table_fqns
+        description: >
+          Array of fully-qualified names for each terminal table reachable from this view.
+          Used by the downstream-build-time aggregation in fct_databricks__table_materialization_candidates.
+      - name: min_hops_to_table
+        description: >
+          Shortest path length from this view to any reachable terminal table, in number of
+          edges. A value of 1 means the view feeds directly into a table; higher values
+          indicate the view sits behind one or more intermediate views/ephemerals.

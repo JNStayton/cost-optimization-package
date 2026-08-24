@@ -27,9 +27,9 @@ with candidate_tables as (
         ti.table_name
     from {{ ref('int_databricks__table_inventory') }} as ti
     inner join {{ ref('int_dbt__relations') }} as dm
-        on ti.database_name = dm.database_name
-        and ti.schema_name = dm.schema_name
-        and ti.table_name = dm.table_name
+        on lower(ti.database_name) = lower(dm.database_name)
+        and lower(ti.schema_name) = lower(dm.schema_name)
+        and lower(ti.table_name) = lower(dm.table_name)
     {% endif %}
 ),
 

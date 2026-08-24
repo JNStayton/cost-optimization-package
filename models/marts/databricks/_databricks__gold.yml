@@ -1,0 +1,69 @@
+version: 2
+
+models:
+  # ===========================================================================
+  # vw_databricks__recommendations_by_model  (gold rollup)
+  # ===========================================================================
+  - name: vw_databricks__recommendations_by_model
+    description: >
+      Gold rollup — a single consumer-facing surface listing every actionable
+      Databricks cost recommendation, one row per (dbt node, domain,
+      recommendation). Unions the incremental, table-materialization, snapshot,
+      OPTIMIZE, and liquid-clustering marts into a common shape and collapses the
+      same logical dbt node built across multiple environments into a single
+      representative row (env priority: prod > staging > dev).
+
+      Excludes fct_databricks__model_run_summary (a performance-trend monitoring
+      mart, not a recommendation surface). `score` is domain-relative and is NOT
+      comparable across domains. Environment is inferred from the physical
+      schema/catalog name; cross-env dedup only collapses rows when the marts
+      contain the same node in more than one environment.
+    config:
+      materialized: view
+      enabled: "{{ target.type == 'databricks' }}"
+    columns:
+      - name: platform
+        description: Adapter type the recommendations were generated for (target.type).
+      - name: snapshot_date
+        description: Snapshot date of the underlying mart row (latest snapshot per mart).
+      - name: source_mart
+        description: "Which mart the recommendation came from: incremental_model_candidates, table_materialization_candidates, snapshot_optimization_candidates, optimize_candidates, or liquid_clustering_candidates."
+      - name: domain
+        description: "Recommendation domain."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['incremental', 'materialization', 'snapshot', 'storage', 'clustering']
+      - name: node_id
+        description: >
+          dbt unique_id of the model/snapshot (dbt_model, or dbt_snapshot for the
+          snapshot mart). May be null for OPTIMIZE / liquid-clustering rows on
+          non-dbt-managed tables; in that case the physical table_fqn is used as
+          the dedup key instead.
+      - name: model_name
+        description: Model or snapshot name where available; null for table-identity-only marts.
+      - name: database_name
+        description: Catalog of the representative (highest-priority environment) relation.
+      - name: schema_name
+        description: Schema of the representative relation.
+      - name: table_name
+        description: Table name of the representative relation.
+      - name: primary_table_fqn
+        description: Fully-qualified identifier of the representative relation chosen for this recommendation.
+        tests:
+          - not_null
+      - name: all_table_fqns
+        description: Array of every physical FQN that produced this recommendation across environments.
+      - name: environment_count
+        description: Number of distinct physical relations (environments) that produced this recommendation for the node.
+      - name: has_prod_relation
+        description: True when at least one contributing relation was classified as a production environment.
+      - name: recommendation
+        description: The mapped recommendation label (mart-specific strategy/action, or a synthesized label for liquid clustering).
+        tests:
+          - not_null
+      - name: score
+        description: Domain-relative score used to rank rows and pick the representative environment. Not comparable across domains.
+      - name: downstream_count
+        description: Downstream model/table count for prioritization where the source mart provides it; null otherwise.
