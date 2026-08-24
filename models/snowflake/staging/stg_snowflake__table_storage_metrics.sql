@@ -3,6 +3,7 @@
 ) }}
 
 select
+    id,
     table_catalog,
     table_schema,
     table_name,
