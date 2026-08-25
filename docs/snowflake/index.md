@@ -287,6 +287,8 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 | `incremental_candidates_min_compute_waste_score` | `5` | Min waste score for compute-waste trigger. |
 | `incremental_candidates_min_qualified_build_days` | `3` | Min CTAS days to trust growth signal. |
 | `incremental_candidates_min_compute_waste_avg_build_sec` | `30` | Min avg build time alongside waste trigger. |
+| `incremental_candidates_roi_high_build_time_sec` | `300` | Min avg build time (seconds) for 'high' ROI tier. |
+| `incremental_candidates_roi_medium_build_time_sec` | `120` | Min avg build time (seconds) for 'medium' ROI tier. |
 | `incremental_large_table_row_threshold` | `10000000` | Row count above which `delete+insert` preferred over `merge`. |
 | `incremental_large_table_gb_threshold` | `10` | Size in GB above which `delete+insert` preferred over `merge`. |
 

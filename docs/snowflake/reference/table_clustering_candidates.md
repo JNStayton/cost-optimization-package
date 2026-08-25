@@ -82,9 +82,15 @@ fct_snowflake__table_clustering_candidates (identifies WHICH tables)
 
 **Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed consumption queries. Join-only columns are excluded entirely — filter usage is the admission ticket, join usage is the scoring bonus.
 
-**Diminishing returns gate:** The 2nd and 3rd recommended keys must score at least 50% of the top key's score for that table. This prevents low-impact columns from riding alongside a strong primary key and ensures each additional key in the clustering spec is worth the maintenance overhead.
+**Selectivity gating:** Columns with high cardinality (distinct_values / total_rows > 5%) are excluded. Near-unique columns (like surrogate keys or customer IDs) cannot consolidate into micropartitions effectively. This prevents columns like `customer_id` from being recommended even when they appear frequently in filters.
+
+**Diminishing returns gate:** The 2nd and 3rd recommended keys must score at least 50% of the top key's score for that table. This prevents low-impact columns from riding alongside a strong primary key.
+
+**Gold layer recommendation threshold:** At the gold view, a candidate key is only included in the `dbt_model_config` if its `filter_query_count` is >= 70% of the top key's filter count. Keys below this threshold appear in `additional_clustering_candidates` for investigation but not in the actionable config. This prevents marginal columns (mostly appearing in joins rather than filters) from inflating the clustering key specification.
 
 **Scoring formula:** `filter_query_count * 3 + join_query_count * 1 + cardinality_bonus` where the cardinality bonus rewards columns with 100-10000 rows per distinct value (sweet spot for micropartition grouping). Filter usage is weighted 3x because WHERE predicates directly enable partition pruning. Join usage is weighted 1x as a secondary signal (co-location benefit for hash joins is marginal).
+
+**Workload classification:** Only consumption queries (SELECTs without dbt metadata) contribute to clustering key evidence. dbt model builds, tests, and package-internal queries are excluded via `int_snowflake__query_workload_class` to prevent false positives from build-time full-table scans.
 
 ---
 

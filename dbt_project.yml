@@ -112,6 +112,8 @@ vars:
   incremental_candidates_min_compute_waste_score: 5
   incremental_candidates_min_qualified_build_days: 3
   incremental_candidates_min_compute_waste_avg_build_sec: 30
+  incremental_candidates_roi_high_build_time_sec: 300
+  incremental_candidates_roi_medium_build_time_sec: 120
   incremental_large_table_row_threshold: 10000000
   incremental_large_table_gb_threshold: 10
 
