@@ -47,6 +47,8 @@
 {% set min_compute_waste_score          = var('incremental_candidates_min_compute_waste_score', 5) %}
 {% set min_qualified_build_days         = var('incremental_candidates_min_qualified_build_days', 3) %}
 {% set min_compute_waste_avg_build_sec  = var('incremental_candidates_min_compute_waste_avg_build_sec', 30) %}
+{% set roi_high_build_time_sec           = var('incremental_candidates_roi_high_build_time_sec', 300) %}
+{% set roi_medium_build_time_sec         = var('incremental_candidates_roi_medium_build_time_sec', 120) %}
 
 with table_candidates as (
     -- Compile-time relations (current deploy target)
@@ -247,11 +249,11 @@ scored as (
         )                                                                      as triggered_by_compute_waste,
         -- ROI tier: determines maximum recommendation status
         case
-            when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= 300
+            when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= {{ roi_high_build_time_sec }}
                  and coalesce(bs.qualified_build_pairs, 0) >= {{ min_qualified_build_days }} - 1
                  and bs.median_rebuild_redundancy_rate >= 0.70
                 then 'high'
-            when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= 120
+            when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= {{ roi_medium_build_time_sec }}
                  and bs.median_rebuild_redundancy_rate >= 0.70
                 then 'medium'
             else 'low'
