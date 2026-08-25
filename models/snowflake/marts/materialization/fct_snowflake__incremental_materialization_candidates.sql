@@ -76,37 +76,96 @@ with table_candidates as (
     where table_fqn not in (select upper(database_name) || '.' || upper(schema_name) || '.' || upper(table_name) from {{ ref('int_dbt__relations') }})
 ),
 
-build_stats as (
-    -- single scan: growth signal aggregates use a null key for non-build days so
-    -- MIN_BY/MAX_BY naturally exclude them (null keys are skipped by aggregates).
+build_growth as (
+    -- Per-build redundancy using LAG over consecutive build days.
+    -- Resilient to one-time data reloads (those produce outlier pairs excluded by median).
     select
-        table_database || '.' || table_schema || '.' || table_name            as table_fqn,
-        sum(table_build_count)                                                 as table_build_count,
-        max(max_build_time_ms)                                                 as max_build_time_ms,
-        -- weighted average across all builds in the window (not an avg of daily avgs)
-        sum(build_execution_time_ms_sum)
-            / nullif(sum(table_build_count), 0)                               as avg_build_time_ms,
-        sum(select_count)                                                      as select_count,
-        sum(select_execution_time_ms_sum)
-            / nullif(sum(select_count), 0)                                    as avg_query_execution_time_ms,
-        sum(dml_count)                                                         as dml_count,
-        sum(insert_count)                                                      as insert_count,
-        sum(update_count)                                                      as update_count,
-        sum(delete_count)                                                      as delete_count,
-        sum(merge_count)                                                       as merge_count,
-        -- growth signal — null key excludes non-build days from MIN_BY/MAX_BY
-        count_if(rows_inserted_build_snapshot is not null)                    as qualified_build_days,
-        min_by(
-            rows_inserted_build_snapshot,
-            case when rows_inserted_build_snapshot is not null then stats_date end
-        )                                                                     as rows_at_period_start,
-        max_by(
-            rows_inserted_build_snapshot,
-            case when rows_inserted_build_snapshot is not null then stats_date end
-        )                                                                     as rows_at_period_end
+        table_database || '.' || table_schema || '.' || table_name as table_fqn,
+        stats_date,
+        rows_inserted_build_snapshot,
+        lag(rows_inserted_build_snapshot) over (
+            partition by table_database, table_schema, table_name
+            order by stats_date
+        ) as prev_build_rows,
+        case
+            when rows_inserted_build_snapshot > 0
+                 and lag(rows_inserted_build_snapshot) over (
+                     partition by table_database, table_schema, table_name
+                     order by stats_date
+                 ) is not null
+                 and rows_inserted_build_snapshot >= lag(rows_inserted_build_snapshot) over (
+                     partition by table_database, table_schema, table_name
+                     order by stats_date
+                 )
+            then round(
+                lag(rows_inserted_build_snapshot) over (
+                    partition by table_database, table_schema, table_name
+                    order by stats_date
+                )::float / rows_inserted_build_snapshot,
+                4
+            )
+        end as per_build_redundancy
     from {{ ref('int_snowflake__table_query_stats_daily') }}
     where stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by 1
+      and rows_inserted_build_snapshot is not null
+),
+
+build_stats as (
+    select
+        bs.table_fqn,
+        bs.table_build_count,
+        bs.max_build_time_ms,
+        bs.avg_build_time_ms,
+        bs.select_count,
+        bs.avg_query_execution_time_ms,
+        bs.dml_count,
+        bs.insert_count,
+        bs.update_count,
+        bs.delete_count,
+        bs.merge_count,
+        bs.qualified_build_days,
+        bs.rows_at_period_start,
+        bs.rows_at_period_end,
+        -- Median per-build redundancy (replaces endpoint ratio)
+        bg.median_rebuild_redundancy_rate,
+        bg.qualified_build_pairs
+    from (
+        select
+            table_database || '.' || table_schema || '.' || table_name            as table_fqn,
+            sum(table_build_count)                                                 as table_build_count,
+            max(max_build_time_ms)                                                 as max_build_time_ms,
+            sum(build_execution_time_ms_sum)
+                / nullif(sum(table_build_count), 0)                               as avg_build_time_ms,
+            sum(select_count)                                                      as select_count,
+            sum(select_execution_time_ms_sum)
+                / nullif(sum(select_count), 0)                                    as avg_query_execution_time_ms,
+            sum(dml_count)                                                         as dml_count,
+            sum(insert_count)                                                      as insert_count,
+            sum(update_count)                                                      as update_count,
+            sum(delete_count)                                                      as delete_count,
+            sum(merge_count)                                                       as merge_count,
+            count_if(rows_inserted_build_snapshot is not null)                    as qualified_build_days,
+            min_by(
+                rows_inserted_build_snapshot,
+                case when rows_inserted_build_snapshot is not null then stats_date end
+            )                                                                     as rows_at_period_start,
+            max_by(
+                rows_inserted_build_snapshot,
+                case when rows_inserted_build_snapshot is not null then stats_date end
+            )                                                                     as rows_at_period_end
+        from {{ ref('int_snowflake__table_query_stats_daily') }}
+        where stats_date >= dateadd(day, -{{ lookback_days }}, current_date())
+        group by 1
+    ) as bs
+    left join (
+        select
+            table_fqn,
+            median(per_build_redundancy) as median_rebuild_redundancy_rate,
+            count(per_build_redundancy)  as qualified_build_pairs
+        from build_growth
+        where per_build_redundancy is not null
+        group by table_fqn
+    ) as bg on bg.table_fqn = bs.table_fqn
 ),
 
 table_size as (
@@ -155,22 +214,17 @@ scored as (
         coalesce(bs.qualified_build_days, 0)                                   as qualified_build_days,
         bs.rows_at_period_start,
         bs.rows_at_period_end,
-        -- rebuild_redundancy_rate: fraction of each rebuild that is unchanged rows.
-        -- null when signal is unreliable or history is insufficient.
+        -- rebuild_redundancy_rate: median per-build redundancy from consecutive build days.
+        -- Resilient to one-time reloads (outlier pairs drop out of median).
         case
-            when coalesce(bs.qualified_build_days, 0) >= {{ min_qualified_build_days }}
-             and bs.rows_at_period_end >= bs.rows_at_period_start
-            then round(
-                bs.rows_at_period_start / nullif(bs.rows_at_period_end, 0),
-                4
-            )
+            when coalesce(bs.qualified_build_pairs, 0) >= {{ min_qualified_build_days }} - 1
+            then bs.median_rebuild_redundancy_rate
         end                                                                    as rebuild_redundancy_rate,
-        -- false when row count decreased mid-lookback (possible full-refresh or upstream
-        -- deletes) or when history is too thin; both make the rate untrustworthy
+        -- false when insufficient consecutive build pairs or history too thin
         case
-            when coalesce(bs.qualified_build_days, 0) < {{ min_qualified_build_days }}
+            when coalesce(bs.qualified_build_pairs, 0) < {{ min_qualified_build_days }} - 1
                 then false
-            when bs.rows_at_period_end < bs.rows_at_period_start
+            when bs.median_rebuild_redundancy_rate is null
                 then false
             else true
         end                                                                    as growth_signal_reliable,
@@ -194,19 +248,11 @@ scored as (
         -- ROI tier: determines maximum recommendation status
         case
             when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= 300
-                 and coalesce(bs.qualified_build_days, 0) >= 3
-                 and case
-                        when coalesce(bs.qualified_build_days, 0) >= {{ min_qualified_build_days }}
-                             and bs.rows_at_period_end >= bs.rows_at_period_start
-                        then round(bs.rows_at_period_start / nullif(bs.rows_at_period_end, 0), 4)
-                     end >= 0.70
+                 and coalesce(bs.qualified_build_pairs, 0) >= {{ min_qualified_build_days }} - 1
+                 and bs.median_rebuild_redundancy_rate >= 0.70
                 then 'high'
             when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= 120
-                 and case
-                        when coalesce(bs.qualified_build_days, 0) >= {{ min_qualified_build_days }}
-                             and bs.rows_at_period_end >= bs.rows_at_period_start
-                        then round(bs.rows_at_period_start / nullif(bs.rows_at_period_end, 0), 4)
-                     end >= 0.70
+                 and bs.median_rebuild_redundancy_rate >= 0.70
                 then 'medium'
             else 'low'
         end                                                                    as roi_tier
@@ -296,11 +342,12 @@ select
                 || {{ lookback_days }} || '-day window — growth rate requires '
                 || {{ min_qualified_build_days }} || '+ build days to compute'
         when not growth_signal_reliable
-            then 'Row count decreased during lookback (first: '
+            then 'Insufficient consecutive build pairs to compute per-build redundancy ('
                 || coalesce(rows_at_period_start::string, '?')
-                || ' rows → last: '
+                || ' rows at period start → '
                 || coalesce(rows_at_period_end::string, '?')
-                || ' rows) — possible full-refresh or upstream deletes; verify before acting'
+                || ' rows at period end) — need ' || ({{ min_qualified_build_days }} - 1)
+                || '+ consecutive build days'
         when triggered_by_build_time and triggered_by_size
             then 'Large table (' || table_size_gb
                 || ' GB) with slow builds (max ' || max_build_time_sec
