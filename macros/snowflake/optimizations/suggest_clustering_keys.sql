@@ -165,9 +165,7 @@
   {% set discovery_results = run_query(discovery_sql) %}
   {% set query_ids = discovery_results.columns[0].values() if discovery_results and discovery_results.rows | length > 0 else [] %}
 
-  {{ log("    [debug] discovered " ~ (query_ids | length) ~ " queries for " ~ column_name, info=true) }}
-
-  {% set usage_count = 0 %}
+  {% set ns = namespace(usage_count=0) %}
 
   {% if query_ids | length > 0 %}
     {# Step 2: Check operator stats for this column in Filter/Join operators #}
@@ -184,15 +182,13 @@
       {% endset %}
       {% set op_result = run_query(op_sql) %}
       {% set hits = op_result.columns[0].values()[0] if op_result and op_result.rows | length > 0 else 0 %}
-      {{ log("    [debug] query " ~ qid ~ " -> " ~ hits ~ " hits for " ~ column_name, info=true) }}
       {% if hits > 0 %}
-        {% set usage_count = usage_count + 1 %}
+        {% set ns.usage_count = ns.usage_count + 1 %}
       {% endif %}
     {% endfor %}
   {% endif %}
 
-  {{ log("    [debug] total usage_count for " ~ column_name ~ ": " ~ usage_count, info=true) }}
-  {{ return(usage_count | string | int) }}
+  {{ return(ns.usage_count) }}
 
 {% endmacro %}
 
