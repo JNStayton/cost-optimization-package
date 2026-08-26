@@ -1,4 +1,4 @@
-{% macro find_warehouse_sizing_recommendations(lookback_days=7, min_query_count=20, dml_threshold=0.35, preview_only=true) %}
+{% macro find_warehouse_sizing_recommendations(lookback_days=7, min_query_count=20, dml_threshold=0.35) %}
 
   {#--
     Recommends warehouse-level sizing actions for warehouses running dbt workloads.
@@ -214,7 +214,7 @@
         {{ log("--- Recommendations ---", info=true) }}
 
         {% for r in sorted_recs %}
-            {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
+            {% if loop.index > 20 %}{% break %}{% endif %}
 
             {{ dbt_cost_optimization_package.log_recommendation(
                 title='Warehouse: ' ~ r.warehouse_name ~ ' (' ~ r.warehouse_size ~ ')',

@@ -1,4 +1,4 @@
-{% macro find_table_materialization_candidates(lookback_days=14, min_query_count=10, preview_only=true) %}
+{% macro find_table_materialization_candidates(lookback_days=14, min_query_count=10) %}
 
   {#--
     Identifies dbt models currently configured as VIEWs that are experiencing high 
@@ -159,7 +159,7 @@
     {% endif %}
 
     {% for c in sorted_candidates %}
-        {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
+        {% if loop.index > 20 %}{% break %}{% endif %}
 
         {{ log("Model: " ~ c.fqn, info=true) }}
         {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}

@@ -1,4 +1,4 @@
-{% macro find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30, preview_only=true) %}
+{% macro find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30) %}
 
   {#--
     Identifies dbt models currently configured as TABLEs that are large, slow to build,
@@ -209,7 +209,7 @@
     {% else %}
 
     {% for c in table_candidates %}
-        {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
+        {% if loop.index > 20 %}{% break %}{% endif %}
 
         {{ log("[" ~ c.priority ~ "] Model: " ~ c.fqn, info=true) }}
         {{ log("  - Current dbt Materialization: " ~ c.dbt_materialization, info=true) }}

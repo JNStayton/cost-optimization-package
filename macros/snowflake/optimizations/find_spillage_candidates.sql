@@ -1,4 +1,4 @@
-{% macro find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1, preview_only=true) %}
+{% macro find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1) %}
 
   {#--
     Identifies dbt-managed tables whose builds are spilling to local or remote
@@ -206,7 +206,7 @@
         {{ log("--- Recommendations ---", info=true) }}
 
         {% for r in sorted_recs %}
-            {% if preview_only and loop.index > 10 %}{% break %}{% endif %}
+            {% if loop.index > 20 %}{% break %}{% endif %}
 
             {{ dbt_cost_optimization_package.log_recommendation(
                 title='Model: ' ~ r.fqn,

@@ -1,4 +1,4 @@
-{% macro suggest_clustering_keys(model_name, include_boolean_cols=false, preview_only=true) %}
+{% macro suggest_clustering_keys(model_name, include_boolean_cols=false) %}
 
   {#--
     Orchestrates all macros to suggest a clustering key for a given model.
@@ -17,7 +17,6 @@
         floor from > 10 distinct values to >= 2 so booleans and small enums are
         considered as candidates. Useful when query patterns are dominated by
         filters on small categorical columns or flag columns.
-      preview_only (default true): print to log without persisting.
 
     How to run:
     dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name}'
@@ -70,20 +69,11 @@
     {{ log("\n--- Top 3 Clustering Key Candidates for " ~ model_relation ~ " ---", info=true) }}
     {{ log("Sorted by a score combining cardinality and actual query usage.", info=true) }}
 
-    {% if preview_only %}
-
     {% for rec in sorted_recommendations %}
       {% if loop.index <= 3 %}
         {{ log("  - Candidate " ~ loop.index ~ ": " ~ rec.column_name ~ " (Score: " ~ rec.score ~ ", Distinct: " ~ rec.distinct_values ~ ", Uses: " ~ rec.usage_count ~ ")", info=true) }}
       {% endif %}
     {% endfor %}
-
-    {% else %}
-    
-    -- TODO
-    {{ log("Populating model clustering_key_candidates with results...", info=true) }}
-
-    {% endif %}
 
   {% endif %}
 
