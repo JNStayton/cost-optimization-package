@@ -141,9 +141,6 @@
     a column was used in a Filter or Join operator for a specific model,
     using GET_QUERY_OPERATOR_STATS for exact plan-level evidence.
 
-    Falls back to counting queries containing the exact FQN where
-    operator stats are unavailable (result-cache hits).
-
     NOTE: The role running this macro must have privileges
     on SNOWFLAKE.ACCOUNT_USAGE.
   --#}
@@ -156,6 +153,10 @@
       and query_type = 'SELECT'
       and contains(upper(replace(query_text, '"', '')), upper('{{ model_relation }}'))
       and query_text not ilike '%dbt_internal_test%'
+      and query_text not ilike '%account_usage.query_history%'
+      and query_text not ilike '%get_query_operator_stats%'
+      and query_text not ilike '%approx_count_distinct%'
+      and query_text not ilike '%int_snowflake__query_operator%'
       and (bytes_scanned > 0 or partitions_scanned > 0)
     order by start_time desc
     limit 20
@@ -164,27 +165,33 @@
   {% set discovery_results = run_query(discovery_sql) %}
   {% set query_ids = discovery_results.columns[0].values() if discovery_results and discovery_results.rows | length > 0 else [] %}
 
+  {{ log("    [debug] discovered " ~ (query_ids | length) ~ " queries for " ~ column_name, info=true) }}
+
   {% set usage_count = 0 %}
 
   {% if query_ids | length > 0 %}
     {# Step 2: Check operator stats for this column in Filter/Join operators #}
     {% for qid in query_ids %}
+      {% set col_pattern = '%' ~ column_name ~ '%' %}
       {% set op_sql %}
         select count(*) as hits
         from table(get_query_operator_stats('{{ qid }}'))
         where operator_type in ('Filter', 'Join')
           and (
-            operator_attributes:filter_condition::string ilike '%{{ column_name }}%'
-            or operator_attributes:equality_join_condition::string ilike '%{{ column_name }}%'
+            operator_attributes:filter_condition::string ilike '{{ col_pattern }}'
+            or operator_attributes:equality_join_condition::string ilike '{{ col_pattern }}'
           )
       {% endset %}
       {% set op_result = run_query(op_sql) %}
-      {% if op_result and op_result.columns[0].values()[0] > 0 %}
+      {% set hits = op_result.columns[0].values()[0] if op_result and op_result.rows | length > 0 else 0 %}
+      {{ log("    [debug] query " ~ qid ~ " -> " ~ hits ~ " hits for " ~ column_name, info=true) }}
+      {% if hits > 0 %}
         {% set usage_count = usage_count + 1 %}
       {% endif %}
     {% endfor %}
   {% endif %}
 
+  {{ log("    [debug] total usage_count for " ~ column_name ~ ": " ~ usage_count, info=true) }}
   {{ return(usage_count | string | int) }}
 
 {% endmacro %}
