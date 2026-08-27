@@ -14,7 +14,7 @@
     from snowflake.account_usage.query_history
     where start_time >= dateadd('day', -{{ days_to_check }}, current_timestamp())
       and query_type = 'SELECT'
-      and contains(upper(replace(query_text, '"', '')), upper('{{ model_relation }}'))
+      and contains(upper(replace(query_text, '"', '')), upper(replace('{{ model_relation }}', '"', '')))
       and query_text not ilike '%dbt_internal_test%'
       and query_text not ilike '%account_usage.query_history%'
       and query_text not ilike '%get_query_operator_stats%'
