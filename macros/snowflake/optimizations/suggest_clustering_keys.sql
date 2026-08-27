@@ -1,33 +1,48 @@
-{% macro suggest_clustering_keys(model_name, include_boolean_cols=false) %}
+{% macro suggest_clustering_keys(model_name, database=none, schema=none, include_boolean_cols=false) %}
 
   {#--
     Orchestrates all macros to suggest a clustering key for a given model.
 
-    Use this in combination with the find_table_clustering_candidates macro. Once you have identified a table that may benefit from clustering, run this macro to get column-level recommendations on good clustering keys for that specific table.
+    Use this in combination with the find_table_clustering_candidates macro. Once you have
+    identified a table that may benefit from clustering, run this macro to get column-level
+    recommendations on good clustering keys for that specific table.
 
     1. Calls get_clustering_cardinality_stats() to find structurally good candidates.
-    2. For each candidate, calls get_column_usage_count() to find query history usage on filtering and joins.
-    3. For each candidate, calls get_clustering_score() to get a weighted score based on the above criteria.
+    2. For each candidate, calls get_column_usage_count() to find query history usage.
+    3. For each candidate, calls get_clustering_score() to get a weighted score.
     4. Prints the top 3 recommendations.
-    5. [TODO] Creates/updates a model with the information.
 
     Args:
-      model_name: name of the dbt model to analyze (ref-able).
+      model_name: name of the dbt model (or table) to analyze.
+      database (optional): override database. When provided with schema, bypasses ref()
+        and targets the specified relation directly. Useful for analyzing production tables
+        from a dev environment.
+      schema (optional): override schema. Must be provided alongside database.
       include_boolean_cols (default false): when true, lowers the cardinality
         floor from > 10 distinct values to >= 2 so booleans and small enums are
-        considered as candidates. Useful when query patterns are dominated by
-        filters on small categorical columns or flag columns.
+        considered as candidates.
 
     How to run:
-    dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name}'
+    dbt run-operation suggest_clustering_keys --args '{model_name: fct_order_items}'
+
+    With explicit database/schema (analyze production from dev):
+    dbt run-operation suggest_clustering_keys --args '{model_name: fct_order_items, database: MY_DB, schema: PROD_MARTS}'
 
     With low-cardinality columns included:
-    dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name, include_boolean_cols: true}'
+    dbt run-operation suggest_clustering_keys --args '{model_name: fct_order_items, include_boolean_cols: true}'
   --#}
 
   {% if execute %}
 
-    {% set model_relation = ref(model_name) %}
+    {% if database and schema %}
+      {% set model_relation = adapter.get_relation(database=database, schema=schema, identifier=model_name) %}
+      {% if not model_relation %}
+        {{ log("ERROR: Could not find relation " ~ database ~ "." ~ schema ~ "." ~ model_name ~ ". Check that the table exists and your role has access.", info=true) }}
+        {{ return('') }}
+      {% endif %}
+    {% else %}
+      {% set model_relation = ref(model_name) %}
+    {% endif %}
 
     {{ log("--- Step 1: Analyzing column cardinality for '" ~ model_relation ~ "' ---", info=true) }}
 
