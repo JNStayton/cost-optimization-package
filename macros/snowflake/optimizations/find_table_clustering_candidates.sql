@@ -31,10 +31,10 @@
       4. partition_scan_ratio > 0.5 (scanning >50% of partitions — poor pruning)
 
     How to run:
-      dbt run-operation find_table_clustering_candidates_v3
+      dbt run-operation find_table_clustering_candidates
 
     With custom args:
-      dbt run-operation find_table_clustering_candidates_v3 --args '{lookback_days: 14, ignore_table_size: true}'
+      dbt run-operation find_table_clustering_candidates --args '{lookback_days: 14, ignore_table_size: true}'
   --#}
 
     {% if ignore_table_size %}

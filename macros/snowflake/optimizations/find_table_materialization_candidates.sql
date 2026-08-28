@@ -7,8 +7,6 @@
     This macro executes a Snowflake query to get performance data and then 
     joins it with the dbt graph object to verify current materialization.
 
-    [TODO] Create/update a model with the information.
-
     How to run:
     dbt run-operation find_table_materialization_candidates
 
@@ -26,9 +24,12 @@
 
     {# --- Build list of view models from the dbt graph --- #}
     {% set view_models = [] %}
+    {% set suppress_staging = var('suppress_staging_materialization_recs', false) %}
+
     {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
         {% if node.config.materialized == 'view' and node.database and node.schema %}
             {% set node_identifier = node.alias if node.alias else node.name %}
+            {% if not (suppress_staging and node.name.startswith('stg_')) %}
             {% do view_models.append({
                 'database': node.database | upper,
                 'schema': node.schema | upper,
@@ -36,6 +37,7 @@
                 'fqn': (node.database | upper) ~ '.' ~ (node.schema | upper) ~ '.' ~ (node_identifier | upper),
                 'node': node
             }) %}
+            {% endif %}
         {% endif %}
     {% endfor %}
 
@@ -130,6 +132,12 @@
         {% endfor %}
 
         {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A (Not in dbt project)' %}
+
+        {# Skip staging models if suppressed #}
+        {% if suppress_staging and ns.model_node and ns.model_node.name.startswith('stg_') %}
+            {# skip #}
+        {% else %}
+
         {% set recommendation = 'Monitor' %}
         {% set recommendation_reason = 'Low Priority' %}
 
@@ -154,6 +162,8 @@
             'recommendation': recommendation,
             'recommendation_reason': recommendation_reason
         }) %}
+
+        {% endif %}
         
     {% endfor %}
 
@@ -168,8 +178,8 @@
         {% set view_perf_sql %}
             select
                 count(*) as total_queries,
-                avg(total_elapsed_time) / 1000.0 as avg_elapsed_seconds,
-                sum(bytes_scanned) / power(1024, 3) as total_gb_scanned
+                coalesce(avg(total_elapsed_time) / 1000.0, 0) as avg_elapsed_seconds,
+                coalesce(sum(bytes_scanned) / power(1024, 3), 0) as total_gb_scanned
             from snowflake.account_usage.query_history
             where start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
               and execution_status = 'SUCCESS'
@@ -181,8 +191,8 @@
         {% set total_queries = perf_result.columns[0].values()[0] | int if perf_result and perf_result.rows | length > 0 else 0 %}
 
         {% if total_queries > min_query_count %}
-            {% set avg_elapsed = perf_result.columns[1].values()[0] | float if perf_result else 0 %}
-            {% set total_gb = perf_result.columns[2].values()[0] | float if perf_result else 0 %}
+            {% set avg_elapsed = perf_result.columns[1].values()[0] | string | float %}
+            {% set total_gb = perf_result.columns[2].values()[0] | string | float %}
             {% set mat_score = total_queries * avg_elapsed %}
 
             {% set recommendation = 'Monitor' %}

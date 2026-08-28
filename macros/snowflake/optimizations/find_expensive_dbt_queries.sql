@@ -3,7 +3,8 @@
     top_n=20,
     min_total_credits=0.1,
     credit_rate_usd=2,
-    high_cost_threshold_usd=10000
+    high_cost_threshold_usd=10000,
+    dbt_project_only=true
 ) %}
 
   {#--
@@ -165,6 +166,11 @@
                 {% set reason = 'Projected $' ~ estimated_annual_cost_usd ~ '/yr (' ~ estimated_annual_credits ~ ' credits/yr). Ran ' ~ total_runs ~ ' times over ' ~ lookback_days ~ ' days at avg ' ~ avg_elapsed_sec ~ 's per run.' %}
             {% endif %}
 
+            {# Skip queries not in the current project when dbt_project_only is true #}
+            {% if dbt_project_only and model_fqn is none %}
+                {# skip — not a model in this project #}
+            {% else %}
+
             {% do recommendations.append({
                 'query_hash': query_hash,
                 'sample_query_id': sample_query_id,
@@ -184,6 +190,8 @@
                 'reason': reason,
                 'severity': severity
             }) %}
+
+            {% endif %}
         {% endfor %}
 
         {# warns first; SQL already ordered by estimated_annual_cost_usd desc, preserving that within buckets #}

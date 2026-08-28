@@ -21,7 +21,11 @@ macros:
       query patterns (WHERE/JOIN clause frequency) and column cardinality.
     arguments:
       - name: model_name
-        description: "Name of the dbt model to analyze"
+        description: "Name of the dbt model (or table) to analyze"
+      - name: database
+        description: "Optional: override database (bypasses ref, targets specific relation)"
+      - name: schema
+        description: "Optional: override schema (must be provided with database)"
 
   - name: find_spillage_candidates
     description: >

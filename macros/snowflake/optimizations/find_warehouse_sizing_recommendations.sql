@@ -21,7 +21,6 @@
       dbt run-operation find_warehouse_sizing_recommendations \
         --args '{lookback_days: 14, min_query_count: 50, dml_threshold: 0.25}'
 
-    [TODO] Persist results to a model so we can track recommendation history.
   --#}
 
   {% if execute %}

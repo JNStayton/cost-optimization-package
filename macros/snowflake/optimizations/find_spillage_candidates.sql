@@ -23,7 +23,6 @@
       dbt run-operation find_spillage_candidates \
         --args '{lookback_days: 14, min_total_gb_spilled: 5, min_runs: 5}'
 
-    [TODO] Persist results to a model so we can track spillage history over time.
   --#}
 
   {% if execute %}

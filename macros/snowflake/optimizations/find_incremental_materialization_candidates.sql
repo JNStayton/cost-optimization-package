@@ -8,7 +8,6 @@
     2. Joins with the dbt graph to ensure model is currently 'table'.
     3. Checks the table structure for suitable date/timestamp keys for the microbatch strategy.
     4. Assigns a priority tier based on size and avg build time.
-    5. [TODO] Creates/updates a model with the information.
 
     Priority tiers:
       HIGH:   size > 100 GB AND avg build > 30 min
@@ -32,7 +31,10 @@
     {{ log("Criteria: Table > " ~ min_table_size_gb ~ " GB & Build Time > " ~ max_build_time_sec ~ "s in last " ~ lookback_days ~ " days.", info=true) }}
     {{ log("Priority tiers: HIGH (size > 100 GB AND avg build > 30 min), MEDIUM (size > 50 GB OR avg build > 15 min), LOW (above floor but below MEDIUM).", info=true) }}
 
+    {% set is_enterprise = var('snowflake_enterprise_edition', true) %}
+
     {# --- snowflake performance and size query --- #}
+    {% if is_enterprise %}
     {% set incremental_sql %}
       with model_performance as (
           select
@@ -104,6 +106,81 @@
       order by priority_rank desc, max_build_time_sec desc
       limit 100
     {% endset %}
+
+    {% else %}
+
+    {# --- Standard: use query_text matching for CTAS attribution --- #}
+    {# Build list of table models from dbt graph #}
+    {% set table_models = [] %}
+    {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
+        {% if node.config.materialized == 'table' and node.database and node.schema %}
+            {% set node_identifier = node.alias if node.alias else node.name %}
+            {% do table_models.append({
+                'database': node.database | upper,
+                'schema': node.schema | upper,
+                'table': node_identifier | upper,
+                'fqn': (node.database | upper) ~ '.' ~ (node.schema | upper) ~ '.' ~ (node_identifier | upper),
+                'node': node
+            }) %}
+        {% endif %}
+    {% endfor %}
+
+    {# Query CTAS build stats per table model using text matching #}
+    {% set incremental_sql %}
+      with ctas_queries as (
+          select
+              query_id,
+              total_elapsed_time,
+              start_time,
+              query_text
+          from snowflake.account_usage.query_history
+          where start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+            and execution_status = 'SUCCESS'
+            and total_elapsed_time / 1000 > {{ max_build_time_sec }}
+            and (
+                query_type in ('CREATE_TABLE', 'CREATE_TABLE_AS_SELECT')
+                or query_text ilike 'create%table%as%select%'
+                or query_text ilike 'create or replace%table%'
+            )
+      ),
+      table_size as (
+          select
+              table_catalog as database_name,
+              table_schema as schema_name,
+              table_name,
+              round(max(active_bytes) / power(1024, 3), 2) as size_gb
+          from snowflake.account_usage.table_storage_metrics
+          where active_bytes / power(1024, 3) >= {{ min_table_size_gb }}
+          group by 1, 2, 3
+      )
+      select
+          ts.database_name,
+          ts.schema_name,
+          ts.table_name,
+          ts.size_gb,
+          count(cq.query_id) as total_slow_runs,
+          max(cq.total_elapsed_time / 1000) as max_build_time_sec,
+          avg(cq.total_elapsed_time / 1000) as avg_build_time_sec,
+          case
+              when ts.size_gb > 100 and avg(cq.total_elapsed_time / 1000) > 1800 then 'HIGH'
+              when ts.size_gb > 50 or avg(cq.total_elapsed_time / 1000) > 900 then 'MEDIUM'
+              else 'LOW'
+          end as priority_key,
+          case
+              when ts.size_gb > 100 and avg(cq.total_elapsed_time / 1000) > 1800 then 3
+              when ts.size_gb > 50 or avg(cq.total_elapsed_time / 1000) > 900 then 2
+              else 1
+          end as priority_rank
+      from table_size ts
+      inner join ctas_queries cq
+          on contains(upper(replace(cq.query_text, '"', '')),
+                      ts.database_name || '.' || ts.schema_name || '.' || ts.table_name)
+      group by 1, 2, 3, 4
+      order by priority_rank desc, max_build_time_sec desc
+      limit 100
+    {% endset %}
+
+    {% endif %}
 
     {% set performance_results = run_query(incremental_sql) %}
 
