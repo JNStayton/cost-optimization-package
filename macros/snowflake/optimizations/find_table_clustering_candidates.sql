@@ -106,10 +106,12 @@
                 ) %}
                 {% set dml_count = ((dml_table.rows[0]["DML_COUNT"] or 0) | string) | int %}
 
-                {# --- Micropartitions from pruning history or get_large_tables fallback --- #}
+                {# --- Micropartitions from pruning history (per-query avg) or get_large_tables fallback --- #}
                 {% set approx_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
-                {% set actual_partitions = total_scanned + total_pruned %}
-                {% if actual_partitions == 0 %}
+                {% set avg_partitions_from_pruning = ((pruning["AVG_TOTAL_PARTITIONS"] or 0) | string) | int %}
+                {% if avg_partitions_from_pruning > 0 %}
+                    {% set actual_partitions = avg_partitions_from_pruning %}
+                {% else %}
                     {% set actual_partitions = approx_partitions %}
                 {% endif %}
 

@@ -4,7 +4,8 @@
     Standalone helper — queries Snowflake directly without model dependencies.
 
     Returns columns: TOTAL_PARTITIONS_SCANNED, TOTAL_PARTITIONS_PRUNED,
-                     TOTAL_QUERY_COUNT, AVG_EXECUTION_TIME_MS
+                     TOTAL_QUERY_COUNT, AVG_EXECUTION_TIME_MS,
+                     AVG_TOTAL_PARTITIONS
   --#}
 
   {% set sql %}
@@ -16,7 +17,12 @@
             when sum(num_queries) > 0
             then sum(aggregate_query_execution_time) / sum(num_queries)
             else 0
-        end as avg_execution_time_ms
+        end as avg_execution_time_ms,
+        case
+            when sum(num_queries) > 0
+            then (sum(partitions_scanned) + sum(partitions_pruned)) / sum(num_queries)
+            else 0
+        end as avg_total_partitions
     from snowflake.account_usage.table_query_pruning_history
     where database_name = '{{ database_name }}'
       and schema_name = '{{ schema_name }}'
