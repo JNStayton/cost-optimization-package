@@ -1,0 +1,33 @@
+{{
+  config(
+    materialized='view',
+    enabled=(target.type == 'databricks')
+  )
+}}
+
+select
+    t.platform,
+    t.database_name,
+    t.schema_name,
+    t.table_name,
+    t.database_name || '.' || t.schema_name || '.' || t.table_name as table_fqn,
+    t.table_type,
+    case
+        when t.table_type = 'EXTERNAL TABLE' then 'External Table'
+        else 'Managed Table'
+    end as normalized_table_type,
+    t.row_count,
+    t.clustering_key,
+    t.clustering_key is not null as is_already_clustered,
+    t.is_transient,
+    s.active_bytes,
+    s.active_bytes / power(1024, 3) as size_gb,
+    s.file_count
+from {{ ref('int_databricks__tables') }} as t
+inner join {{ ref('int_databricks__table_storage') }} as s
+    on t.database_name = s.database_name
+    and t.schema_name = s.schema_name
+    and t.table_name = s.table_name
+where t.table_type in ('BASE TABLE', 'EXTERNAL TABLE')
+    and not t.is_deleted
+    and not s.is_deleted

@@ -15,6 +15,7 @@
 
   {% if execute and target.type == 'snowflake' %}
 
+    {% set is_enterprise = var('snowflake_enterprise_edition', true) %}
     {% set config_table = ref('int_snowflake__warehouse_config') %}
 
     {{ log("refresh_warehouse_config: running SHOW WAREHOUSES...", info=true) }}
@@ -36,9 +37,15 @@
               "name" as warehouse_name,
               "auto_suspend"::int as auto_suspend_seconds,
               "auto_resume"::boolean as auto_resume,
+              {% if is_enterprise %}
               coalesce("scaling_policy", 'STANDARD') as scaling_policy,
               coalesce("min_cluster_count", 1)::int as min_cluster_count,
               coalesce("max_cluster_count", 1)::int as max_cluster_count
+              {% else %}
+              'STANDARD' as scaling_policy,
+              1 as min_cluster_count,
+              1 as max_cluster_count
+              {% endif %}
           from {{ config_table.database }}.{{ config_table.schema }}.tmp_show_warehouses
       ) as source
       on target.warehouse_name = source.warehouse_name

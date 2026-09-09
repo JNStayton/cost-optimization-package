@@ -214,28 +214,55 @@ models:
 
 
   # ===========================================================================
-  # int_snowflake__query_operator_columns
+  # int_snowflake__query_operator_evidence
   # ===========================================================================
-  - name: int_snowflake__query_operator_columns
+  - name: int_snowflake__query_operator_evidence
     description: >
-      Stores parsed column references from query plan operators (GET_QUERY_OPERATOR_STATS).
-      One row per (query_id, table_fqn, column_name, operator_type). Populated by the
-      extract_query_operator_columns macro; the dbt model defines schema only.
+      Unified operator evidence accumulator from GET_QUERY_OPERATOR_STATS.
+      Captures TableScan (partition pruning), Filter (WHERE columns), and Join
+      (equality columns) evidence. Populated by the extract_operator_evidence
+      macro; the dbt model defines schema only.
     columns:
-      - name: operator_column_key
-        description: MD5 surrogate key (query_id | table_fqn | column_name | operator_type)
+      - name: operator_evidence_key
+        description: MD5 surrogate key (query_id | operator_type | table_fqn [| column_name])
       - name: query_id
         description: Snowflake query identifier
       - name: table_fqn
         description: Fully-qualified table name referenced in the operator
-      - name: column_name
-        description: Column name parsed from the operator condition
       - name: operator_type
-        description: "Type of operator: 'Filter' (WHERE/HAVING) or 'Join' (equality join)"
+        description: "Type of operator: 'TableScan', 'Filter', or 'Join'"
+      - name: column_name
+        description: Column name parsed from the operator condition (NULL for TableScan)
+      - name: partitions_scanned
+        description: Number of micro-partitions scanned (TableScan only)
+      - name: partitions_total
+        description: Total micro-partitions in the table (TableScan only)
+      - name: bytes_scanned
+        description: Bytes scanned during table access (TableScan only)
+      - name: condition_text
+        description: Raw filter/join condition from operator attributes (Filter/Join only)
+      - name: query_parameterized_hash
+        description: Parameterized query hash for deduplication
       - name: query_start_time
         description: Query start timestamp (from QUERY_HISTORY)
       - name: access_date
         description: Calendar date of the query (cast from query_start_time)
+
+  # ===========================================================================
+  # int_snowflake__query_workload_class
+  # ===========================================================================
+  - name: int_snowflake__query_workload_class
+    description: >
+      Classifies queries by workload type using dbt query comment metadata
+      and query_type. Used by clustering pipeline to separate consumption
+      scans from build/test scans.
+    columns:
+      - name: query_id
+        description: Snowflake query identifier
+      - name: workload_class
+        description: "Classification: 'consumption', 'dbt_model_build', 'dbt_test', 'package_internal', 'unknown'"
+      - name: classification_confidence
+        description: "Confidence level: 'high' (dbt metadata), 'medium' (query_type heuristic), 'low' (unknown)"
 
   # ===========================================================================
   # int_snowflake__column_cardinality

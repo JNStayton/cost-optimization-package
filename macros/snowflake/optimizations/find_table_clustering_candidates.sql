@@ -1,4 +1,4 @@
-{% macro find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[], preview_only=true) %}
+{% macro find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[]) %}
 
   {#--
     Identifies Snowflake tables that may benefit from clustering, scored by
@@ -31,10 +31,10 @@
       4. partition_scan_ratio > 0.5 (scanning >50% of partitions — poor pruning)
 
     How to run:
-      dbt run-operation find_table_clustering_candidates_v3
+      dbt run-operation find_table_clustering_candidates
 
     With custom args:
-      dbt run-operation find_table_clustering_candidates_v3 --args '{lookback_days: 14, ignore_table_size: true}'
+      dbt run-operation find_table_clustering_candidates --args '{lookback_days: 14, ignore_table_size: true}'
   --#}
 
     {% if ignore_table_size %}
@@ -106,10 +106,12 @@
                 ) %}
                 {% set dml_count = ((dml_table.rows[0]["DML_COUNT"] or 0) | string) | int %}
 
-                {# --- Micropartitions from pruning history or get_large_tables fallback --- #}
+                {# --- Micropartitions from pruning history (per-query avg) or get_large_tables fallback --- #}
                 {% set approx_partitions = row["APPROX_MICROPARTITIONS"] | string | int %}
-                {% set actual_partitions = total_scanned + total_pruned %}
-                {% if actual_partitions == 0 %}
+                {% set avg_partitions_from_pruning = ((pruning["AVG_TOTAL_PARTITIONS"] or 0) | string) | int %}
+                {% if avg_partitions_from_pruning > 0 %}
+                    {% set actual_partitions = avg_partitions_from_pruning %}
+                {% else %}
                     {% set actual_partitions = approx_partitions %}
                 {% endif %}
 
@@ -208,7 +210,6 @@
             {% endif %}
         {% endfor %}
 
-        {% if preview_only %}
         {# --- 5. Output Results --- #}
         {% set sorted_candidates = candidates | sort(attribute="score", reverse=true) %}
 
@@ -252,8 +253,5 @@
                 {% endif %}
             {% endif %}
         {% endfor %}
-        {% else %}
-            {{ log("Populating model with results...", info=true) }}
-        {% endif %}
     {% endif %}
 {% endmacro %}

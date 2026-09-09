@@ -30,9 +30,24 @@ with env_counts as (
 clustering_keys as (
     select
         table_fqn,
-        listagg(column_name, ', ') within group (order by recommended_key_position) as suggested_clustering_key
+        -- Recommended keys: pass 70% filter ratio threshold vs top key (cap at 3)
+        listagg(
+            case when is_recommended then column_name end, ', '
+        ) within group (order by recommended_key_position) as suggested_clustering_key,
+        -- Additional candidates: passed all gates but below 70% filter threshold
+        listagg(
+            case when not is_recommended then column_name end, ', '
+        ) within group (order by recommended_key_position) as additional_clustering_candidates
     from (
-        select distinct table_fqn, column_name, recommended_key_position
+        select distinct
+            table_fqn,
+            column_name,
+            recommended_key_position,
+            filter_query_count,
+            max(filter_query_count) over (partition by table_fqn) as top_filter_count,
+            -- Recommend if filter evidence is >= 70% of the top key
+            filter_query_count::float / nullif(max(filter_query_count) over (partition by table_fqn), 0) >= 0.70
+                as is_recommended
         from {{ ref('fct_snowflake__clustering_key_candidates') }}
         where snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__clustering_key_candidates') }})
     )
@@ -45,6 +60,7 @@ ranked as (
         coalesce(ec.environment_count, 1) as environment_count,
         ec.environment_ids,
         ck.suggested_clustering_key,
+        ck.additional_clustering_candidates,
         -- Incremental confidence context (from fact model)
         icr.confidence_score as incremental_confidence_score,
         icr.recommendation_status as incremental_recommendation_status,
@@ -82,8 +98,9 @@ select
     score,
     snowflake_ddl,
     suggested_clustering_key,
+    additional_clustering_candidates,
     case
-        when domain = 'clustering' and suggested_clustering_key is not null
+        when domain = 'clustering' and nullif(suggested_clustering_key, '') is not null
             then '{% raw %}{{ config(cluster_by=[{% endraw %}''' || replace(suggested_clustering_key, ', ', ''', ''') || '''{% raw %}]) }}{% endraw %}'
         else dbt_model_config
     end as dbt_model_config,
@@ -99,4 +116,6 @@ select
     snapshot_date
 from ranked
 where env_rank = 1
+    -- Suppress clustering recommendations with no actionable key
+    and not (domain = 'clustering' and nullif(suggested_clustering_key, '') is null)
 order by coalesce(node_model_name, model_name), priority_tier, estimated_annual_savings_usd desc nulls last

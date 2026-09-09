@@ -175,11 +175,16 @@ strategy_labeled as (
                 and tuk.best_unique_key is not null
                 and ca.delete_count > 0
                 then 'merge'
-            -- S.4: watermark + INSERT-only but no key → append (weaker)
+            -- S.4: watermark + key + merge/update DML observed → merge (source has updates)
+            when bfk.filter_column is not null
+                and tuk.best_unique_key is not null
+                and (ca.merge_count > 0 or ca.update_count > 0)
+                then 'merge'
+            -- S.5: watermark + INSERT-only but no key → append (weaker)
             when bfk.filter_column is not null
                 and ca.delete_count = 0
                 then 'append'
-            -- S.5: no watermark → cannot propose strategy
+            -- S.6: no watermark → cannot propose strategy
             else null
         end                                                                 as incremental_strategy
     from candidates                                                         as ca

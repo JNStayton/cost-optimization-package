@@ -16,11 +16,12 @@ Strategies are selected by **data-change semantics** inferred from telemetry —
 
 | # | Condition (inferred from telemetry) | Recommended strategy | Assumptions made |
 |---|---|---|---|
-| S.1 | Has proposed watermark + exact non-null key + no target deletes/updates | `merge` | "Watermark is change boundary", "data is time-local", "lookback captures late arrivals" |
-| S.2 | Has proposed watermark + INSERT-only target DML + no key needed (or key confirmed) | `append` | "Source is append-only", "no late arrivals beyond lookback", "no upstream mutations" |
-| S.3 | Has proposed watermark + exact key + target deletes observed | `merge` (with delete warning) | Same as S.1 + "deletes will NOT propagate — target retains deleted rows" |
-| S.4 | Has proposed watermark + no key candidate | `append` (weaker confidence) | "Source is append-only", "duplicates won't occur", "no key needed" |
-| S.5 | No proposed watermark candidate | Cannot propose strategy | No template possible — `investigate` or `do_not_recommend` |
+| S.1 | Watermark + unique key + no deletes/mutations | `merge` | Safe default — dedup protection with identified key, no contrary DML signals |
+| S.2 | Watermark + zero DML (pure CTAS rebuilds) | `append` | No key to merge on, table is rebuilt from scratch each run — append-only growth inferred |
+| S.3 | Watermark + unique key + deletes observed | `merge` (with delete warning) | Updates/deletes need key-based dedup. Warning: target retains deleted rows unless reconciliation added |
+| S.4 | Watermark + unique key + merge/update DML observed | `merge` | Proven upsert pattern from DML evidence — source has mutations requiring key-based dedup |
+| S.5 | Watermark + no key + no deletes | `append` (weaker confidence) | Fallback when no unique key can be identified. Duplicates will occur if source rows arrive more than once |
+| S.6 | No watermark candidate | Cannot propose strategy | No time boundary available — `investigate` status. Recommendation: add a watermark column (e.g., `_loaded_at`, `updated_at`) |
 
 ### Phase 1 actionable strategies
 
