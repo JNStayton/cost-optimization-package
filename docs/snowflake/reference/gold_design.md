@@ -196,16 +196,19 @@ Signal categories: spillage, clustering, incremental, materialization, expensive
 
 ### `vw_snowflake__user_level_cost_attribution`
 
-**Manager/chargeback view.** User-level cost attribution across expensive queries and AI usage.
+**Manager/chargeback view.** User-level cost attribution across three categories: dbt build users, consumption users (SELECT queries against project models), and AI users.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `user_name` | string | Snowflake user |
 | `role_name` | string | Primary role |
-| `query_credits_30d` | float | Credits from expensive queries |
+| `build_credits_30d` | float | Credits from dbt model builds (INSERT/MERGE/CTAS in dbt sessions) |
+| `consumption_credits_30d` | float | Credits from SELECT queries against project models |
 | `ai_credits_30d` | float | Credits from AI/Cortex usage |
-| `combined_credits_30d` | float | Total credits across all domains |
+| `combined_credits_30d` | float | Total credits across all categories |
 | `estimated_annual_cost_usd` | float | Projected annual cost |
+| `primary_warehouse` | string | Warehouse used for builds (builders only) |
+| `user_category` | string | builder / consumer / ai_user / mixed |
 | `recommendation` | string | Action/awareness text |
 
 ---
@@ -245,14 +248,30 @@ estimated_annual_cost_usd = annual_credits × credit_rate_usd
 
 ### Per-domain cost estimation
 
-#### Warehouse sizing
+#### Warehouse idle credit savings
+
+Idle credit savings are computed per-recommendation-key using actual event data from `WAREHOUSE_EVENTS_HISTORY`, not hardcoded assumptions:
+
+| Recommendation Key | Savings Formula |
+|---|---|
+| `idle_reduce_auto_suspend` | `autosuspend_cycles_30d × (current_auto_suspend - 60) / 3600 × credits_per_hour × 12 × credit_rate_usd` |
+| `idle_switch_scaling_policy` | `mcw_spindown_cycles_30d × 150 / 3600 × credits_per_hour × 12 × credit_rate_usd` |
+| `idle_reduce_max_clusters` | Same as scaling policy (fewer clusters = fewer spindown idle periods) |
+| `idle_reduce_min_clusters` | `(min_cluster_count - 1) × credits_per_hour × idle_pct × 720 × 12 × credit_rate_usd` |
+| `idle_consolidate_underloaded` | `total_idle_credits_30d × 12 × credit_rate_usd` (full elimination) |
+| `idle_consolidate_standard` | `total_idle_credits_30d × 0.5 × 12 × credit_rate_usd` (conservative 50%) |
+| `idle_enable_mcw_bursty` | null (adds cost; benefit is reduced queuing, not idle savings) |
+
+The `autosuspend_cycles_30d` and `mcw_spindown_cycles_30d` come from `int_snowflake__warehouse_suspend_cycles`, derived from SUSPEND_WAREHOUSE and SUSPEND_CLUSTER events in `WAREHOUSE_EVENTS_HISTORY`.
+
+**Why not use total_idle_credits?** On high-throughput warehouses, most idle credits are normal inter-query overhead (the warehouse is running but between query executions). Auto-suspend changes only affect the idle time during actual suspend cycles, not the inter-query overhead.
+
+#### Warehouse sizing (scale down / oversized)
 
 | Metric | Formula |
-|--------|---------|
+|---|---|
 | Current annual cost | `total_credits_30d × 12 × credit_rate_usd` |
-| Savings (scale down) | `total_idle_credits_30d × 12 × credit_rate_usd` |
-| Savings (MCW recommendation) | Not directly estimable — flagged as potential improvement |
-| Savings (Gen2) | Estimated 10-20% on DML-heavy workloads (conservative: 10%) |
+| Savings (oversized / scale down) | `total_credits_30d × 0.50 × 12 × credit_rate_usd` |
 
 #### Expensive queries
 
@@ -265,10 +284,12 @@ estimated_annual_cost_usd = annual_credits × credit_rate_usd
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_second × 365 × credit_rate_usd` |
-| Savings | Same minus the cost of 1 daily table build: `(select_count - 1) × avg_duration × credits_per_sec × 365 × credit_rate_usd` |
+| Current annual cost | `select_count × avg_query_duration_s × credits_per_second × 12 × credit_rate_usd` |
+| Savings (direct) | `(select_count - 1) × avg_duration × credits_per_sec × 12 × credit_rate_usd` |
+| Savings (downstream) | `downstream_build_time_s × downstream_table_count × credits_per_sec × 12 × credit_rate_usd` |
+| Total savings | Sum of direct + downstream |
 
-Logic: A view recomputes on every SELECT. A table computes once and is read cheaply. The savings is the eliminated recomputation cost.
+Logic: A view recomputes on every SELECT (direct cost) and on every downstream model build (downstream cost). A table computes once and is read cheaply. The savings is the eliminated recomputation cost from both sources.
 
 #### Spillage
 
@@ -283,10 +304,14 @@ The `0.5 seconds per GB spilled` is a conservative estimate. Local spillage adds
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_second × 365 × credit_rate_usd` |
-| Savings | `current_cost × (1 - target_scan_ratio / current_scan_ratio)` |
+| Current annual cost | `select_count × avg_query_duration_s × credits_per_second × 12 × credit_rate_usd` |
+| Savings | `current_cost × (filter_query_count / select_count) × (scan_ratio - 1/distinct_values)` |
 
-Assumes clustering would reduce scan_ratio to ~0.2 (well-clustered target). If current scan_ratio is 1.0 (no pruning), savings = 80% of current query cost.
+The savings are weighted by two data-driven factors:
+1. **Filter proportion**: `filter_query_count / select_count` — only queries that filter on the recommended clustering key benefit from partition pruning
+2. **Cardinality-based scan reduction**: `scan_ratio - 1/K` where K = distinct values for the clustering key — theoretical post-clustering scan ratio based on actual key cardinality
+
+This replaces the prior fixed-floor assumption (0.2) with values derived from actual query operator evidence and column cardinality profiling.
 
 Note: Clustering itself has a maintenance cost (auto-reclustering credits). We do NOT subtract this from savings because it's highly variable and depends on DML patterns. The savings estimate is gross, not net.
 
@@ -534,7 +559,7 @@ The package monitors all models visible in `QUERY_HISTORY` within the current Sn
 | Warehouse sizing (idle credits) | High | Directly measured from metering |
 | Expensive queries | High | QUERY_ATTRIBUTION_HISTORY provides exact per-query credits |
 | Materialization | Medium | Assumes constant query volume; doesn't account for caching |
-| Clustering | Medium-Low | Assumes target scan_ratio of 0.2; actual improvement depends on key choice and query patterns |
+| Clustering | Medium | Uses cardinality-based scan reduction weighted by filter proportion; actual improvement depends on query patterns |
 | Spillage | Low | Overhead-per-GB is estimated; actual impact varies by data types and operations |
 | AI spend (model downgrade) | Medium | Assumes same quality of output from cheaper model |
 

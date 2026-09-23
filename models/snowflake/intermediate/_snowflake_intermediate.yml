@@ -317,6 +317,15 @@ models:
       top_role_name per query pattern.
 
   # ===========================================================================
+  # int_snowflake__warehouse_suspend_cycles
+  # ===========================================================================
+  - name: int_snowflake__warehouse_suspend_cycles
+    description: >
+      Suspend and MCW spindown cycle counts per warehouse over the last 30 days.
+      Used by int_snowflake__all_recommendations to compute data-driven idle credit
+      savings. Grain: one row per warehouse_name.
+
+  # ===========================================================================
   # int_snowflake__view_chains
   # ===========================================================================
   - name: int_snowflake__view_chains
