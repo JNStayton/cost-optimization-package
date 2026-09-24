@@ -70,7 +70,7 @@ consumption_users as (
         count(distinct qh.query_id) as consumption_query_count
     from {{ ref('int_snowflake__query_history') }} as qh
     inner join {{ ref('int_dbt__relations') }} as dr
-        on qh.query_text ilike '%' || dr.table_name || '%'
+        on qh.query_text ilike '%' || dr.database_name || '.' || dr.schema_name || '.' || dr.table_name || '%'
     left join warehouse_rates as wr
         on wr.warehouse_name = qh.warehouse_name
     where qh.query_start_time >= dateadd(day, -30, current_timestamp())
