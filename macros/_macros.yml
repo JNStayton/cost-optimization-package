@@ -1,96 +1,313 @@
 version: 2
 
+# Every macro below (except make_string_array) is a dispatcher: it routes to
+# <platform>__<name> in macros/platforms/<platform>/ and raises a clear
+# "not yet implemented" error at run time on platforms without an implementation.
+# The arguments listed here are the contract every platform implementation must accept.
+
 macros:
   # ===========================================================================
-  # User-facing macros (run-operation)
+  # Commands (user-facing) — macros/optimizations/
+  # Run with: dbt run-operation <name> --args '{...}'
   # ===========================================================================
 
   - name: find_table_clustering_candidates
     description: >
-      Identifies tables that would benefit from clustering based on size,
-      query volume, and scan ratio. Run via dbt run-operation.
+      Identifies tables that may benefit from clustering, scored by observed scan
+      inefficiency (partition scan ratio), query volume, and read/write ratio.
+      Implemented for: snowflake.
     arguments:
       - name: lookback_days
         description: "Days of query history to analyze (default: 7)"
       - name: ignore_table_size
-        description: "When true, skips the minimum size filter (default: false)"
+        description: "When true, lowers the minimum table size from 100 GB to 1 GB (default: false)"
+      - name: dbt_project_only
+        description: "When true, only tables built by this dbt project are considered (default: true)"
+      - name: target_databases
+        description: "Optional list of databases to limit the search to (default: [] = all)"
+      - name: target_schemas
+        description: "Optional list of schemas to limit the search to (default: [] = all)"
 
   - name: suggest_clustering_keys
     description: >
-      Suggests optimal clustering key columns for a specific model based on
-      query patterns (WHERE/JOIN clause frequency) and column cardinality.
+      Suggests clustering key columns for a specific model, combining column
+      cardinality with how often each column is used in filters and joins.
+      Use after find_table_clustering_candidates has identified a table.
+      Implemented for: snowflake.
     arguments:
       - name: model_name
-        description: "Name of the dbt model (or table) to analyze"
+        description: "Name of the dbt model (or table) to analyze. Required."
       - name: database
-        description: "Optional: override database (bypasses ref, targets specific relation)"
+        description: "Optional: override database. With schema, bypasses ref() and targets that relation directly (e.g. analyze prod from dev)."
       - name: schema
-        description: "Optional: override schema (must be provided with database)"
+        description: "Optional: override schema. Must be provided with database."
+      - name: include_boolean_cols
+        description: "When true, lowers the cardinality floor from > 10 to >= 2 distinct values so booleans and small enums are considered (default: false)"
 
   - name: find_spillage_candidates
     description: >
-      Finds tables with significant query spillage (local or remote) that
-      indicates undersized warehouses or inefficient SQL.
+      Finds dbt-managed tables whose builds spill to local or remote storage,
+      which indicates an undersized warehouse or inefficient SQL. Remote spillage
+      is the critical signal. Requires Snowflake Enterprise Edition.
+      Implemented for: snowflake.
+    arguments:
+      - name: lookback_days
+        description: "Days of query history to analyze (default: 7)"
+      - name: min_total_gb_spilled
+        description: "Minimum total GB spilled for a table to be reported (default: 0.05)"
+      - name: min_runs
+        description: "Minimum number of builds in the window for a table to be reported (default: 1)"
 
   - name: find_table_materialization_candidates
     description: >
-      Identifies views that are queried frequently enough to justify
-      materializing as tables (reducing recomputation).
+      Identifies dbt models configured as views that are queried often enough,
+      or scan enough data, to justify materializing as tables.
+      Implemented for: snowflake.
+    arguments:
+      - name: lookback_days
+        description: "Days of query history to analyze (default: 14)"
+      - name: min_query_count
+        description: "Minimum number of queries against a view for it to be reported (default: 10)"
 
   - name: find_expensive_dbt_queries
     description: >
-      Surfaces the most expensive recurring dbt queries by credits consumed,
-      with query hash grouping and cost projection.
+      Surfaces the most expensive dbt-authored queries by projected annual cost,
+      grouped by query hash so repeated runs of the same logical query are aggregated.
+      Implemented for: snowflake.
+    arguments:
+      - name: lookback_days
+        description: "Days of query history to analyze (default: 7)"
+      - name: top_n
+        description: "Number of queries to report (default: 20)"
+      - name: min_total_credits
+        description: "Minimum credits consumed in the window for a query to be reported (default: 0.1)"
+      - name: credit_rate_usd
+        description: "Your contract price per credit, used to project annual cost (default: 2)"
+      - name: high_cost_threshold_usd
+        description: "Projected annual cost above which a query is flagged high_cost (default: 10000)"
+      - name: dbt_project_only
+        description: "When true, only queries from this dbt project are considered (default: true)"
 
   - name: find_warehouse_sizing_recommendations
     description: >
-      Analyzes warehouse performance metrics (overload, execution time, idle credits)
-      and recommends sizing changes (scale up, scale down, enable Gen2, enable MCW).
+      Recommends warehouse sizing actions for warehouses running dbt workloads:
+      enable Gen2 (DML-heavy), enable multi-cluster (concurrency-bound), scale up,
+      scale down, or stable.
+      Implemented for: snowflake.
+    arguments:
+      - name: lookback_days
+        description: "Days of query history to analyze (default: 7)"
+      - name: min_query_count
+        description: "Minimum dbt queries on a warehouse for it to be evaluated (default: 20)"
+      - name: dml_threshold
+        description: "DML ratio above which Gen2 is recommended (default: 0.35)"
 
   - name: find_incremental_materialization_candidates
     description: >
-      Identifies tables materialized as full-refresh that would benefit from
-      incremental strategy based on rebuild redundancy and growth patterns.
+      Identifies dbt models configured as tables that are large, slow to build,
+      and have date/timestamp columns suitable for an incremental strategy.
+      Assigns a HIGH / MEDIUM / LOW priority tier.
+      Implemented for: snowflake.
+    arguments:
+      - name: min_table_size_gb
+        description: "Minimum table size in GB to be considered (default: 10)"
+      - name: max_build_time_sec
+        description: "Build-time threshold in seconds. Despite the name, this is a minimum: only builds slower than this qualify (default: 600)"
+      - name: lookback_days
+        description: "Days of build history to analyze (default: 30)"
 
   # ===========================================================================
-  # Utility macros (internal, called by models)
+  # Helpers (internal) — macros/optimizations/helpers/
+  # Called by the commands above; not meant to be run directly.
+  # ===========================================================================
+
+  - name: get_clustering_cardinality_stats
+    description: >
+      Returns per-column cardinality statistics for a relation (agate table of
+      column_name, distinct_values, total_rows, avg_rows_per_value), excluding
+      columns that are poor clustering candidates. Used by suggest_clustering_keys.
+      Implemented for: snowflake.
+    arguments:
+      - name: model_relation
+        description: "Relation to analyze"
+      - name: include_boolean_cols
+        description: "When true, lowers the cardinality floor from > 10 to >= 2 (default: false)"
+
+  - name: get_clustering_score
+    description: >
+      Returns a recommendation score from cardinality and usage, weighting columns
+      that are actually used in queries heavily. Used by suggest_clustering_keys.
+      Implemented for: snowflake.
+    arguments:
+      - name: avg_rows
+        description: "Average rows per distinct value"
+      - name: total_rows
+        description: "Total rows in the table"
+      - name: usage_count
+        description: "Number of times the column was used in filters or joins"
+
+  - name: get_column_usage_count
+    description: >
+      Returns how many times a column was used in a Filter or Join operator for a
+      model, using query plan evidence. Used by suggest_clustering_keys.
+      Implemented for: snowflake (requires privileges on SNOWFLAKE.ACCOUNT_USAGE).
+    arguments:
+      - name: column_name
+        description: "Column to count"
+      - name: model_relation
+        description: "Relation the column belongs to"
+      - name: days_to_check
+        description: "Days of query history to analyze (default: 7)"
+
+  - name: get_large_tables
+    description: >
+      Returns tables above a minimum size (database, schema, name, size, row count,
+      type, approximate micro-partitions). Used by find_table_clustering_candidates.
+      Implemented for: snowflake.
+    arguments:
+      - name: min_size_gb
+        description: "Minimum table size in GB (default: 1)"
+      - name: target_databases
+        description: "Optional list of databases to limit to (default: [] = all)"
+      - name: target_schemas
+        description: "Optional list of schemas to limit to (default: [] = all)"
+
+  - name: get_table_dml_count
+    description: >
+      Returns the count of DML operations (INSERT, UPDATE, DELETE, MERGE) against a
+      table. Used by find_table_clustering_candidates.
+      Implemented for: snowflake.
+    arguments:
+      - name: database_name
+        description: "Table's database"
+      - name: schema_name
+        description: "Table's schema"
+      - name: table_name
+        description: "Table name"
+      - name: lookback_days
+        description: "Days of query history to analyze (default: 7)"
+
+  - name: get_table_pruning_stats
+    description: >
+      Returns per-table pruning statistics (partitions scanned and pruned, query
+      count, average execution time). Used by find_table_clustering_candidates.
+      Implemented for: snowflake.
+    arguments:
+      - name: database_name
+        description: "Table's database"
+      - name: schema_name
+        description: "Table's schema"
+      - name: table_name
+        description: "Table name"
+      - name: lookback_days
+        description: "Days of pruning history to analyze (default: 7)"
+
+  - name: log_recommendation
+    description: >
+      Prints one optimization recommendation as a uniform block in the dbt log,
+      so every find_* command's output looks the same.
+      Implemented for: snowflake.
+    arguments:
+      - name: title
+        description: "Subject of the recommendation; becomes the header line (e.g. 'Warehouse: PROD_WH')"
+      - name: recommendation
+        description: "Action to take (e.g. 'Scale down single cluster')"
+      - name: reason
+        description: "Why the recommendation was generated"
+      - name: metrics
+        description: "Optional dict of {label: value} pairs printed under 'Metrics:' (default: {})"
+      - name: severity
+        description: "'info' (default) or 'warn'; anything other than 'info' is shown as a bracketed prefix on the title"
+
+  # ===========================================================================
+  # Utils (internal) — macros/utils/
+  # Called by models, hooks, and other macros; not meant to be run directly.
   # ===========================================================================
 
   - name: scope_filter
     description: >
-      Generates a SQL WHERE clause fragment for project scope filtering.
-      Used by all gold-layer views to apply consistent scope logic based on
-      `dbt_monitored_projects` and `include_full_platform_insights` vars.
+      Returns a SQL WHERE-clause fragment that applies project scope filtering from
+      the dbt_monitored_projects and include_full_platform_insights vars. Used by
+      the gold-layer views.
+      Implemented for: snowflake.
     arguments:
       - name: project_col
-        description: "Column containing the project name (default: node_project_name)"
+        description: "Column containing the project name (default: 'node_project_name')"
       - name: allow_null_col
-        description: "Column to check for null to identify account-wide recs (default: node_id)"
-
-  - name: build_incremental_config_template
-    description: >
-      Generates a SQL CASE expression that produces a copy-pasteable dbt config
-      template string for incremental models. Uses raw blocks to emit Jinja
-      delimiters as literal SQL string content. Called by
-      fct_snowflake__incremental_config_recommendations.
-
-  - name: probe_unique_key_candidates
-    description: >
-      Post-hook macro that tests unique key candidates against actual table data
-      after fct_snowflake__incremental_config_recommendations builds.
-      Updates the `likely_unique_key` column with validated results.
+        description: "Column checked for null to identify account-wide recommendations (default: 'node_id')"
 
   - name: dbt_session_filter
     description: >
-      Generates a WHERE clause fragment that filters QUERY_HISTORY to only
-      dbt-initiated queries (based on query comment JSON pattern).
+      Returns a SELECT statement that finds the session IDs of dbt-authenticated
+      sessions in the lookback window, for the caller to wrap in a CTE. Shared by the
+      warehouse and spillage commands so they agree on what "a dbt session" is.
+      Implemented for: snowflake.
+    arguments:
+      - name: lookback_days
+        description: "Days of sessions to include (default: 7)"
+
+  - name: build_incremental_config_template
+    description: >
+      Returns a SQL CASE expression that builds a copy-pasteable dbt incremental
+      config block for each recommendation. Expects incremental_strategy,
+      suggested_filter_column, and best_unique_key columns in the calling CTE.
+      Called by fct_snowflake__incremental_config_recommendations.
+      Implemented for: snowflake.
+
+  - name: extract_operator_evidence
+    description: >
+      Post-hook on fct_snowflake__table_clustering_candidates. Populates
+      int_snowflake__query_operator_evidence with TableScan, Filter, and Join
+      evidence from query plans for the top candidate tables.
+      Implemented for: snowflake.
+
+  - name: probe_unique_key_candidates
+    description: >
+      Post-hook on each platform's incremental-config recommendations model.
+      Tests unique key candidates against the actual table data and updates
+      likely_unique_key (and related config columns) with the result.
+      Snowflake runs an exact uniqueness check; Databricks and Redshift use an
+      approximate distinct count against incremental_unique_key_probe_threshold.
+      Implemented for: snowflake, databricks, redshift.
 
   - name: refresh_column_cardinality
     description: >
-      Run-operation macro that refreshes column cardinality statistics in
-      int_snowflake__table_columns for more accurate clustering key suggestions.
+      Post-hook on each platform's table clustering candidates model. Populates the
+      platform's column cardinality model with APPROX_COUNT_DISTINCT values for the
+      top candidate tables, pre-filtered to columns with observed query usage where
+      available.
+      Implemented for: snowflake, bigquery.
 
-  - name: log_recommendation
+  - name: refresh_warehouse_config
     description: >
-      Utility for logging recommendation outputs during macro execution.
-      Formats and prints recommendation results to the console.
+      Post-hook on int_snowflake__warehouse_config. Merges current warehouse
+      settings from SHOW WAREHOUSES (auto_suspend, auto_resume, scaling_policy,
+      cluster counts) that no ACCOUNT_USAGE view provides.
+      Implemented for: snowflake.
+
+  - name: capture_storage_metrics
+    description: >
+      Pre-hook on int_databricks__table_storage. When
+      system.storage.table_metrics_history is empty, runs ANALYZE TABLE ... COMPUTE
+      STORAGE METRICS on this project's tables as a fallback.
+      Implemented for: databricks.
+
+  - name: dbt_relations_case_insensitive_join
+    description: >
+      Returns an ON-clause fragment that joins a relation to int_dbt__relations
+      (aliased dm) case-insensitively, for platforms whose identifiers are
+      case-sensitive.
+      Implemented for: bigquery.
+    arguments:
+      - name: left_alias
+        description: "Alias of the relation being joined (must have database_name, schema_name, table_name)"
+
+  - name: make_string_array
+    description: >
+      Builds a string array literal with the correct syntax for the active platform.
+      Intentionally NOT dispatched: it is one shared macro that unifies this
+      expression across all platforms.
+      Implemented for: snowflake, databricks, bigquery, redshift.
+    arguments:
+      - name: values
+        description: "List of strings to include in the array"
