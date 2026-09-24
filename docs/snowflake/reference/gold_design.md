@@ -230,10 +230,10 @@ Snowflake bills warehouse compute by the hour at fixed rates per size:
 | 3X-Large | 64 | 0.017778 |
 | 4X-Large | 128 | 0.035556 |
 
-Rather than hardcoding these rates, we derive the actual rate per warehouse from `int_snowflake__warehouse_daily`:
+Rather than hardcoding these rates, we derive the actual rate per warehouse from `int_snowflake__warehouse_daily` (daily grain — divide by 86400 seconds/day, not 3600):
 
 ```sql
-credits_per_second = avg(credits_used_compute) / 3600.0
+credits_per_second = avg(total_credits) / 86400.0
 ```
 
 This handles multi-cluster warehouses (which can consume more than the base rate) and warehouses that aren't active for the full hour.

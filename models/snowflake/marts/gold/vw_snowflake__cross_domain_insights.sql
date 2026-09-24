@@ -56,8 +56,12 @@ with signals_per_model as (
         max(iff(ar.signal_id like 'expensive_query%', 1, 0)) = 1 as has_expensive_query,
         max(ar.snapshot_date) as snapshot_date
     from {{ ref('int_snowflake__all_recommendations') }} as ar
-    where ar.backlog_status in ('actionable', 'monitor')
-      and ar.node_id is not null
+    where ar.node_id is not null
+      and (
+          -- Clustering signals only count when actionable (has a recommended key)
+          (ar.signal_id like 'add_clustering%' and ar.backlog_status = 'actionable')
+          or (ar.signal_id not like 'add_clustering%' and ar.backlog_status in ('actionable', 'monitor'))
+      )
     group by ar.node_id, coalesce(ar.node_model_name, ar.model_name), ar.table_fqn, ar.node_project_name
     having count(distinct
         case

@@ -25,7 +25,7 @@
 with warehouse_rates as (
     select
         warehouse_name,
-        avg(total_credits) / 3600.0 as credits_per_second
+        avg(total_credits) / 86400.0 as credits_per_second
     from {{ ref('int_snowflake__warehouse_daily') }}
     where total_credits > 0
     group by warehouse_name
