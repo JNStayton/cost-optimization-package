@@ -395,6 +395,44 @@ sources:
               where -1 means that query priority isn't supported.
           - name: query_queue_time
             description: The amount of time in microseconds that the query was queued.
+      - name: tables
+        identifier: svv_tables
+        description: >
+          Catalog view of all tables, views, and external tables visible to the current user.
+          Provides table_type values (BASE TABLE, VIEW, EXTERNAL TABLE, SHARED TABLE)
+          not available in svv_table_info.
+      - name: column_metadata
+        identifier: svv_columns
+        description: >
+          Redshift SVV_COLUMNS view: column-level metadata for all tables visible to the current user.
+          Preferred over information_schema.columns because SVV_COLUMNS works on compute nodes and
+          can be joined with distributed tables without triggering leader-node-only function errors.
+      - name: alter_table_recommendations
+        identifier: svv_alter_table_recommendations
+        description: >
+          Amazon Redshift Advisor recommendations for distribution and sort key changes.
+          Contains DDL statements and auto-eligibility flags.
+          Recommendations disappear once applied.
+      - name: pg_class
+        identifier: pg_class
+        description: >
+          PostgreSQL system catalog: one row per relation (table, view, materialized view, etc.).
+          Leader-node only — downstream models that consume pg_class must materialize as table
+          before joining to compute-node data (e.g. sys_query_detail).
+      - name: pg_namespace
+        identifier: pg_namespace
+        description: >
+          PostgreSQL system catalog: one row per schema. Leader-node only.
+      - name: pg_depend
+        identifier: pg_depend
+        description: >
+          PostgreSQL system catalog: dependency edges between objects. Used to map views
+          to the base relations they reference (joined via pg_rewrite). Leader-node only.
+      - name: pg_rewrite
+        identifier: pg_rewrite
+        description: >
+          PostgreSQL system catalog: rewrite rules, including the rules that define each view.
+          Joined with pg_depend to extract view → base-relation dependencies. Leader-node only.
 
   - name: bigquery_dataset_info
     description: |

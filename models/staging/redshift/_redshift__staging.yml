@@ -1,0 +1,103 @@
+version: 2
+
+models:
+  - name: stg_redshift__tables
+    description: >
+      Passthrough of svv_tables — see int_redshift__tables for column docs and tests.
+
+  - name: stg_redshift__alter_table_recommendations
+    description: >
+      Passthrough of svv_alter_table_recommendations — see int_redshift__alter_table_recommendations
+      for column docs and tests.
+
+  - name: stg_redshift__table_info
+    description: >
+      Passthrough of svv_table_info — see int_redshift__table_info for column docs and tests.
+
+  - name: stg_redshift__column_metadata
+    description: >
+      Passthrough of svv_columns — see int_redshift__column_metadata for column docs and tests.
+
+  - name: stg_redshift__query_history
+    description: >
+      Passthrough of sys_query_history — see int_redshift__query_history for column docs and tests.
+
+  - name: stg_redshift__query_detail
+    description: >
+      Passthrough of sys_query_detail — see int_redshift__query_detail for column docs and tests.
+
+  - name: stg_redshift__pg_class
+    description: >
+      Passthrough of pg_catalog.pg_class — one row per relation in the current
+      database. Leader-node only. Used by int_redshift__view_dependencies to map
+      views to their base relations.
+    columns:
+      - name: relation_id
+        description: pg_class.oid. Matches sys_query_detail.table_id for permanent tables.
+        data_tests:
+          - not_null
+      - name: relation_name
+        description: Name of the relation.
+        data_tests:
+          - not_null
+      - name: schema_id
+        description: pg_namespace.oid of the schema this relation belongs to.
+        data_tests:
+          - not_null
+      - name: relation_kind
+        description: >
+          Single-char relation type. 'r' = ordinary table, 'v' = view,
+          'm' = materialized view, 'i' = index, 'S' = sequence, etc.
+        data_tests:
+          - not_null
+
+  - name: stg_redshift__pg_namespace
+    description: >
+      Passthrough of pg_catalog.pg_namespace — one row per schema in the current
+      database. Leader-node only.
+    columns:
+      - name: schema_id
+        description: pg_namespace.oid.
+        data_tests:
+          - not_null
+      - name: schema_name
+        description: Name of the schema.
+        data_tests:
+          - not_null
+
+  - name: stg_redshift__pg_depend
+    description: >
+      Passthrough of pg_catalog.pg_depend — dependency edges between database objects.
+      Joined with stg_redshift__pg_rewrite to extract view → base-relation
+      dependencies. Leader-node only.
+
+      Note: pg_depend records one row per referenced column (referenced_object_sub_id),
+      so a view referencing N columns of one base table produces N rows here.
+    columns:
+      - name: dependent_class_id
+        description: pg_class.oid of the catalog the dependent object lives in (e.g. pg_rewrite).
+      - name: dependent_object_id
+        description: oid of the dependent object (e.g. a rewrite rule oid).
+      - name: referenced_class_id
+        description: pg_class.oid of the catalog the referenced object lives in (e.g. pg_class).
+      - name: referenced_object_id
+        description: oid of the referenced object (e.g. a base relation's pg_class.oid).
+      - name: referenced_object_sub_id
+        description: Column number when the dependency is column-level; 0 otherwise.
+      - name: dependency_type
+        description: Single-char dependency category ('n' = normal, 'a' = auto, etc.).
+
+  - name: stg_redshift__pg_rewrite
+    description: >
+      Passthrough of pg_catalog.pg_rewrite — one row per rewrite rule. Each view has
+      exactly one rule whose view_relation_id points back to the view itself. Joined
+      with pg_depend to extract a view's base relations. Leader-node only.
+    columns:
+      - name: rule_id
+        description: pg_rewrite.oid.
+        data_tests:
+          - not_null
+      - name: view_relation_id
+        description: pg_class.oid of the relation (view) this rule defines.
+        data_tests:
+          - not_null

@@ -1,0 +1,485 @@
+version: 2
+
+models:
+  - name: int_redshift__query_history
+    description: >
+      1:1 incremental accumulator over stg_redshift__query_history. Persists query history
+      beyond Redshift's SYS retention window. 7-day lookback on each incremental run absorbs
+      late-arriving rows. Exposes the same columns as stg_redshift__query_history.
+    columns:
+      - name: query_id
+        description: Unique query identifier.
+        data_tests:
+          - not_null
+      - name: start_time
+        description: Timestamp when the query started.
+        data_tests:
+          - not_null
+      - name: query_type
+        description: Type of query (SELECT, INSERT, CTAS, etc.).
+      - name: execution_status
+        description: Final status of the query (success, failed, etc.).
+      - name: query_text
+        description: Full SQL text of the query.
+      - name: elapsed_time_seconds
+        description: Total elapsed time in seconds.
+
+  - name: int_redshift__query_detail
+    description: >
+      1:1 incremental accumulator over stg_redshift__query_detail. Persists query step
+      detail beyond Redshift's SYS retention window. 7-day lookback. Exposes all columns
+      from stg_redshift__query_detail including output_rows for CTAS step attribution.
+    columns:
+      - name: query_id
+        description: Query identifier. Foreign key to int_redshift__query_history.
+        data_tests:
+          - not_null
+      - name: step_name
+        description: Name of the query execution step (scan, insert, etc.).
+      - name: table_id
+        description: Internal Redshift table ID for the table referenced in this step.
+      - name: input_rows
+        description: Rows read by this step.
+      - name: output_rows
+        description: Rows written by this step (populated for insert steps in CTAS queries).
+      - name: start_time
+        description: Timestamp when this step began.
+
+  - name: int_redshift__table_info
+    description: >
+      1:1 table materialization of stg_redshift__table_info. Lands leader-only SVV data on
+      compute nodes so downstream models can join uniformly compute-side. Exposes all columns
+      from stg_redshift__table_info.
+    columns:
+      - name: table_id
+        description: Internal Redshift table identifier (bigint cast from oid).
+        data_tests:
+          - not_null
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: schema_name
+        data_tests:
+          - not_null
+      - name: table_name
+        data_tests:
+          - not_null
+      - name: size_mb
+        description: Table size in 1MB data blocks.
+      - name: total_rows
+        description: Total rows including rows marked for deletion.
+      - name: statistics_staleness
+        description: Statistics staleness 0–100 (stats_off from svv_table_info).
+      - name: percent_unsorted
+        description: Percentage of unsorted rows.
+      - name: distribution_style
+        description: Current distribution style.
+      - name: sortkey1
+        description: First sort key column name.
+
+  - name: int_redshift__column_metadata
+    description: >
+      1:1 table materialization of stg_redshift__column_metadata. Lands leader-only SVV
+      column data compute-side. Adds is_nullable derived from the source is_nullable column.
+    columns:
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: schema_name
+        data_tests:
+          - not_null
+      - name: table_name
+        data_tests:
+          - not_null
+      - name: column_name
+        data_tests:
+          - not_null
+      - name: data_type
+        description: SQL data type (lowercased).
+      - name: ordinal_position
+        description: 1-based column position.
+      - name: is_nullable
+        description: True when the column allows NULL values.
+
+  - name: int_redshift__alter_table_recommendations
+    description: >
+      1:1 table materialization of stg_redshift__alter_table_recommendations. Lands
+      leader-only Advisor recommendation data compute-side.
+    columns:
+      - name: recommendation_type
+        description: Type of recommendation — 'distkey' or 'sortkey'.
+        data_tests:
+          - not_null
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: table_id
+        description: Internal Redshift table identifier. Join key to int_redshift__table_info.
+        data_tests:
+          - not_null
+      - name: recommended_ddl
+        data_tests:
+          - not_null
+      - name: is_auto_eligible
+        data_tests:
+          - not_null
+
+  - name: int_redshift__table_inventory
+    description: >
+      Enriched table inventory joining int_redshift__tables (catalog + type from svv_tables)
+      with int_redshift__table_storage (physical storage from svv_table_info). One row per
+      permanent BASE TABLE with known storage. Views, external tables, empty tables, and
+      system schema objects are excluded.
+    columns:
+      - name: platform
+        description: Always 'redshift'.
+        data_tests:
+          - not_null
+      - name: database_name
+        description: Database name (uppercased).
+        data_tests:
+          - not_null
+      - name: schema_name
+        description: Schema name (uppercased).
+        data_tests:
+          - not_null
+      - name: table_name
+        description: Table name (uppercased).
+        data_tests:
+          - not_null
+      - name: table_fqn
+        description: Fully-qualified table name as DATABASE.SCHEMA.TABLE (uppercased).
+        data_tests:
+          - not_null
+      - name: table_type
+        description: "Always 'BASE TABLE' in this model (filtered at output)."
+      - name: normalized_table_type
+        description: "Human-readable type label. Always 'Permanent Table' here."
+      - name: row_count
+        description: Total rows including rows marked for deletion (from svv_table_info).
+      - name: clustering_key
+        description: First sort key column, or null if no sort key is defined.
+      - name: is_already_clustered
+        description: True when a sort key is defined on the table.
+        data_tests:
+          - not_null
+      - name: is_transient
+        description: Always false — Redshift has no transient table concept.
+        data_tests:
+          - not_null
+      - name: active_bytes
+        description: Table size in bytes (size_mb * 1024 * 1024 from svv_table_info).
+      - name: size_gb
+        description: Table size in gigabytes.
+      - name: approx_micropartitions
+        description: Always null — Redshift has no micro-partition concept.
+
+  - name: int_redshift__model_edges
+    description: >
+      SQL-based DAG edge table with one row per direct parent → child model dependency.
+      Reads from int_dbt__relations (already materialized at compile time), unnesting the
+      parent_models SUPER array using Redshift's native SUPER unnesting syntax — the Redshift
+      equivalent of lateral flatten in Snowflake. Materialized as a table so that
+      int_redshift__view_chains can use WITH RECURSIVE against it without dbt injecting
+      non-recursive CTEs.
+    config:
+      materialized: table
+    columns:
+      - name: parent_database
+        description: Database of the parent (upstream) model.
+      - name: parent_schema
+        description: Schema of the parent model.
+      - name: parent_name
+        description: Table/alias name of the parent model.
+      - name: parent_materialization
+        description: dbt materialization of the parent model (view, table, incremental, ephemeral).
+      - name: child_database
+        description: Database of the child (downstream) model.
+      - name: child_schema
+        description: Schema of the child model.
+      - name: child_name
+        description: Table/alias name of the child model.
+      - name: child_materialization
+        description: dbt materialization of the child model.
+
+  - name: int_redshift__view_chains
+    description: >
+      Transitive downstream model counts for each view in the project DAG, computed using
+      a WITH RECURSIVE CTE over int_redshift__model_edges. Replaces the compile-time 20-round
+      Jinja iteration used in earlier implementations.
+
+      Materialized as a table rather than the general "recursive CTE -> view" default:
+      when left as a view, a downstream consumer that performs a lateral SUPER array
+      unnest against downstream_table_fqns (see fct_redshift__table_materialization_candidates)
+      forces Redshift to inline this model's WITH RECURSIVE definition at query time, which
+      is unreliable and can either error or silently return wrong aggregates.
+    config:
+      materialized: table
+    columns:
+      - name: view_schema
+        description: Schema of the view node.
+        data_tests:
+          - not_null
+      - name: view_name
+        description: Table/alias name of the view node.
+        data_tests:
+          - not_null
+      - name: total_downstream_model_count
+        description: Total number of distinct models transitively downstream of this view.
+        data_tests:
+          - not_null
+      - name: downstream_table_count
+        description: Number of distinct materialized tables or incremental models reachable from this view.
+      - name: min_hops_to_table
+        description: >
+          Minimum depth at which a materialized (table or incremental) descendant
+          appears. 1 = a direct child is materialized. NULL when the view has no
+          materialized descendant at all. Used by int_redshift__materialization_candidates
+          as a leverage signal — deeper views compress more recomputation when
+          materialized.
+      - name: max_chain_depth
+        description: Longest dependency path from this view to any downstream model.
+
+  - name: int_redshift__model_source_edges
+    description: >
+      Redshift-only companion to int_dbt__relations: one row per (model, source)
+      edge. int_dbt__relations only walks graph.nodes (dbt models), so any
+      depends_on.nodes entry pointing at a source() call is silently dropped —
+      every staging model whose only dependency is a source() ends up with an
+      empty parent_models array there. This model fills that gap by walking
+      graph.sources directly at compile time, without modifying int_dbt__relations
+      itself (which is shared across every platform this package supports).
+    config:
+      materialized: table
+    columns:
+      - name: model_database
+        description: Database of the dbt model that depends on the source.
+        data_tests:
+          - not_null
+      - name: model_schema
+        description: Schema of the dbt model that depends on the source.
+        data_tests:
+          - not_null
+      - name: model_name
+        description: Name (alias) of the dbt model that depends on the source.
+        data_tests:
+          - not_null
+      - name: dbt_model
+        description: Unique dbt node ID of the model.
+        data_tests:
+          - not_null
+      - name: source_database
+        description: Database of the source table.
+        data_tests:
+          - not_null
+      - name: source_schema
+        description: Schema of the source table.
+        data_tests:
+          - not_null
+      - name: source_identifier
+        description: Identifier (table name) of the source table.
+        data_tests:
+          - not_null
+      - name: source_fqn
+        description: source_database.source_schema.source_identifier, lowercased.
+        data_tests:
+          - not_null
+
+  - name: int_redshift__view_terminal_ancestors
+    description: >
+      For every view/ephemeral model, the full set of terminal ancestors —
+      source() tables or table/incremental dbt models — resolved by walking
+      the dbt manifest graph (int_redshift__model_edges for model-to-model
+      edges, int_redshift__model_source_edges for model-to-source edges),
+      not Redshift's own pg_depend/pg_rewrite catalogs.
+
+      Manifest-derived dependency resolution is unaffected by late-binding
+      (bind=false, a documented dbt-redshift production pattern) — pg_depend
+      never populates for late-binding views at all, but the dbt project's
+      ref()/source() graph doesn't care how a view happens to be bound in
+      the warehouse.
+
+      Depth-capped at 20 to guard against cycles (matches int_redshift__view_chains).
+    config:
+      materialized: table
+    columns:
+      - name: database_name
+        description: Database containing the origin view.
+        data_tests:
+          - not_null
+      - name: view_schema
+        description: Schema of the origin view (lowercased).
+        data_tests:
+          - not_null
+      - name: view_name
+        description: Name of the origin view (lowercased).
+        data_tests:
+          - not_null
+      - name: terminal_database
+        description: Database of the terminal ancestor.
+        data_tests:
+          - not_null
+      - name: terminal_schema
+        description: Schema of the terminal ancestor.
+        data_tests:
+          - not_null
+      - name: terminal_name
+        description: Name/identifier of the terminal ancestor.
+        data_tests:
+          - not_null
+      - name: terminal_fqn
+        description: >
+          terminal_database.terminal_schema.terminal_name, lowercased — the
+          identity int_redshift__query_view_access matches against
+          sys_query_detail.table_name.
+        data_tests:
+          - not_null
+      - name: terminal_kind
+        description: >
+          'model' when the terminal ancestor is a dbt table/incremental model;
+          'source' when it's a source() table.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['model', 'source']
+
+  - name: int_redshift__query_view_access
+    description: >
+      Attributes SELECT queries to dbt-managed views. One row per (view, query_id).
+
+      Attribution is based on the dbt manifest graph
+      (int_redshift__view_terminal_ancestors), not Redshift's own pg_depend
+      catalogs or query_text matching. A query is attributed to a view when
+      it scanned ALL of that view's terminal ancestors (sourced from
+      sys_query_detail scan steps, matched by table_name). Bytes and
+      duration are summed only across the matched scan steps, not the whole
+      query, so a view's attributed cost isn't inflated by unrelated tables
+      scanned in the same query (e.g. a join against a large fact table
+      doesn't inflate a small dimension view's apparent cost).
+
+      This works identically for late-binding and regular views, since it
+      never depends on pg_depend at all.
+
+      Lookback window is controlled by the materialization_lookback_days var
+      (default 7 days).
+    columns:
+      - name: database_name
+        description: Database containing the view.
+        data_tests:
+          - not_null
+      - name: view_schema
+        description: Schema of the view.
+        data_tests:
+          - not_null
+      - name: view_name
+        description: Name of the view.
+        data_tests:
+          - not_null
+      - name: query_id
+        description: Query identifier from sys_query_history.
+        data_tests:
+          - not_null
+      - name: overlap_input_bytes
+        description: >
+          Sum of output_bytes across only the scan steps that hit this view's
+          terminal ancestors for this query — not the whole query's total.
+      - name: execution_time_seconds
+        description: >
+          Sum of duration (converted from microseconds) across only the scan
+          steps that hit this view's terminal ancestors for this query — not
+          the whole query's total execution time.
+      - name: start_time
+        description: Start time of the query.
+
+  - name: int_redshift__table_query_stats_daily
+    description: >
+      Daily query statistics per table. Two separate attribution mechanisms, not one:
+
+      - General SELECT/DML activity (select_count, bytes_scanned_sum, etc.): matched by
+        table NAME (schema.table, tried against both 2-part and 3-part forms), not table_id.
+        table_id is only stable for a table's CURRENT physical object — dbt's table
+        materialization does CREATE + RENAME + DROP on every rebuild, assigning a brand new
+        table_id each time, so joining a historical event's table_id against a current-state-
+        only snapshot (int_redshift__table_info) only ever matches the single most recent
+        rebuild. The matched table_name also has any __dbt_tmp suffix stripped, since an
+        incremental model's merge/delete+insert build can scan its own staging temp object.
+      - CTAS build stats (table_build_count, build times, rows_inserted_build_snapshot): in
+        the default (non-full_account) mode, identified via the dbt node_id embedded in the
+        CTAS query's own comment — not table_id (churns every rebuild) or the insert step's
+        table_name (reflects a __dbt_tmp-suffixed temp object, not the final table, since
+        dbt inserts into a temp relation before renaming it into place; text-matching the
+        insert step's table_name against a candidate's real name never matches at all).
+        full_account mode has no dbt node_id for non-dbt tables and falls back to the
+        __dbt_tmp-stripped table_name instead.
+
+      This is the Redshift equivalent of the Snowflake ACCESS_HISTORY-based
+      attribution — precise table-level access tracking without relying on query text matching.
+
+      Known limitations:
+      - Empty tables are excluded (svv_table_info does not show tables with zero rows).
+      - bytes_spilled_local_sum and bytes_spilled_remote_sum are always 0 (not available per-table from sys_query_detail).
+      - select_partitions_scanned_sum and select_partitions_total_sum are always 0 (Redshift has no partition concept).
+    columns:
+      - name: table_query_stats_daily_key
+        description: md5 surrogate key on (platform, stats_date, table_database, table_schema, table_name).
+        data_tests:
+          - not_null
+          - unique
+      - name: platform
+        description: Always 'redshift'.
+        data_tests:
+          - not_null
+      - name: stats_date
+        description: Calendar date of the query activity.
+        data_tests:
+          - not_null
+      - name: table_database
+        description: Database containing the table.
+        data_tests:
+          - not_null
+      - name: table_schema
+        description: Schema containing the table.
+        data_tests:
+          - not_null
+      - name: table_name
+        description: Name of the table.
+        data_tests:
+          - not_null
+      - name: total_query_count
+        description: Total number of successful queries that scanned this table on this date.
+        data_tests:
+          - not_null
+      - name: select_count
+        description: Number of SELECT queries that scanned this table.
+        data_tests:
+          - not_null
+      - name: dml_count
+        description: Number of INSERT, UPDATE, DELETE, or MERGE queries that scanned this table.
+        data_tests:
+          - not_null
+      - name: insert_count
+        description: Number of INSERT queries that scanned this table.
+      - name: update_count
+        description: Number of UPDATE queries.
+      - name: delete_count
+        description: Number of DELETE queries.
+      - name: merge_count
+        description: Number of MERGE queries.
+      - name: select_execution_time_ms_sum
+        description: Sum of execution_time_ms for SELECT queries that scanned this table.
+      - name: select_partitions_scanned_sum
+        description: Always 0. Redshift has no partition concept.
+      - name: select_partitions_total_sum
+        description: Always 0. Redshift has no partition concept.
+      - name: bytes_scanned_sum
+        description: >
+          Sum of output_bytes from sys_query_detail scan steps for this table on this date
+          (output_bytes, not input_bytes — a scan step's input_bytes is consistently 0
+          per AWS's own documentation; output_bytes is what the scan actually reads).
+          Represents actual bytes read from storage — more accurate than bytes_returned from
+          sys_query_history.
+      - name: bytes_spilled_local_sum
+        description: Always 0. Per-table spill data is not available in sys_query_detail.
+      - name: bytes_spilled_remote_sum
+        description: Always 0. Per-table spill data is not available in sys_query_detail.
