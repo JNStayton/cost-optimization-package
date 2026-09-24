@@ -1,4 +1,4 @@
-{% macro get_clustering_score(avg_rows, total_rows, usage_count) %}
+{% macro snowflake__get_clustering_score(avg_rows, total_rows, usage_count) %}
   {#--
     Calculates a recommendation score based on cardinality and usage.
     Gives a heavy weighting to columns that are actually used in queries.

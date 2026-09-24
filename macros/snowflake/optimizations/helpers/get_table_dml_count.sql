@@ -1,4 +1,4 @@
-{% macro get_table_dml_count(database_name, schema_name, table_name, lookback_days=7) %}
+{% macro snowflake__get_table_dml_count(database_name, schema_name, table_name, lookback_days=7) %}
   {#--
     Returns the count of DML operations (INSERT, UPDATE, DELETE, MERGE)
     against a specific table from QUERY_HISTORY.

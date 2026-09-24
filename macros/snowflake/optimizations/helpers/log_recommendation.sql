@@ -1,4 +1,4 @@
-{% macro log_recommendation(title, recommendation, reason, metrics={}, severity='info') %}
+{% macro snowflake__log_recommendation(title, recommendation, reason, metrics={}, severity='info') %}
 
   {#--
     Formats a single optimization recommendation as a uniform block in the dbt log.

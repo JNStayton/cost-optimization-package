@@ -1,4 +1,4 @@
-{% macro get_large_tables(min_size_gb=1, target_databases=[], target_schemas=[]) %}
+{% macro snowflake__get_large_tables(min_size_gb=1, target_databases=[], target_schemas=[]) %}
   {#--
     Returns tables above the min size threshold from ACCOUNT_USAGE.
     Standalone helper — queries Snowflake directly without model dependencies.

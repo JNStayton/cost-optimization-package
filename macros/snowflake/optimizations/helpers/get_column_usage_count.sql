@@ -1,4 +1,4 @@
-{% macro get_column_usage_count(column_name, model_relation, days_to_check=7) %}
+{% macro snowflake__get_column_usage_count(column_name, model_relation, days_to_check=7) %}
   {#--
     Queries SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY to find how many times
     a column was used in a Filter or Join operator for a specific model,

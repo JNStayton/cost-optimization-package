@@ -1,4 +1,4 @@
-{% macro get_clustering_cardinality_stats(model_relation, include_boolean_cols=false) %}
+{% macro snowflake__get_clustering_cardinality_stats(model_relation, include_boolean_cols=false) %}
   {#--
     Queries the given relation to get cardinality statistics for each column.
     Filters out columns that are poor clustering candidates (e.g., unique keys

@@ -1,4 +1,4 @@
-{% macro get_table_pruning_stats(database_name, schema_name, table_name, lookback_days=7) %}
+{% macro snowflake__get_table_pruning_stats(database_name, schema_name, table_name, lookback_days=7) %}
   {#--
     Returns per-table pruning stats from TABLE_QUERY_PRUNING_HISTORY.
     Standalone helper — queries Snowflake directly without model dependencies.
