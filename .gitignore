@@ -42,3 +42,6 @@ dbt_internal_packages/
 
 # Local test seeds (not for committing)
 seeds/
+
+# AI things
+docs/superpowers/

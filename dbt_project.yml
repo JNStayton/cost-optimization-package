@@ -14,6 +14,23 @@ clean-targets:
 
 require-dbt-version: [">=1.0.0"]
 
+# =============================================================================
+# Environment gate
+# =============================================================================
+# Every platform's +enabled flag below is AND'd against the dbt Cloud special
+# env var DBT_CLOUD_ENVIRONMENT_TYPE — the package only runs when that resolves
+# to 'prod'. dev / staging / general environments are skipped so they
+# don't fail trying to read pg_catalog and the sys_* / svv_* system views,
+# which most developer roles can't access.
+#
+# Valid values for DBT_CLOUD_ENVIRONMENT_TYPE per the doc are 'dev', 'staging',
+# 'prod', and empty (for General deployment environments).
+#
+# Reference: https://docs.getdbt.com/docs/build/environment-variables#special-environment-variables
+#
+# To exercise the package in a non-prod test environment, mark that environment
+# as "Production" type in dbt Cloud / dbt platform.
+
 # Model configurations
 models:
   dbt_cost_optimization_package:
@@ -21,29 +38,58 @@ models:
     staging:
       +materialized: view
       snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
+        +enabled: "{{ target.type == 'snowflake' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
+        +enabled: "{{ target.type == 'bigquery' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
+        +enabled: "{{ target.type == 'databricks' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
+        +enabled: "{{ target.type == 'redshift' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
     intermediate:
       +materialized: view
+      +enabled: "{{ env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
+        +enabled: "{{ target.type == 'snowflake' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
+        +enabled: "{{ target.type == 'bigquery' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
+        +enabled: "{{ target.type == 'databricks' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
+        +enabled: "{{ target.type == 'redshift' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
     marts:
       snowflake:
-        +enabled: "{{ target.type == 'snowflake' }}"
+        +enabled: "{{ target.type == 'snowflake' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       bigquery:
-        +enabled: "{{ target.type == 'bigquery' }}"
+        +enabled: "{{ target.type == 'bigquery' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       databricks:
-        +enabled: "{{ target.type == 'databricks' }}"
+        +enabled: "{{ target.type == 'databricks' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
       redshift:
-        +enabled: "{{ target.type == 'redshift' }}"
+        +enabled: "{{ target.type == 'redshift' and env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '') == 'prod' }}"
+
+vars:
+  # =============================================================================
+  # Redshift warehouse optimization settings
+  # =============================================================================
+
+  # Table materialization candidates (fct_redshift__table_materialization_candidates)
+  # materialization_lookback_days also controls int_redshift__query_view_access lookback
+  table_materialization_min_query_count: 10
+  # Starting-point threshold on composite_chain_score (rebuild_cost_score +
+  # query_activity_score) — tune based on observed score distributions in
+  # your environment. See docs/redshift/materialization-strategy.md for the
+  # formula and why min_hops_to_table is not part of it.
+  table_materialization_min_composite_score: 50
+  materialization_lookback_days: 7
+
+  # Incremental materialization candidates (fct_redshift__incremental_materialization_candidates)
+  incremental_candidates_lookback_days: 60
+  incremental_candidates_min_build_time_sec: 300
+  incremental_candidates_min_size_gb: 2
+  incremental_candidates_min_compute_waste_score: 5
+  incremental_candidates_min_qualified_build_days: 3
+  incremental_candidates_min_compute_waste_avg_build_sec: 30
+
+  # Incremental config recommendations (fct_redshift__incremental_config_recommendations)
+  incremental_large_table_row_threshold: 10000000
+  incremental_large_table_gb_threshold: 10
+  incremental_unique_key_probe_threshold: 0.95

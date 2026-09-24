@@ -7,4 +7,4 @@ select
     cast(null as bigint) as failsafe_bytes,
     cast(false as boolean) as is_deleted,
     'redshift' as platform
-from {{ ref('stg_redshift__table_info') }}
+from {{ ref('int_redshift__table_info') }}

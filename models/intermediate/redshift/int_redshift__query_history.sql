@@ -1,21 +1,22 @@
-select
-    query_id,
-    start_time as query_start_time,
-    generic_query_hash as query_hash,
-    service_class_name as warehouse_name,
-    cast(null as varchar) as warehouse_size,
-    (elapsed_time_seconds * 1000)::bigint as total_elapsed_time_ms,
-    (gigabytes_returned * 1000000000)::bigint as bytes_scanned,
-    cast(null as float) as query_load_percent,
-    (queue_time_seconds * 1000)::bigint as queued_overload_time_ms,
-    query_type as statement_type,
-    (execution_time_seconds * 1000)::bigint as execution_time_ms,
-    cast(null as integer) as partitions_scanned,
-    cast(null as integer) as partitions_total,
-    cast(null as bigint) as bytes_spilled_local,
-    cast(null as bigint) as bytes_spilled_remote,
-    query_text,
-    session_id::varchar as session_id,
-    execution_status,
-    'redshift' as platform
-from {{ ref('stg_redshift__query_history') }}
+{{ config(
+    materialized='incremental',
+    unique_key='query_id',
+    on_schema_change='append_new_columns'
+) }}
+
+{# 1:1 incremental over stg_redshift__query_history. Accumulates history
+   beyond Redshift's SYS retention window. 7-day lookback absorbs late-arriving
+   queries that completed after the previous incremental run.
+
+   See docs/redshift/materialization-strategy.md for the broader policy. #}
+
+with source as (
+
+    select * from {{ ref('stg_redshift__query_history') }}
+    {% if is_incremental() %}
+    where start_time >= (select dateadd(day, -7, max(start_time)) from {{ this }})
+    {% endif %}
+
+)
+
+select * from source

@@ -4,8 +4,9 @@ with source as (
 
 , renamed as (
     select
-        -- ids
-        table_id,
+        -- ids — cast oid to bigint so the column can be persisted in a user
+        -- table (Redshift CTAS rejects the native pg_catalog `oid` type).
+        table_id::bigint as table_id,
 
         -- integers
         max_varchar,

@@ -16,11 +16,11 @@ models:
     columns:
       - name: query_id
         description: Unique identifier for a query execution
-        tests:
+        data_tests:
           - not_null
       - name: query_start_time
         description: Timestamp when query execution started
-        tests:
+        data_tests:
           - not_null
       - name: query_hash
         description: Hash of normalized query text, used for grouping similar queries
@@ -56,7 +56,7 @@ models:
         description: Total number of partitions, blocks, or files available for the queried tables
       - name: platform
         description: "Source data platform: snowflake, bigquery, redshift, or databricks"
-        tests:
+        data_tests:
           - not_null
           - accepted_values:
               arguments:
@@ -76,15 +76,15 @@ models:
     columns:
       - name: database_name
         description: Database, project, or catalog name containing the table
-        tests:
+        data_tests:
           - not_null
       - name: schema_name
         description: Schema or dataset name containing the table
-        tests:
+        data_tests:
           - not_null
       - name: table_name
         description: Name of the table
-        tests:
+        data_tests:
           - not_null
       - name: table_id
         description: Internal platform-specific identifier for the table
@@ -100,7 +100,7 @@ models:
         description: Whether the table has been soft-deleted
       - name: platform
         description: "Source data platform: snowflake, bigquery, redshift, or databricks"
-        tests:
+        data_tests:
           - not_null
           - accepted_values:
               arguments:
@@ -120,15 +120,15 @@ models:
     columns:
       - name: database_name
         description: Database, project, or catalog name
-        tests:
+        data_tests:
           - not_null
       - name: schema_name
         description: Schema or dataset name
-        tests:
+        data_tests:
           - not_null
       - name: table_name
         description: Table name
-        tests:
+        data_tests:
           - not_null
       - name: active_bytes
         description: Current/active storage in bytes
@@ -140,7 +140,7 @@ models:
         description: Whether the table has been soft-deleted
       - name: platform
         description: "Source data platform: snowflake, bigquery, redshift, or databricks"
-        tests:
+        data_tests:
           - not_null
           - accepted_values:
               arguments:

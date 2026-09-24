@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: fct_redshift__distkey_recommendations
+    description: >
+      Distribution key change recommendations from Redshift Advisor. Each row represents
+      an advisor recommendation for a specific table, joined with current table metadata.
+    columns:
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: schema_name
+        data_tests:
+          - not_null
+      - name: table_name
+        data_tests:
+          - not_null
+      - name: size_mb
+        description: Table size in MB.
+      - name: current_diststyle
+        description: Current distribution style (e.g. AUTO(EVEN), KEY(order_id), ALL).
+      - name: recommended_dbt_config
+        description: "dbt config snippet to apply the recommendation (e.g. dist: 'order_id')."
+        data_tests:
+          - not_null
+      - name: group_id
+        description: Advisor recommendation group. Apply all rows with the same group_id together.
+      - name: is_auto_eligible
+        description: Whether Redshift can apply this change automatically.
+      - name: priority_score
+        description: Table size in MB. Larger tables have higher impact.
+        data_tests:
+          - not_null
+      - name: source
+        description: Always 'advisor' — sourced from Redshift Advisor.
+        data_tests:
+          - not_null
+
+  - name: fct_redshift__sortkey_recommendations
+    description: >
+      Sort key change recommendations from Redshift Advisor. Each row represents an advisor
+      recommendation for a specific table, joined with current sort key metadata.
+    columns:
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: schema_name
+        data_tests:
+          - not_null
+      - name: table_name
+        data_tests:
+          - not_null
+      - name: size_mb
+        description: Table size in MB.
+      - name: current_sortkey1
+        description: First column of the current sort key, null if no sort key defined.
+      - name: current_sortkey_num
+        description: Number of columns in the current sort key.
+      - name: recommended_dbt_config
+        description: "dbt config snippet to apply the recommendation (e.g. sort: ['created_at'])."
+        data_tests:
+          - not_null
+      - name: group_id
+        description: Advisor recommendation group.
+      - name: is_auto_eligible
+        description: Whether Redshift can apply this change automatically.
+      - name: priority_score
+        description: Table size in MB.
+        data_tests:
+          - not_null
+      - name: source
+        description: Always 'advisor'.
+        data_tests:
+          - not_null
+
+  - name: fct_redshift__vacuum_candidates
+    description: >
+      Redshift tables scored for VACUUM priority based on unsorted row percentage and dead row bloat.
+      Higher priority_score indicates greater benefit from running VACUUM.
+    columns:
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: schema_name
+        data_tests:
+          - not_null
+      - name: table_name
+        data_tests:
+          - not_null
+      - name: size_mb
+        description: Table size in MB.
+      - name: percent_unsorted
+        description: Percentage of rows that are unsorted.
+      - name: unsorted_factor
+        description: percent_unsorted / 100, used in priority scoring.
+      - name: total_rows
+        description: Total rows including rows marked for deletion.
+      - name: estimated_visible_rows
+        description: Estimated live (non-deleted) rows.
+      - name: bloat_factor
+        description: Fraction of rows that are dead (marked for deletion but not yet vacuumed).
+      - name: priority_score
+        description: "(unsorted_factor + bloat_factor) * size_mb. Higher means more urgent."
+        data_tests:
+          - not_null
+
+  - name: fct_redshift__analyze_candidates
+    description: >
+      Redshift tables scored for ANALYZE priority based on statistics staleness.
+      Higher priority_score indicates more outdated statistics.
+    columns:
+      - name: database_name
+        data_tests:
+          - not_null
+      - name: schema_name
+        data_tests:
+          - not_null
+      - name: table_name
+        data_tests:
+          - not_null
+      - name: size_mb
+        description: Table size in MB.
+      - name: statistics_staleness
+        description: Staleness score 0–100. 0 = current statistics, 100 = fully out of date.
+      - name: stats_off_factor
+        description: statistics_staleness / 100, used in priority scoring.
+      - name: priority_score
+        description: "stats_off_factor * size_mb. Higher means more urgent."
+        data_tests:
+          - not_null
