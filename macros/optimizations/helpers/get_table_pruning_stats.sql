@@ -1,6 +1,6 @@
 {#--
   Dispatcher for get_table_pruning_stats. Platform implementations:
-    - snowflake__get_table_pruning_stats   (macros/snowflake/optimizations/helpers/get_table_pruning_stats.sql)
+    - snowflake__get_table_pruning_stats   (macros/snowflake/optimizations/helpers/snowflake__get_table_pruning_stats.sql)
   Add a <platform>__get_table_pruning_stats with the same arguments to support another platform.
 --#}
 {% macro get_table_pruning_stats(database_name, schema_name, table_name, lookback_days=7) %}

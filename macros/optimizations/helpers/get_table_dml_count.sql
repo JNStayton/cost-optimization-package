@@ -1,6 +1,6 @@
 {#--
   Dispatcher for get_table_dml_count. Platform implementations:
-    - snowflake__get_table_dml_count   (macros/snowflake/optimizations/helpers/get_table_dml_count.sql)
+    - snowflake__get_table_dml_count   (macros/snowflake/optimizations/helpers/snowflake__get_table_dml_count.sql)
   Add a <platform>__get_table_dml_count with the same arguments to support another platform.
 --#}
 {% macro get_table_dml_count(database_name, schema_name, table_name, lookback_days=7) %}

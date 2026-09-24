@@ -1,6 +1,6 @@
 {#--
   Dispatcher for find_spillage_candidates. Platform implementations:
-    - snowflake__find_spillage_candidates   (macros/snowflake/optimizations/find_spillage_candidates.sql)
+    - snowflake__find_spillage_candidates   (macros/snowflake/optimizations/snowflake__find_spillage_candidates.sql)
   Add a <platform>__find_spillage_candidates with the same arguments to support another platform.
 --#}
 {% macro find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1) %}

@@ -1,6 +1,6 @@
 {#--
   Dispatcher for extract_operator_evidence. Platform implementations:
-    - snowflake__extract_operator_evidence   (macros/snowflake/utils/extract_operator_evidence.sql)
+    - snowflake__extract_operator_evidence   (macros/snowflake/utils/snowflake__extract_operator_evidence.sql)
   Add a <platform>__extract_operator_evidence with the same arguments to support another platform.
 --#}
 {% macro extract_operator_evidence() %}

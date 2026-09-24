@@ -1,6 +1,6 @@
 {#--
   Dispatcher for build_incremental_config_template. Platform implementations:
-    - snowflake__build_incremental_config_template   (macros/snowflake/utils/build_incremental_config_template.sql)
+    - snowflake__build_incremental_config_template   (macros/snowflake/utils/snowflake__build_incremental_config_template.sql)
   Add a <platform>__build_incremental_config_template with the same arguments to support another platform.
 --#}
 {% macro build_incremental_config_template() %}

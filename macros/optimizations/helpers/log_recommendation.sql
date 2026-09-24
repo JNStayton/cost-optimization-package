@@ -1,6 +1,6 @@
 {#--
   Dispatcher for log_recommendation. Platform implementations:
-    - snowflake__log_recommendation   (macros/snowflake/optimizations/helpers/log_recommendation.sql)
+    - snowflake__log_recommendation   (macros/snowflake/optimizations/helpers/snowflake__log_recommendation.sql)
   Add a <platform>__log_recommendation with the same arguments to support another platform.
 --#}
 {% macro log_recommendation(title, recommendation, reason, metrics={}, severity='info') %}

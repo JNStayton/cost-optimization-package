@@ -1,6 +1,6 @@
 {#--
   Dispatcher for refresh_warehouse_config. Platform implementations:
-    - snowflake__refresh_warehouse_config   (macros/snowflake/utils/refresh_warehouse_config.sql)
+    - snowflake__refresh_warehouse_config   (macros/snowflake/utils/snowflake__refresh_warehouse_config.sql)
   Add a <platform>__refresh_warehouse_config with the same arguments to support another platform.
 --#}
 {% macro refresh_warehouse_config() %}

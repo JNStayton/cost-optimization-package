@@ -1,6 +1,6 @@
 {#--
   Dispatcher for find_table_materialization_candidates. Platform implementations:
-    - snowflake__find_table_materialization_candidates   (macros/snowflake/optimizations/find_table_materialization_candidates.sql)
+    - snowflake__find_table_materialization_candidates   (macros/snowflake/optimizations/snowflake__find_table_materialization_candidates.sql)
   Add a <platform>__find_table_materialization_candidates with the same arguments to support another platform.
 --#}
 {% macro find_table_materialization_candidates(lookback_days=14, min_query_count=10) %}

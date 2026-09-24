@@ -1,6 +1,6 @@
 {#--
   Dispatcher for find_table_clustering_candidates. Platform implementations:
-    - snowflake__find_table_clustering_candidates   (macros/snowflake/optimizations/find_table_clustering_candidates.sql)
+    - snowflake__find_table_clustering_candidates   (macros/snowflake/optimizations/snowflake__find_table_clustering_candidates.sql)
   Add a <platform>__find_table_clustering_candidates with the same arguments to support another platform.
 --#}
 {% macro find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[]) %}

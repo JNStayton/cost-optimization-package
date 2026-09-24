@@ -1,6 +1,6 @@
 {#--
   Dispatcher for get_large_tables. Platform implementations:
-    - snowflake__get_large_tables   (macros/snowflake/optimizations/helpers/get_large_tables.sql)
+    - snowflake__get_large_tables   (macros/snowflake/optimizations/helpers/snowflake__get_large_tables.sql)
   Add a <platform>__get_large_tables with the same arguments to support another platform.
 --#}
 {% macro get_large_tables(min_size_gb=1, target_databases=[], target_schemas=[]) %}

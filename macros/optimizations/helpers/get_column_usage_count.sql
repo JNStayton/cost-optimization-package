@@ -1,6 +1,6 @@
 {#--
   Dispatcher for get_column_usage_count. Platform implementations:
-    - snowflake__get_column_usage_count   (macros/snowflake/optimizations/helpers/get_column_usage_count.sql)
+    - snowflake__get_column_usage_count   (macros/snowflake/optimizations/helpers/snowflake__get_column_usage_count.sql)
   Add a <platform>__get_column_usage_count with the same arguments to support another platform.
 --#}
 {% macro get_column_usage_count(column_name, model_relation, days_to_check=7) %}

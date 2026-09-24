@@ -1,6 +1,6 @@
 {#--
   Dispatcher for suggest_clustering_keys. Platform implementations:
-    - snowflake__suggest_clustering_keys   (macros/snowflake/optimizations/suggest_clustering_keys.sql)
+    - snowflake__suggest_clustering_keys   (macros/snowflake/optimizations/snowflake__suggest_clustering_keys.sql)
   Add a <platform>__suggest_clustering_keys with the same arguments to support another platform.
 --#}
 {% macro suggest_clustering_keys(model_name, database=none, schema=none, include_boolean_cols=false) %}

@@ -1,6 +1,6 @@
 {#--
   Dispatcher for dbt_session_filter. Platform implementations:
-    - snowflake__dbt_session_filter   (macros/snowflake/utils/dbt_session_filter.sql)
+    - snowflake__dbt_session_filter   (macros/snowflake/utils/snowflake__dbt_session_filter.sql)
   Add a <platform>__dbt_session_filter with the same arguments to support another platform.
 --#}
 {% macro dbt_session_filter(lookback_days=7) %}
