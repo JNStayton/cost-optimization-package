@@ -186,7 +186,7 @@ models:
       excludes partitioning columns (which prune before clustering). Mirrors the
       role of
       int_snowflake__table_columns. Real cardinality for these columns is populated by
-      refresh_bigquery_column_cardinality into int_bigquery__column_cardinality.
+      refresh_column_cardinality into int_bigquery__column_cardinality.
     columns:
       - name: database_name
         description: BigQuery project ID
@@ -221,7 +221,7 @@ models:
   - name: int_bigquery__column_cardinality
     description: >
       Persistent store for BigQuery column-level APPROX_COUNT_DISTINCT values produced by
-      the refresh_bigquery_column_cardinality macro. dbt creates the empty table schema
+      the refresh_column_cardinality macro. dbt creates the empty table schema
       on first run; all data is written and maintained exclusively by the macro, which
       runs as a post-hook on fct_bigquery__table_clustering_candidates. dbt never
       inserts rows directly — the incremental model always returns 0 rows, preserving
@@ -279,7 +279,7 @@ models:
       JOBS_BY_PROJECT data. Mirrors int_snowflake__column_query_stats, but values are
       heuristic (regex-extracted) rather than engine-attested. Used by
       fct_bigquery__clustering_key_candidates for usage scoring and by the
-      refresh_bigquery_column_cardinality macro to pre-filter which columns are worth
+      refresh_column_cardinality macro to pre-filter which columns are worth
       scanning. Disable by setting use_query_text_attribution=false.
     config:
       materialized: incremental

@@ -19,7 +19,7 @@ models:
       candidate set with clustering_candidates_min_size_gb (in GB, default 100)
       if needed.
 
-      This model's post-hook (refresh_bigquery_column_cardinality) populates
+      This model's post-hook (refresh_column_cardinality) populates
       int_bigquery__column_cardinality for the top N candidates by score before
       fct_bigquery__clustering_key_candidates reads from it.
 
@@ -186,7 +186,7 @@ models:
       default 10). Only tables with is_candidate = true from today's snapshot are evaluated.
 
       Scoring uses real cardinality (distinct_values / total_rows) from
-      int_bigquery__column_cardinality, populated by the refresh_bigquery_column_cardinality
+      int_bigquery__column_cardinality, populated by the refresh_column_cardinality
       macro post-hook on the table-level fact. Combined with column query usage count
       derived from JOBS_BY_PROJECT.query_text regex (heuristic, BigQuery has no
       ACCESS_HISTORY equivalent; disable with use_query_text_attribution=false).
@@ -242,7 +242,7 @@ models:
       - name: distinct_values
         description: >
           Approximate distinct value count from APPROX_COUNT_DISTINCT, populated by
-          the refresh_bigquery_column_cardinality macro. Null on first run or when the
+          the refresh_column_cardinality macro. Null on first run or when the
           column was not included in the macro's pre-filtered scan set for the table.
       - name: cardinality_pct
         description: >
@@ -250,7 +250,7 @@ models:
           Null when distinct_values is null. Medium cardinality (roughly 0.1%-10%) is
           generally ideal for clustering keys.
       - name: cardinality_calculated_at
-        description: Timestamp when refresh_bigquery_column_cardinality last populated this row
+        description: Timestamp when refresh_column_cardinality last populated this row
       - name: usage_count
         description: >
           Count of distinct queries that referenced this column inside a filter context

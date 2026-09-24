@@ -1,4 +1,4 @@
-{% macro refresh_bigquery_column_cardinality() %}
+{% macro bigquery__refresh_column_cardinality() %}
 
   {#--
     Populates int_bigquery__column_cardinality with APPROX_COUNT_DISTINCT values for
@@ -62,7 +62,7 @@
     {% set cardinality_limit = var('clustering_key_cardinality_table_limit', 10) %}
     {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
 
-    {{ log("refresh_bigquery_column_cardinality: fetching top " ~ cardinality_limit ~ " candidates...", info=true) }}
+    {{ log("refresh_column_cardinality: fetching top " ~ cardinality_limit ~ " candidates...", info=true) }}
 
     {% set candidates_sql %}
       select
@@ -95,7 +95,7 @@
         {% set schema    = row['schema_name'] %}
         {% set table     = row['table_name'] %}
 
-        {{ log("refresh_bigquery_column_cardinality: scanning cardinality for " ~ table_fqn, info=true) }}
+        {{ log("refresh_column_cardinality: scanning cardinality for " ~ table_fqn, info=true) }}
 
         {% if use_query_text_attribution %}
 
@@ -167,16 +167,16 @@
           {% endset %}
 
           {% do run_query(merge_sql) %}
-          {{ log("refresh_bigquery_column_cardinality: merged cardinality for " ~ (columns_to_scan | length) ~ " column(s) on " ~ table_fqn, info=true) }}
+          {{ log("refresh_column_cardinality: merged cardinality for " ~ (columns_to_scan | length) ~ " column(s) on " ~ table_fqn, info=true) }}
 
         {% else %}
-          {{ log("refresh_bigquery_column_cardinality: no eligible columns found for " ~ table_fqn ~ ", skipping.", info=true) }}
+          {{ log("refresh_column_cardinality: no eligible columns found for " ~ table_fqn ~ ", skipping.", info=true) }}
         {% endif %}
 
       {% endfor %}
 
     {% else %}
-      {{ log("refresh_bigquery_column_cardinality: no candidates found for today, skipping.", info=true) }}
+      {{ log("refresh_column_cardinality: no candidates found for today, skipping.", info=true) }}
     {% endif %}
 
   {% endif %}

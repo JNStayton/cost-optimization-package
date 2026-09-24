@@ -1,7 +1,7 @@
 -- depends_on: {{ ref('int_dbt__relations') }}
 -- depends_on: {{ ref('int_databricks__tables') }}
 {{ config(
-    pre_hook="{{ capture_databricks_storage_metrics() }}"
+    pre_hook="{{ capture_storage_metrics() }}"
 ) }}
 
 {% if var('use_mock_data', false) %}
@@ -21,7 +21,7 @@ from {{ ref('stg_databricks__table_info') }}
 {% else %}
 
 -- system.storage.table_metrics_history can be empty account-wide even with
--- Predictive Optimization active (see capture_databricks_storage_metrics()).
+-- Predictive Optimization active (see capture_storage_metrics()).
 -- The pre-hook probes dbt-tracked tables via ANALYZE TABLE COMPUTE STORAGE
 -- METRICS as a fallback for any table missing from table_metrics_history.
 with from_table_metrics_history as (

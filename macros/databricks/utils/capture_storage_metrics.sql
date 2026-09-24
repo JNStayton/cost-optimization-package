@@ -1,4 +1,4 @@
-{% macro capture_databricks_storage_metrics() %}
+{% macro databricks__capture_storage_metrics() %}
 
   {#--
     Pre-hook for int_databricks__table_storage.
@@ -55,7 +55,7 @@
 
     {% if existing_count > 0 %}
 
-      {{ log("capture_databricks_storage_metrics: system.storage.table_metrics_history has " ~ existing_count ~ " rows — skipping ANALYZE TABLE fallback probe.", info=true) }}
+      {{ log("capture_storage_metrics: system.storage.table_metrics_history has " ~ existing_count ~ " rows — skipping ANALYZE TABLE fallback probe.", info=true) }}
 
     {% else %}
 
@@ -80,7 +80,7 @@
 
       {% if candidates and candidates.rows | length > 0 %}
 
-        {{ log("capture_databricks_storage_metrics: table_metrics_history is empty — probing " ~ (candidates.rows | length) ~ " dbt-tracked table(s) via ANALYZE TABLE COMPUTE STORAGE METRICS.", info=true) }}
+        {{ log("capture_storage_metrics: table_metrics_history is empty — probing " ~ (candidates.rows | length) ~ " dbt-tracked table(s) via ANALYZE TABLE COMPUTE STORAGE METRICS.", info=true) }}
 
         {% do run_query("delete from " ~ probe_relation) %}
 
@@ -117,10 +117,10 @@
 
         {% endfor %}
 
-        {{ log("capture_databricks_storage_metrics: probe complete.", info=true) }}
+        {{ log("capture_storage_metrics: probe complete.", info=true) }}
 
       {% else %}
-        {{ log("capture_databricks_storage_metrics: no dbt-tracked tables found to probe.", info=true) }}
+        {{ log("capture_storage_metrics: no dbt-tracked tables found to probe.", info=true) }}
       {% endif %}
 
     {% endif %}

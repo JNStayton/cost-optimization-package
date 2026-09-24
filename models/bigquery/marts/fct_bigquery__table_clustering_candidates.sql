@@ -12,7 +12,7 @@
     incremental_strategy='merge',
     unique_key='clustering_candidates_snapshot_key',
     on_schema_change='append_new_columns',
-    post_hook="{{ refresh_bigquery_column_cardinality() }}"
+    post_hook="{{ refresh_column_cardinality() }}"
   )
 }}
 

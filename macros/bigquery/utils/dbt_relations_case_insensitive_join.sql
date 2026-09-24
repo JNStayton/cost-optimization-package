@@ -9,7 +9,7 @@
   uppercase — see int_bigquery__table_query_stats_daily and
   fct_bigquery__table_clustering_candidates, the two call sites.
 --#}
-{% macro dbt_relations_case_insensitive_join(left_alias) %}
+{% macro bigquery__dbt_relations_case_insensitive_join(left_alias) %}
     on upper({{ left_alias }}.database_name) = dm.database_name
     and upper({{ left_alias }}.schema_name) = dm.schema_name
     and upper({{ left_alias }}.table_name) = dm.table_name
