@@ -15,7 +15,7 @@ models:
       historical tracking and drift detection.
 
       Recommendation tiers:
-        Enable Gen2              — DML ratio > warehouse_sizing_dml_threshold (default 35%)
+        Migrate to Gen2          — median provisioning > 2s, auto-suspend >= 300s, not already Gen2
         Enable multi-cluster     — median overload > 5s AND overload > 10% of elapsed
         Scale up single cluster  — median overload 1–5s (moderate concurrency bottleneck)
         Scale down single cluster — median execution < 5s AND median overload < 0.5s
@@ -23,7 +23,6 @@ models:
 
       Controlled by the following dbt variables:
         - warehouse_sizing_lookback_days    (default 30)
-        - warehouse_sizing_dml_threshold    (default 0.35)
         - warehouse_sizing_min_query_count  (default 20)
     config:
       materialized: table
@@ -56,8 +55,8 @@ models:
       - name: dml_pct_30d
         description: >
           Percentage of dbt queries that are DML (INSERT, UPDATE, DELETE, MERGE) over
-          the 30-day window. Values above warehouse_sizing_dml_threshold trigger the
-          Gen2 recommendation.
+          the 30-day window. A DML ratio above 20% on an otherwise oversized warehouse
+          triggers the oversized_write_heavy recommendation.
 
       - name: median_overload_sec_30d
         description: >

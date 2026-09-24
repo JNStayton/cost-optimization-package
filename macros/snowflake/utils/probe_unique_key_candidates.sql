@@ -1,4 +1,4 @@
-{% macro probe_unique_key_candidates() %}
+{% macro snowflake__probe_unique_key_candidates() %}
 
   {#--
     Post-hook for fct_snowflake__incremental_config_recommendations.

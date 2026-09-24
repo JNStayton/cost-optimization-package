@@ -1,0 +1,156 @@
+version: 2
+
+models:
+
+  # ===========================================================================
+  # stg_bigquery__tables
+  # ===========================================================================
+  - name: stg_bigquery__tables
+    description: >
+      Raw passthrough of BigQuery's INFORMATION_SCHEMA.TABLES, scoped to
+      target.dataset, trimmed to the columns the clustering-candidate pipeline
+      actually uses. ddl is regex-parsed downstream (int_bigquery__tables) to
+      extract CLUSTER BY columns.
+    columns:
+      - name: table_catalog
+        description: BigQuery project ID containing the table
+      - name: table_schema
+        description: BigQuery dataset name containing the table
+      - name: table_name
+        description: Table or view name
+      - name: table_type
+        description: "BigQuery native type: BASE TABLE, VIEW, MATERIALIZED VIEW, etc."
+      - name: ddl
+        description: >
+          Full CREATE TABLE/VIEW DDL statement. Downstream, int_bigquery__tables
+          regex-extracts the CLUSTER BY clause from this to populate clustering_key.
+
+  # ===========================================================================
+  # stg_bigquery__columns
+  # ===========================================================================
+  - name: stg_bigquery__columns
+    description: >
+      Raw passthrough of BigQuery's INFORMATION_SCHEMA.COLUMNS, scoped to
+      target.dataset. One row per column of every table/view.
+    columns:
+      - name: database_name
+        description: BigQuery project ID (aliased from table_catalog)
+      - name: schema_name
+        description: BigQuery dataset name (aliased from table_schema)
+      - name: table_name
+        description: Table containing the column
+      - name: column_name
+        description: Column name
+      - name: ordinal_position
+        description: Column position in the table definition (1-based)
+      - name: data_type
+        description: >
+          BigQuery data type as reported by INFORMATION_SCHEMA — not yet filtered
+          to the clustering-eligible allow-list (that filtering happens downstream
+          in int_bigquery__table_columns)
+      - name: is_nullable
+        description: Whether the column allows null values ('YES'/'NO')
+      - name: is_partitioning_column
+        description: >
+          Whether this column is the table's partitioning column ('YES'/'NO').
+          Downstream, int_bigquery__table_columns excludes partitioning columns
+          from clustering-key eligibility, since they're pruned before clustering
+          would apply.
+      - name: clustering_ordinal_position
+        description: >
+          This column's position in the table's existing CLUSTER BY definition, if
+          any. Null when the column is not part of an existing clustering key.
+
+  # ===========================================================================
+  # stg_bigquery__table_storage
+  # ===========================================================================
+  - name: stg_bigquery__table_storage
+    description: >
+      Raw passthrough of BigQuery's region-level INFORMATION_SCHEMA.TABLE_STORAGE,
+      scoped to target.dataset, trimmed to the columns the clustering-candidate
+      pipeline actually uses. Updated on a delay relative to table
+      creation/modification (region-level metadata propagation lags dataset-level
+      views like INFORMATION_SCHEMA.PARTITIONS).
+    columns:
+      - name: project_id
+        description: BigQuery project ID
+      - name: table_schema
+        description: BigQuery dataset name
+      - name: table_name
+        description: Table name
+      - name: total_rows
+        description: Total row count of the table
+      - name: total_partitions
+        description: >
+          Total partition count. Used downstream as the data-density proxy in
+          clustering-candidate scoring, in place of Snowflake's real per-query
+          partition-pruning ratio (not available in BigQuery's JOBS_BY_PROJECT).
+      - name: active_physical_bytes
+        description: >
+          Physical storage in bytes for data modified in the last 90 days. Used
+          downstream as the table's active_bytes / size_gb.
+      - name: deleted
+        description: >
+          Whether the table has been deleted and is still within its time-travel
+          retention window
+
+  # ===========================================================================
+  # stg_bigquery__jobs_by_project
+  # ===========================================================================
+  - name: stg_bigquery__jobs_by_project
+    description: >
+      Incremental passthrough of BigQuery's region-level INFORMATION_SCHEMA.JOBS_BY_PROJECT,
+      merged on job_id with a 7-day lookback on creation_time to catch late-arriving jobs,
+      trimmed to the columns the clustering-candidate pipeline actually uses.
+      referenced_tables/destination_table are engine-populated (BigQuery attributes them at
+      job-execution time, for every job in JOBS_BY_PROJECT's retention window) and are what
+      make exact read/write attribution possible downstream, replacing an earlier
+      query-text LIKE '%table_name%' heuristic.
+
+      Upgrade note: referenced_tables/destination_table are new columns as of this change, and
+      start_time/end_time/total_bytes_processed/cache_hit/user_email/reservation_id/
+      bi_engine_statistics were dropped as unused. on_schema_change='sync_all_columns' handles
+      both sides of that for existing installs — it adds the new columns AND drops the removed
+      ones from the physical table — but rows merged in before the upgrade get NULL for the new
+      columns (dbt backfills new columns as NULL, it doesn't re-derive them). Downstream,
+      int_bigquery__table_query_stats_daily's reads CTE does
+      `cross join unnest(referenced_tables)`, and UNNEST(NULL) yields zero rows - so pre-upgrade
+      jobs silently drop out of read attribution rather than erroring. Run with --full-refresh
+      on upgrade (this model and int_bigquery__table_query_stats_daily) to re-derive historical
+      attribution from JOBS_BY_PROJECT's own history instead.
+    columns:
+      - name: job_id
+        description: Unique identifier for the BigQuery job (query, load, copy, etc.)
+        tests:
+          - unique
+          - not_null
+      - name: creation_time
+        description: Timestamp the job was created/submitted
+      - name: total_slot_ms
+        description: >
+          Total slot-milliseconds consumed — BigQuery's parallel CPU-weighted compute
+          measure, not wall-clock time
+      - name: total_bytes_billed
+        description: >
+          Total bytes actually billed for the job — BigQuery's primary cost signal,
+          since BigQuery bills by bytes scanned rather than compute time
+      - name: query
+        description: Full SQL text of the job's query
+      - name: statement_type
+        description: "BigQuery statement type: SELECT, INSERT, UPDATE, DELETE, MERGE, CREATE_TABLE_AS_SELECT, etc."
+      - name: state
+        description: "Job execution state: PENDING, RUNNING, or DONE"
+      - name: error_result
+        description: Error details if the job failed; null on success
+      - name: referenced_tables
+        description: >
+          Array of tables the job actually read (engine-populated by BigQuery at job
+          execution time), each a struct of project_id/dataset_id/table_id. The
+          exact-attribution signal that downstream models cross-join/unnest to determine
+          which tables a job read.
+      - name: destination_table
+        description: >
+          The table the job wrote to (struct of project_id/dataset_id/table_id), for write
+          statement types. Used downstream to exclude a write job's own target from its own
+          read attribution (a MERGE reads and writes the same table; only the write side
+          should count toward dml_count).

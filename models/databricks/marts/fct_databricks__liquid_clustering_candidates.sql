@@ -29,7 +29,7 @@ with large_tables as (
             then (ti.active_bytes / 1024.0 / 1024.0) / ti.file_count
             else null
         end as avg_file_size_mb
-    from {{ ref('int_table_inventory') }} as ti
+    from {{ ref('int_databricks__table_inventory') }} as ti
     where ti.size_gb >= {{ min_size_gb }}
         and ti.file_count is not null
         {% if target_databases and target_databases | length > 0 %}
@@ -68,7 +68,7 @@ table_query_stats as (
             else 0
         end as avg_files_scanned
     from large_tables as lt
-    left join {{ ref('int_table_query_stats_daily') }} as tqs
+    left join {{ ref('int_databricks__table_query_stats_daily') }} as tqs
         on lt.database_name = tqs.table_database
         and lt.schema_name = tqs.table_schema
         and lt.table_name = tqs.table_name
@@ -100,9 +100,9 @@ scored as (
         and lt.schema_name = tqs.schema_name
         and lt.table_name = tqs.table_name
     left join {{ ref('int_dbt__relations') }} as dm
-        on lt.database_name = dm.database_name
-        and lt.schema_name = dm.schema_name
-        and lt.table_name = dm.table_name
+        on lower(lt.database_name) = lower(dm.database_name)
+        and lower(lt.schema_name) = lower(dm.schema_name)
+        and lower(lt.table_name) = lower(dm.table_name)
 ),
 
 with_suggestions as (

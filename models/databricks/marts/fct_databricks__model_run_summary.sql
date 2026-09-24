@@ -1,8 +1,7 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key='model_run_summary_key',
-    enabled=(target.type == 'databricks')
+    unique_key='model_run_summary_key'
 ) }}
 
 {% set lookback_days = var('model_run_summary_lookback_days', 7) %}

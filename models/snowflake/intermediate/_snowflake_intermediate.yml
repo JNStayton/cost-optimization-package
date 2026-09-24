@@ -3,35 +3,6 @@ version: 2
 models:
 
   # ===========================================================================
-  # int_dbt__relations
-  # ===========================================================================
-  - name: int_dbt__relations
-    description: >
-      Compile-time mapping between dbt model metadata and physical relation names.
-      Used by recommendation marts to attribute findings back to dbt model unique IDs.
-    columns:
-      - name: platform
-        description: Active adapter platform (snowflake, bigquery, redshift, databricks)
-      - name: database_name
-        description: Database/catalog name for the model relation
-      - name: schema_name
-        description: Schema/dataset name for the model relation
-      - name: table_name
-        description: Relation identifier (alias if present, otherwise model name)
-      - name: dbt_model
-        description: dbt unique_id for the model
-      - name: model_name
-        description: dbt model file name
-      - name: alias
-        description: Configured dbt alias used for the relation name
-      - name: package_name
-        description: dbt package where the model is defined
-      - name: materialized
-        description: dbt materialization configured for the model
-      - name: relation_fqn
-        description: Fully-qualified relation name (database.schema.table)
-
-  # ===========================================================================
   # int_snowflake__table_inventory
   # ===========================================================================
   - name: int_snowflake__table_inventory

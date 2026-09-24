@@ -66,6 +66,10 @@ models:
         +materialized: view
       intermediate:
         +materialized: view
+        int_bigquery__column_query_access:
+          +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) and var('use_query_text_attribution', true) }}"
+        int_bigquery__column_query_stats:
+          +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) and var('use_query_text_attribution', true) }}"
     # Databricks optimization models
     databricks:
       +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
@@ -74,52 +78,74 @@ models:
       intermediate:
         +materialized: view
 
-# Package variables — override in consuming project's dbt_project.yml vars: section
+# Package variables — override in consuming project's dbt_project.yml vars: section.
+# Vars share one namespace across platforms. Section headers list which platforms read each group.
 vars:
+  # =============================================================================
+  # Package-wide
+  # =============================================================================
+
   # --- Package enablement (opt-in) ---
   dbt_cost_optimization_enabled: false  # Set to true in consuming project to activate
 
-  # --- Snowflake: Edition and feature flags ---
-  snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
-  ai_rest_api_enabled: true             # Set to false to exclude REST API from AI analysis
-
-  # --- Scope & Monitoring ---
+  # --- Scope & monitoring (snowflake) ---
   dbt_monitored_projects: []  # Default: [project_name]. List projects to monitor, or ['*'] for all dbt projects in the account.
   include_full_platform_insights: false  # Show account-wide non-dbt signals (all warehouses, CoCo, Intelligence, untracked users)
 
-  # --- Cross-environment model discovery ---
+  # --- Cross-environment model discovery (snowflake) ---
   dbt_relation_history_lookback_days: 90  # How far back to scan query_history for dbt builds
 
-  # --- Snowflake: Table clustering ---
+  # =============================================================================
+  # Shared across platforms
+  # =============================================================================
+
+  # --- Table clustering (snowflake, bigquery) ---
   clustering_candidates_min_size_gb: 100
   clustering_candidates_lookback_days: 7
   clustering_candidates_dbt_project_only: true
   clustering_candidates_target_databases: []
   clustering_candidates_target_schemas: []
   clustering_key_cardinality_table_limit: 10
+
+  # --- Table materialization (snowflake, databricks, redshift) ---
+  table_materialization_lookback_days: 14
+  table_materialization_min_query_count: 10
+
+  # --- Incremental materialization (snowflake, databricks, redshift) ---
+  incremental_candidates_lookback_days: 60
+  incremental_candidates_min_build_time_sec: 300                # snowflake, redshift
+  incremental_candidates_min_size_gb: 2                         # snowflake, redshift
+  incremental_candidates_min_compute_waste_score: 5             # snowflake, redshift
+  incremental_candidates_min_qualified_build_days: 3            # snowflake, redshift
+  incremental_candidates_min_compute_waste_avg_build_sec: 30    # snowflake, redshift
+  incremental_large_table_row_threshold: 10000000               # snowflake, redshift
+  incremental_large_table_gb_threshold: 10                      # snowflake, redshift
+  incremental_unique_key_probe_threshold: 0.95                  # databricks, redshift — uniqueness ratio for key candidates
+
+  # --- Table query stats (all platforms) ---
+  table_query_stats_full_account: false                         # snowflake, bigquery, databricks, redshift
+  table_query_stats_initial_lookback_days: 7                    # bigquery, databricks, redshift — first-run backfill window
+
+  # =============================================================================
+  # Snowflake
+  # =============================================================================
+
+  # --- Edition and feature flags ---
+  snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
+  ai_rest_api_enabled: true             # Set to false to exclude REST API from AI analysis
+
+  # --- Table clustering ---
   clustering_key_operator_analysis_table_limit: 10
   clustering_key_operator_queries_per_table: 20
 
-  # --- Snowflake: Materialization ---
-  table_materialization_lookback_days: 14
-  table_materialization_min_query_count: 10
+  # --- Materialization ---
   suppress_staging_materialization_recs: false  # Set true to hide staging-layer (stg_/stage_) view-to-table recommendations
   incremental_overlap_days: 31  # Re-scan window on incremental runs. Set to your longest gap between builds.
-  incremental_unique_key_probe_threshold: 0.95  # Uniqueness ratio threshold for key candidates
-  incremental_candidates_lookback_days: 60
-  incremental_candidates_min_build_time_sec: 300
-  incremental_candidates_min_size_gb: 2
-  incremental_candidates_min_compute_waste_score: 5
-  incremental_candidates_min_qualified_build_days: 3
-  incremental_candidates_min_compute_waste_avg_build_sec: 30
   incremental_candidates_roi_high_build_time_sec: 300
   incremental_candidates_roi_medium_build_time_sec: 120
-  incremental_large_table_row_threshold: 10000000
-  incremental_large_table_gb_threshold: 10
 
-  # --- Snowflake: Warehouse optimization ---
+  # --- Warehouse optimization ---
   warehouse_sizing_lookback_days: 30
-  warehouse_sizing_dml_threshold: 0.35
   warehouse_sizing_min_query_count: 20
   spillage_lookback_days: 30
   spillage_min_total_gb: 0.05
@@ -131,8 +157,9 @@ vars:
   expensive_query_min_total_credits: 0.1
   expensive_query_top_n: 50
 
-  # --- Snowflake: AI/Cortex spend optimization ---
+  # --- AI/Cortex spend optimization ---
   ai_spend_lookback_days: 30
+  ai_lookback_days: 30                  # Lookback for fct_snowflake__ai_agent_optimization_recommendations
   ai_credit_rate_usd: 2
   ai_model_downgrade_output_token_threshold: 100
   ai_prompt_bloat_input_token_threshold: 10000
@@ -142,5 +169,74 @@ vars:
   ai_min_credits_for_recommendation: 1
   ai_min_queries_for_recommendation: 10
 
-  # --- Snowflake: Shared settings ---
-  table_query_stats_full_account: false
+  # --- Gold views ---
+  top_models_lookback_days: 30          # Lookback for vw_snowflake__top_queried_models
+
+  # =============================================================================
+  # BigQuery
+  # =============================================================================
+
+  # --- Column-level query attribution ---
+  use_query_text_attribution: true      # Set to false to skip query-text column attribution (BigQuery has no ACCESS_HISTORY).
+                                        # Disables int_bigquery__column_query_access / _stats; ranking falls back to cardinality only.
+  # column_query_stats_initial_lookback_days: 7   # Optional override. Default: follows clustering_candidates_lookback_days. Narrows the first-run window.
+
+  # =============================================================================
+  # Databricks
+  # =============================================================================
+
+  # --- Liquid clustering ---
+  liquid_clustering_candidates_lookback_days: 7
+  liquid_clustering_candidates_min_size_gb: 1
+  liquid_clustering_candidates_max_avg_file_size_mb: 128
+  liquid_clustering_candidates_dbt_project_only: true
+  liquid_clustering_candidates_target_databases: []
+  liquid_clustering_candidates_target_schemas: []
+  cluster_key_suggestion_lookback_days: 30
+
+  # --- OPTIMIZE candidates ---
+  optimize_candidates_min_size_gb: 0.1
+  optimize_candidates_min_file_count: 50
+  optimize_candidates_max_avg_file_size_mb: 128
+  optimize_candidates_dbt_project_only: true
+  optimize_candidates_target_databases: []
+  optimize_candidates_target_schemas: []
+
+  # --- Incremental materialization ---
+  incremental_candidates_min_run_count: 3
+  incremental_candidates_min_qualified_builds: 3
+  incremental_candidates_min_avg_bytes_scanned_gb: 0.1
+  incremental_candidates_large_table_gb_threshold: 10
+
+  # --- Snapshot optimization ---
+  snapshot_candidates_lookback_days: 30
+  snapshot_candidates_min_run_count: 3
+  snapshot_candidates_min_runs_for_pause: 14
+  snapshot_candidates_low_productivity_threshold: 0.25
+
+  # --- Model run summary ---
+  model_run_summary_lookback_days: 7
+
+  # --- Storage metrics ---
+  storage_metrics_probe_max_tables: 200  # Max tables to probe with ANALYZE TABLE when table_metrics_history is empty
+
+  # --- Column metadata scan scope ---
+  # columns_scan_catalogs: []   # Optional override. Default: catalogs derived from this project's graph (models + sources).
+  # columns_scan_schemas: []    # Optional override. Default: schemas derived from this project's graph (models + sources).
+
+  # --- Recommendation rollup ---
+  environment_priority_order: ['prod', 'staging', 'dev']  # Which environment's row wins when the same model appears in several
+
+  # --- Development ---
+  use_mock_data: false  # Use seed-based mock data instead of system tables (development only)
+
+  # =============================================================================
+  # Redshift
+  # =============================================================================
+
+  # --- Table materialization ---
+  # Starting-point threshold on composite_chain_score (rebuild_cost_score +
+  # query_activity_score) — tune based on observed score distributions in
+  # your environment. See docs/redshift/materialization-strategy.md for the
+  # formula and why min_hops_to_table is not part of it.
+  table_materialization_min_composite_score: 50

@@ -1,8 +1,7 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key='optimize_candidates_snapshot_key',
-    enabled=(target.type == 'databricks')
+    unique_key='optimize_candidates_snapshot_key'
 ) }}
 
 {% set min_file_count = var('optimize_candidates_min_file_count', 50) %}
@@ -28,7 +27,7 @@ with fragmented_tables as (
             else null
         end as avg_file_size_mb,
         ti.is_already_clustered
-    from {{ ref('int_table_inventory') }} as ti
+    from {{ ref('int_databricks__table_inventory') }} as ti
     where ti.size_gb >= {{ min_size_gb }}
         and ti.file_count >= {{ min_file_count }}
         and ti.file_count is not null
@@ -65,9 +64,9 @@ with_dbt_model as (
         dm.dbt_model
     from with_po_status as wp
     left join {{ ref('int_dbt__relations') }} as dm
-        on wp.database_name = dm.database_name
-        and wp.schema_name = dm.schema_name
-        and wp.table_name = dm.table_name
+        on lower(wp.database_name) = lower(dm.database_name)
+        and lower(wp.schema_name) = lower(dm.schema_name)
+        and lower(wp.table_name) = lower(dm.table_name)
 ),
 
 final as (

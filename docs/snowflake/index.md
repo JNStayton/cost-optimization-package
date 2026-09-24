@@ -297,7 +297,6 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `warehouse_sizing_lookback_days` | `30` | Analysis window for sizing recommendations. |
-| `warehouse_sizing_dml_threshold` | `0.35` | DML ratio above which Gen2 is recommended. |
 | `warehouse_sizing_min_query_count` | `20` | Minimum dbt queries to evaluate a warehouse. |
 | `spillage_lookback_days` | `30` | Analysis window for spillage recommendations. |
 | `spillage_min_total_gb` | `0.05` | Minimum total spillage (GB) to appear in results. |

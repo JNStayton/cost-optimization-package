@@ -1,6 +1,5 @@
 {{ config(
-    materialized='view',
-    enabled=(target.type == 'databricks')
+    materialized='view'
 ) }}
 
 with dbt_queries as (
@@ -10,6 +9,8 @@ with dbt_queries as (
         start_time,
         total_duration_ms as execution_time_ms,
         coalesce(read_bytes, 0) as bytes_scanned,
+        produced_rows,
+        statement_type,
         regexp_extract(statement_text, '"node_id":\\s*"([^"]+)"', 1) as node_id
     from {{ ref('stg_databricks__query_history') }}
     where statement_text ilike '%"app": "dbt"%'
@@ -22,6 +23,8 @@ select
     dq.start_time,
     dq.execution_time_ms,
     dq.bytes_scanned,
+    dq.produced_rows,
+    dq.statement_type,
     dq.node_id,
     dr.model_name,
     dr.materialized,

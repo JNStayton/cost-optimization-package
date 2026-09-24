@@ -102,7 +102,6 @@ From `int_snowflake__warehouse_daily`, the model surfaces idle credit percentage
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `warehouse_sizing_lookback_days` | `30` | Analysis window |
-| `warehouse_sizing_dml_threshold` | `0.35` | DML ratio above which Gen2 is recommended |
 | `warehouse_sizing_min_query_count` | `20` | Minimum dbt queries to evaluate a warehouse |
 
 ---

@@ -1,0 +1,259 @@
+version: 2
+
+models:
+  - name: fct_bigquery__table_clustering_candidates
+    description: >
+      Daily snapshot of BigQuery tables evaluated as candidates for clustering.
+      Each row represents one table assessed on a given day, scored by observed
+      bytes billed and compute intensity over a configurable lookback window.
+
+      Scoring uses avg_bytes_billed (BigQuery's primary cost signal) as the
+      dominant factor, since BigQuery bills by bytes processed rather than
+      compute time. There is no partition-pruning-ratio equivalent to Snowflake's
+      (JOBS_BY_PROJECT does not expose partitions scanned per query), so the
+      partition density multiplier — total_partitions relative to row_count —
+      is used as the fragmentation signal instead.
+
+      No row limit is applied when selecting candidate tables; BigQuery's
+      distributed execution handles large scans efficiently. Narrow the
+      candidate set with clustering_candidates_min_size_gb (in GB, default 100)
+      if needed.
+
+      This model's post-hook (refresh_bigquery_column_cardinality) populates
+      int_bigquery__column_cardinality for the top N candidates by score before
+      fct_bigquery__clustering_key_candidates reads from it.
+
+      Controlled by the following dbt variables:
+        - clustering_candidates_min_size_gb      (default 100)
+        - clustering_candidates_lookback_days    (default 7)
+        - clustering_candidates_dbt_project_only (default true)
+        - clustering_candidates_target_databases (default [])
+        - clustering_candidates_target_schemas   (default [])
+        - clustering_key_cardinality_table_limit (default 10) — consumed by the post-hook
+        - use_query_text_attribution             (default true) — consumed by the post-hook
+    config:
+      materialized: incremental
+    columns:
+      # ---------------------------------------------------------------------------
+      # Snapshot metadata
+      # ---------------------------------------------------------------------------
+      - name: clustering_candidates_snapshot_key
+        description: >
+          Surrogate key for the snapshot. Derived from md5(current_date || table_fqn).
+          Used as the merge key for incremental runs — one record per table per day.
+        tests:
+          - unique
+          - not_null
+
+      - name: snapshot_date
+        description: Calendar date of the snapshot. Combined with table_fqn to form the unique key.
+        tests:
+          - not_null
+
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record.
+
+      # ---------------------------------------------------------------------------
+      # Table identity
+      # ---------------------------------------------------------------------------
+      - name: database_name
+        description: BigQuery project ID containing the table.
+
+      - name: schema_name
+        description: BigQuery dataset containing the table.
+
+      - name: table_name
+        description: Name of the evaluated table.
+        tests:
+          - not_null
+
+      - name: table_fqn
+        description: Fully-qualified table name in project.dataset.table format.
+        tests:
+          - not_null
+
+      - name: dbt_model
+        description: >
+          dbt unique_id of the model that produced this table, if the table is a known
+          dbt relation in the current project. Null when clustering_candidates_dbt_project_only
+          is false and the table is not part of the project.
+
+      - name: table_type
+        description: >
+          Normalized table classification. One of: Permanent Table, Materialized View.
+
+      # ---------------------------------------------------------------------------
+      # Recommendation
+      # ---------------------------------------------------------------------------
+      - name: is_candidate
+        description: >
+          Boolean flag indicating whether this table meets all criteria for a clustering
+          recommendation. True when all of the following are satisfied:
+            - At least one read query in the lookback window — any statement type that
+              read this table via referenced_tables, not only SELECT (e.g. a
+              CREATE_TABLE_AS_SELECT reading this table as a source counts too)
+            - Read/write query ratio > 1 (more reads than writes to this table itself)
+            - Table size meets or exceeds clustering_candidates_min_size_gb
+
+      - name: score
+        description: >
+          Composite priority score for clustering candidacy. Higher values indicate
+          tables where clustering is more likely to reduce bytes billed.
+
+          Formula: (query activity factor) * (partition density multiplier)
+
+          Query activity factor: (select_count * avg_gb_billed_per_query) + (read/write ratio * 10)
+          Partition density multiplier: greatest(total_partitions / row_count * 1000, 1) —
+          floored at 1 so the multiplier only ever boosts the score, never suppresses it.
+
+          Scores are not normalized and should be used for relative ranking within a
+          single snapshot_date, not compared across snapshots.
+
+      # ---------------------------------------------------------------------------
+      # Size & structure
+      # ---------------------------------------------------------------------------
+      - name: table_size_gb
+        description: Active storage size of the table in gigabytes.
+
+      - name: total_rows
+        description: Total row count of the table, from TABLE_STORAGE.
+
+      - name: current_partitions
+        description: >
+          Total partition count from TABLE_STORAGE (approx_micropartitions in the
+          upstream inventory model). BigQuery's data density proxy — used in the
+          partition density multiplier in place of Snowflake's partitions-scanned ratio.
+
+      - name: avg_gb_billed_per_query
+        description: >
+          Average total_bytes_billed (converted to GB) per read query over the
+          lookback window. BigQuery's primary cost signal — higher values mean each
+          query against this table is more expensive.
+
+      # ---------------------------------------------------------------------------
+      # Query activity
+      # ---------------------------------------------------------------------------
+      - name: select_count
+        description: >
+          Total number of distinct queries that read this table via
+          JOBS_BY_PROJECT.referenced_tables in the lookback window — any statement
+          type counts (e.g. a CREATE_TABLE_AS_SELECT reading this table as a source),
+          excluding queries whose own write target is this table.
+
+      - name: dml_count
+        description: >
+          Total number of INSERT, UPDATE, DELETE, MERGE, and CREATE_TABLE_AS_SELECT
+          queries whose destination_table is this table, in the lookback window.
+
+      - name: query_to_dml_ratio
+        description: >
+          Ratio of SELECT queries to DML operations (select_count / (dml_count + 1)).
+          Higher values indicate read-heavy tables where clustering is more likely to
+          deliver a return on the compute cost of maintaining cluster order.
+
+      - name: avg_slot_seconds
+        description: >
+          Average total_slot_ms (converted to seconds) for read queries against this
+          table in the lookback window (any statement type that read it, not only
+          SELECT). Parallel CPU-weighted time, not wall clock — not directly comparable
+          to Snowflake's avg_query_duration_s.
+
+      - name: is_already_clustered
+        description: >
+          Whether the table already has a CLUSTER BY clause. is_candidate does not
+          factor this in — a table already clustered on a column other than what the
+          query workload actually filters on is still a genuine optimization
+          opportunity, so being clustered doesn't by itself disqualify a table.
+          Use this alongside clustering_key and
+          fct_bigquery__clustering_key_candidates' recommendation to judge whether a
+          given candidate is new signal or a table already clustered on the right key.
+
+      - name: clustering_key
+        description: >
+          The table's current clustering column(s) if is_already_clustered, parsed from
+          its DDL (regex over the CLUSTER BY clause) — null if not clustered.
+
+  # ===========================================================================
+  # fct_bigquery__clustering_key_candidates
+  # ===========================================================================
+  - name: fct_bigquery__clustering_key_candidates
+    description: >
+      Daily snapshot of column-level clustering key recommendations for BigQuery
+      tables identified as candidates by fct_bigquery__table_clustering_candidates.
+      One row per (snapshot_date, table_fqn, column_name).
+
+      Scoped to the top N candidate tables by score (clustering_key_cardinality_table_limit,
+      default 10). Only tables with is_candidate = true from today's snapshot are evaluated.
+
+      Scoring uses real cardinality (distinct_values / total_rows) from
+      int_bigquery__column_cardinality, populated by the refresh_bigquery_column_cardinality
+      macro post-hook on the table-level fact. Combined with column query usage count
+      derived from JOBS_BY_PROJECT.query_text regex (heuristic, BigQuery has no
+      ACCESS_HISTORY equivalent; disable with use_query_text_attribution=false).
+
+      Use is_recommended = true or recommended_key_position <= 4 to surface the top
+      clustering key suggestions per table. BigQuery permits up to 4 clustering columns.
+
+      Controlled by:
+        - clustering_key_cardinality_table_limit (default 10)
+        - clustering_candidates_lookback_days    (default 7)
+        - use_query_text_attribution             (default true)
+    config:
+      materialized: incremental
+    columns:
+      - name: clustering_key_candidate_snapshot_key
+        description: Surrogate key from md5(snapshot_date || table_fqn || column_name); merge key
+        tests:
+          - unique
+          - not_null
+      - name: snapshot_date
+        description: Calendar date of the snapshot
+      - name: analyzed_at
+        description: Timestamp when this model run produced the record
+      - name: table_fqn
+        description: Fully-qualified table name (project.dataset.table)
+      - name: database_name
+        description: BigQuery project ID
+      - name: schema_name
+        description: BigQuery dataset name
+      - name: table_name
+        description: Table name
+      - name: dbt_model
+        description: dbt unique_id of the model that produced this table, if known
+      - name: column_name
+        description: Name of the evaluated column
+      - name: ordinal_position
+        description: Column position in the table definition (1-based)
+      - name: data_type
+        description: BigQuery data type of the column
+      - name: recommended_key_position
+        description: >
+          Rank of this column as a clustering key for its table, ordered by
+          column_score descending. Position 1 is the top recommendation.
+          Positions 1-4 are flagged as is_recommended = true (BigQuery allows up
+          to 4 clustering columns).
+      - name: is_recommended
+        description: True when recommended_key_position <= 4
+      - name: column_score
+        description: >
+          Composite column-level score combining cardinality and query usage signals.
+          Formula: cardinality_pct + (usage_count * 20).
+          Scores are relative within a table — use recommended_key_position for ranking.
+      - name: distinct_values
+        description: >
+          Approximate distinct value count from APPROX_COUNT_DISTINCT, populated by
+          the refresh_bigquery_column_cardinality macro. Null on first run or when the
+          column was not included in the macro's pre-filtered scan set for the table.
+      - name: cardinality_pct
+        description: >
+          Cardinality as a percentage of total rows (distinct_values / total_rows * 100).
+          Null when distinct_values is null. Medium cardinality (roughly 0.1%-10%) is
+          generally ideal for clustering keys.
+      - name: cardinality_calculated_at
+        description: Timestamp when refresh_bigquery_column_cardinality last populated this row
+      - name: usage_count
+        description: >
+          Count of distinct queries that referenced this column inside a filter context
+          (WHERE / JOIN ON / ORDER BY) over the lookback window. Heuristic — derived
+          from query-text regex extraction, not engine-attested. Zero when
+          use_query_text_attribution = false. Heavily weighted in the score (× 20).

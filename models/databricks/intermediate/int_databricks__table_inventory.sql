@@ -1,7 +1,6 @@
 {{
   config(
-    materialized='view',
-    enabled=(target.type == 'databricks')
+    materialized='view'
   )
 }}
 
@@ -24,10 +23,10 @@ select
     s.active_bytes / power(1024, 3) as size_gb,
     s.file_count
 from {{ ref('int_databricks__tables') }} as t
-inner join {{ ref('int_databricks__table_storage') }} as s
+left join {{ ref('int_databricks__table_storage') }} as s
     on t.database_name = s.database_name
     and t.schema_name = s.schema_name
     and t.table_name = s.table_name
 where t.table_type in ('BASE TABLE', 'EXTERNAL TABLE')
     and not t.is_deleted
-    and not s.is_deleted
+    and not coalesce(s.is_deleted, false)

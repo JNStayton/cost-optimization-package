@@ -49,3 +49,6 @@ archived/
 
 # Local test seeds (not for committing)
 seeds/
+
+# Internal planning / spec docs (kept locally, not tracked)
+docs/superpowers/
