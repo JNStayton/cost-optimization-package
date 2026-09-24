@@ -1,9 +1,9 @@
 {#--
   Post-hook that probes candidate unique keys for incremental-config recommendations.
   Dispatches to the platform implementation:
-    - snowflake__probe_unique_key_candidates   (macros/snowflake/utils/snowflake__probe_unique_key_candidates.sql)
-    - databricks__probe_unique_key_candidates  (macros/databricks/utils/databricks__probe_unique_key_candidates.sql)
-    - redshift__probe_unique_key_candidates    (macros/redshift/utils/redshift__probe_unique_key_candidates.sql)
+    - snowflake__probe_unique_key_candidates   (macros/platforms/snowflake/utils/snowflake__probe_unique_key_candidates.sql)
+    - databricks__probe_unique_key_candidates  (macros/platforms/databricks/utils/databricks__probe_unique_key_candidates.sql)
+    - redshift__probe_unique_key_candidates    (macros/platforms/redshift/utils/redshift__probe_unique_key_candidates.sql)
 --#}
 {% macro probe_unique_key_candidates() %}
   {{ return(adapter.dispatch('probe_unique_key_candidates', 'dbt_cost_optimization_package')()) }}

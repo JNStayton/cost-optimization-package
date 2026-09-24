@@ -1,6 +1,6 @@
 {#--
   Dispatcher for capture_storage_metrics. Platform implementations:
-    - databricks__capture_storage_metrics   (macros/databricks/utils/databricks__capture_storage_metrics.sql)
+    - databricks__capture_storage_metrics   (macros/platforms/databricks/utils/databricks__capture_storage_metrics.sql)
   Add a <platform>__capture_storage_metrics with the same arguments to support another platform.
 --#}
 {% macro capture_storage_metrics() %}

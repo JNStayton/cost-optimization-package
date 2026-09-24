@@ -1,6 +1,6 @@
 {#--
   Dispatcher for find_warehouse_sizing_recommendations. Platform implementations:
-    - snowflake__find_warehouse_sizing_recommendations   (macros/snowflake/optimizations/snowflake__find_warehouse_sizing_recommendations.sql)
+    - snowflake__find_warehouse_sizing_recommendations   (macros/platforms/snowflake/optimizations/snowflake__find_warehouse_sizing_recommendations.sql)
   Add a <platform>__find_warehouse_sizing_recommendations with the same arguments to support another platform.
 --#}
 {% macro find_warehouse_sizing_recommendations(lookback_days=7, min_query_count=20, dml_threshold=0.35) %}

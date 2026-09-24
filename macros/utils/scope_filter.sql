@@ -1,6 +1,6 @@
 {#--
   Dispatcher for scope_filter. Platform implementations:
-    - snowflake__scope_filter   (macros/snowflake/utils/snowflake__scope_filter.sql)
+    - snowflake__scope_filter   (macros/platforms/snowflake/utils/snowflake__scope_filter.sql)
   Add a <platform>__scope_filter with the same arguments to support another platform.
 --#}
 {% macro scope_filter(project_col='node_project_name', allow_null_col='node_id') %}

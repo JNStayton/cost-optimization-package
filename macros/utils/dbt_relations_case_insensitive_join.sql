@@ -1,6 +1,6 @@
 {#--
   Dispatcher for dbt_relations_case_insensitive_join. Platform implementations:
-    - bigquery__dbt_relations_case_insensitive_join   (macros/bigquery/utils/bigquery__dbt_relations_case_insensitive_join.sql)
+    - bigquery__dbt_relations_case_insensitive_join   (macros/platforms/bigquery/utils/bigquery__dbt_relations_case_insensitive_join.sql)
   Add a <platform>__dbt_relations_case_insensitive_join with the same arguments to support another platform.
 --#}
 {% macro dbt_relations_case_insensitive_join(left_alias) %}
