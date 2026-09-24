@@ -1,4 +1,4 @@
-{% macro find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30) %}
+{% macro snowflake__find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30) %}
 
   {#--
     Identifies dbt models currently configured as TABLEs that are large, slow to build,

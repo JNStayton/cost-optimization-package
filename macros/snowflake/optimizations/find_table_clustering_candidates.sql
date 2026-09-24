@@ -1,4 +1,4 @@
-{% macro find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[]) %}
+{% macro snowflake__find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[]) %}
 
   {#--
     Identifies Snowflake tables that may benefit from clustering, scored by

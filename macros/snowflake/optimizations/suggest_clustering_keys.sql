@@ -1,4 +1,4 @@
-{% macro suggest_clustering_keys(model_name, database=none, schema=none, include_boolean_cols=false) %}
+{% macro snowflake__suggest_clustering_keys(model_name, database=none, schema=none, include_boolean_cols=false) %}
 
   {#--
     Orchestrates all macros to suggest a clustering key for a given model.

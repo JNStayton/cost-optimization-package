@@ -1,4 +1,4 @@
-{% macro find_table_materialization_candidates(lookback_days=14, min_query_count=10) %}
+{% macro snowflake__find_table_materialization_candidates(lookback_days=14, min_query_count=10) %}
 
   {#--
     Identifies dbt models currently configured as VIEWs that are experiencing high 

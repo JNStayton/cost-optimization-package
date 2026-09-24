@@ -1,4 +1,4 @@
-{% macro find_warehouse_sizing_recommendations(lookback_days=7, min_query_count=20, dml_threshold=0.35) %}
+{% macro snowflake__find_warehouse_sizing_recommendations(lookback_days=7, min_query_count=20, dml_threshold=0.35) %}
 
   {#--
     Recommends warehouse-level sizing actions for warehouses running dbt workloads.

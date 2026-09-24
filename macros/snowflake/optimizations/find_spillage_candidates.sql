@@ -1,4 +1,4 @@
-{% macro find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1) %}
+{% macro snowflake__find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1) %}
 
   {#--
     Identifies dbt-managed tables whose builds are spilling to local or remote

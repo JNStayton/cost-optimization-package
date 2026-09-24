@@ -1,4 +1,4 @@
-{% macro find_expensive_dbt_queries(
+{% macro snowflake__find_expensive_dbt_queries(
     lookback_days=7,
     top_n=20,
     min_total_credits=0.1,
