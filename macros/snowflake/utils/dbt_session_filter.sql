@@ -1,4 +1,4 @@
-{% macro dbt_session_filter(lookback_days=7) %}
+{% macro snowflake__dbt_session_filter(lookback_days=7) %}
 
   {#--
     Returns a SELECT statement that finds session_ids for sessions authenticated by dbt,

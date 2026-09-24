@@ -34,7 +34,7 @@
     {% endif %}
 --#}
 
-{% macro build_incremental_config_template() %}
+{% macro snowflake__build_incremental_config_template() %}
 case
     when incremental_strategy = 'microbatch'
         then

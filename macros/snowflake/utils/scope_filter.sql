@@ -18,7 +18,7 @@
       AND ({{ scope_filter('ar.node_project_name', 'ar.node_id') }})
 --#}
 
-{% macro scope_filter(project_col='node_project_name', allow_null_col='node_id') %}
+{% macro snowflake__scope_filter(project_col='node_project_name', allow_null_col='node_id') %}
 {%- set monitored_projects = var('dbt_monitored_projects', []) -%}
 {%- if monitored_projects | length == 0 -%}
   {%- set monitored_projects = [project_name] -%}

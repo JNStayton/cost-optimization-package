@@ -1,4 +1,4 @@
-{% macro extract_operator_evidence() %}
+{% macro snowflake__extract_operator_evidence() %}
 
   {#--
     Unified operator evidence extraction. Populates int_snowflake__query_operator_evidence

@@ -1,4 +1,4 @@
-{% macro refresh_warehouse_config() %}
+{% macro snowflake__refresh_warehouse_config() %}
 
   {#--
     Captures current warehouse configuration from SHOW WAREHOUSES and merges

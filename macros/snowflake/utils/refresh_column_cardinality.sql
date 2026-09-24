@@ -1,4 +1,4 @@
-{% macro refresh_column_cardinality() %}
+{% macro snowflake__refresh_column_cardinality() %}
 
   {#--
     Populates int_snowflake__column_cardinality with real APPROX_COUNT_DISTINCT
