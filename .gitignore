@@ -52,3 +52,6 @@ seeds/
 
 # Internal planning / spec docs (kept locally, not tracked)
 docs/superpowers/
+
+macro-dispatch-refactor-plan.md
+merge-conflict-resolution-plan-pr14.md
