@@ -1,6 +1,6 @@
 {{ config(
     materialized='incremental',
-    unique_key=['warehouse_name', 'start_time'],
+    unique_key=['warehouse_id', 'warehouse_name', 'start_time'],
     cluster_by=['to_date(start_time)'],
     on_schema_change='append_new_columns',
 ) }}

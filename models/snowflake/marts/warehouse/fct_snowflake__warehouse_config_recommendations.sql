@@ -98,6 +98,9 @@ scored as (
         coalesce(wc.scaling_policy, 'STANDARD') as scaling_policy,
         coalesce(wc.min_cluster_count, 1) as min_cluster_count,
         coalesce(wc.max_cluster_count, 1) as max_cluster_count,
+        -- Suspend cycle metrics
+        coalesce(sc.autosuspend_cycles_30d, 0) as autosuspend_cycles_30d,
+        coalesce(sc.mcw_spindown_cycles_30d, 0) as mcw_spindown_cycles_30d,
         -- Trend
         case
             when w7.median_overload_sec_7d > w30.median_overload_sec_30d * 1.2 then 'Worsening'
@@ -108,6 +111,7 @@ scored as (
     left join window_7d as w7 on w7.warehouse_name = w30.warehouse_name
     left join idle_30d as id on id.warehouse_name = w30.warehouse_name
     left join {{ ref('int_snowflake__warehouse_config') }} as wc on w30.warehouse_name = wc.warehouse_name
+    left join {{ ref('int_snowflake__warehouse_suspend_cycles') }} as sc on w30.warehouse_name = sc.warehouse_name
 ),
 
 classified as (
@@ -321,7 +325,7 @@ select
         when recommendation_key = 'idle_reduce_auto_suspend'
             then 'Warehouse is idle ' || round(avg_idle_credit_pct_30d * 100, 1) || '% of the time. '
                 || 'Current auto_suspend is ' || auto_suspend_seconds || 's — reducing to 60s will eliminate ~'
-                || round(total_idle_credits_30d * 0.7, 0) || ' idle credits/month without impacting query performance for most workloads.'
+                || round(autosuspend_cycles_30d * greatest(auto_suspend_seconds - 60, 0) / 3600.0, 0) || ' idle credits/month without impacting query performance for most workloads.'
         when recommendation_key = 'idle_switch_scaling_policy'
             then 'Warehouse is idle ' || round(avg_idle_credit_pct_30d * 100, 1) || '% despite auto_suspend='
                 || auto_suspend_seconds || 's. ECONOMY scaling policy keeps clusters running for 2-3 extra minutes after load drops. '

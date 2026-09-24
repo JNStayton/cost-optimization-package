@@ -32,7 +32,8 @@ select
     execution_status,
     rows_inserted,
     dbt_cloud_run_id,
-    dbt_cloud_job_id
+    dbt_cloud_job_id,
+    dbt_node_id
 from {{ ref('stg_snowflake__query_history') }}
 {% if is_incremental() %}
 where start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})

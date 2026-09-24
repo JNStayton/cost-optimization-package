@@ -15,7 +15,7 @@
   query_count: total queries that accessed the column (any context).
 
   This model tracks raw access frequency only. Filter/join usage context
-  comes from int_snowflake__query_operator_columns (GET_QUERY_OPERATOR_STATS).
+  comes from int_snowflake__query_operator_evidence (GET_QUERY_OPERATOR_STATS).
 
   Used by:
   - fct_snowflake__clustering_key_candidates (access frequency signal)

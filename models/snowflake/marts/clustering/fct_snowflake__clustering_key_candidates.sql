@@ -1,13 +1,13 @@
 {#--
   Clustering key recommendations per candidate table, scored on confirmed
-  Filter/Join operator usage (from GET_QUERY_OPERATOR_STATS) and cardinality.
+  Filter/Join operator usage from consumption queries only.
 
   Requires fct_snowflake__table_clustering_candidates to build first — its
   post-hooks populate int_snowflake__column_cardinality and
-  int_snowflake__query_operator_columns before this model runs.
+  int_snowflake__query_operator_evidence before this model runs.
 
   Gating (two thresholds):
-    1. filter_query_count > 0 AND filter proportion >= 33% of analyzed queries
+    1. filter_query_count > 0 AND filter proportion >= 33% of analyzed consumption queries
        (join-only columns are excluded — filter is the admission ticket)
     2. column_score >= 50% of the table's top-scored column
        (prevents diminishing-returns keys from being recommended)
@@ -16,10 +16,10 @@
     - filter_query_count * 3 (WHERE predicates = strongest clustering signal)
     - join_query_count * 1   (JOIN co-location = secondary benefit)
     - cardinality_bonus: +10 when avg_rows_per_value between 100 and 10000
-      (sweet spot for micropartition grouping — neither too unique nor too few values)
 
-  Enterprise+ only (operator stats require ACCESS_HISTORY for query discovery).
-  Standard edition falls back to query_text ILIKE matching (less accurate).
+  Only consumption queries contribute to column evidence. Build/test queries
+  are excluded to avoid false positives from dbt test patterns or full-table
+  model rebuilds.
 --#}
 {{
   config(
@@ -31,7 +31,6 @@
 
 {% set lookback_days = var('clustering_candidates_lookback_days', 7) %}
 {% set cardinality_limit = var('clustering_key_cardinality_table_limit', 10) %}
-{% set is_enterprise = var('snowflake_enterprise_edition', true) %}
 
 with candidates as (
     select
@@ -51,6 +50,7 @@ with candidates as (
 ),
 
 table_columns as (
+    -- Regular columns
     select
         tc.table_fqn,
         tc.column_name,
@@ -70,53 +70,78 @@ table_columns as (
             cc.distinct_values is null
             or cc.distinct_values < cc.total_rows * 0.5
         )
+
+    union all
+
+    -- Expression candidates: timestamp columns profiled as TO_DATE(col)
+    select
+        cc.table_fqn,
+        cc.column_name,
+        tc.ordinal_position,
+        'DATE' as data_type,
+        cc.distinct_values,
+        cc.total_rows as cardinality_total_rows,
+        cc.calculated_at as cardinality_calculated_at
+    from {{ ref('int_snowflake__column_cardinality') }} as cc
+    inner join candidates as c
+        on cc.table_fqn = c.table_fqn
+    inner join {{ ref('int_snowflake__table_columns') }} as tc
+        on cc.table_fqn = tc.table_fqn
+        and upper(tc.column_name) = upper(replace(replace(cc.column_name, 'to_date(', ''), ')', ''))
+    where cc.column_name like 'to_date(%)'
+        and cc.distinct_values < cc.total_rows * 0.5
 ),
 
-{% if is_enterprise %}
 column_usage as (
-    -- Enterprise+: exact operator stats from GET_QUERY_OPERATOR_STATS
+    -- Filter/Join evidence from consumption queries only
     select
-        table_fqn,
-        column_name,
-        count(distinct case when operator_type = 'Filter' then query_id end) as filter_query_count,
-        count(distinct case when operator_type = 'Join' then query_id end) as join_query_count
-    from {{ ref('int_snowflake__query_operator_columns') }}
-    where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by table_fqn, column_name
+        oe.table_fqn,
+        oe.column_name,
+        count(distinct case when oe.operator_type = 'Filter' then oe.query_id end) as filter_query_count,
+        count(distinct case when oe.operator_type = 'Join' then oe.query_id end) as join_query_count
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    where wc.workload_class = 'consumption'
+      and oe.operator_type in ('Filter', 'Join')
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn, oe.column_name
+
+    union all
+
+    -- Expression usage: map raw timestamp filter evidence to to_date(col) form
+    select
+        oe.table_fqn,
+        'to_date(' || lower(oe.column_name) || ')' as column_name,
+        count(distinct case when oe.operator_type = 'Filter' then oe.query_id end) as filter_query_count,
+        count(distinct case when oe.operator_type = 'Join' then oe.query_id end) as join_query_count
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    inner join {{ ref('int_snowflake__table_columns') }} as tc
+        on oe.table_fqn = tc.table_fqn
+        and oe.column_name = tc.column_name
+    where wc.workload_class = 'consumption'
+      and oe.operator_type in ('Filter', 'Join')
+      and tc.data_type ilike 'TIMESTAMP%'
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn, 'to_date(' || lower(oe.column_name) || ')'
 ),
 
 total_queries_per_table as (
-    -- Total distinct queries analyzed per candidate table (for proportion gating)
+    -- Denominator: consumption queries with a confirmed TableScan on this FQN
+    -- (not just queries that happened to match a Filter/Join)
     select
-        table_fqn,
-        count(distinct query_id) as total_queries_analyzed
-    from {{ ref('int_snowflake__query_operator_columns') }}
-    where access_date >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by table_fqn
+        oe.table_fqn,
+        count(distinct oe.query_id) as total_queries_analyzed
+    from {{ ref('int_snowflake__query_operator_evidence') }} as oe
+    inner join {{ ref('int_snowflake__query_workload_class') }} as wc
+        on oe.query_id = wc.query_id
+    where wc.workload_class = 'consumption'
+      and oe.operator_type = 'TableScan'
+      and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    group by oe.table_fqn
 ),
-{% else %}
-column_usage as (
-    -- Standard edition: no ACCESS_HISTORY or operator stats available.
-    -- Falls back to query_text ILIKE matching (less accurate, known false positives).
-    select
-        tc.table_fqn,
-        tc.column_name,
-        count(distinct case
-            when qh.query_text ilike '%WHERE%' || tc.column_name || '%'
-                then qh.query_id
-        end) as filter_query_count,
-        count(distinct case
-            when qh.query_text ilike '%JOIN%'
-                and qh.query_text ilike '%ON%' || tc.column_name || '%'
-                then qh.query_id
-        end) as join_query_count
-    from table_columns as tc
-    inner join {{ ref('int_snowflake__query_history') }} as qh
-        on qh.query_text ilike '%' || split_part(tc.table_fqn, '.', 3) || '%'
-    where qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
-    group by tc.table_fqn, tc.column_name
-),
-{% endif %}
 
 scored as (
     select
@@ -143,10 +168,8 @@ scored as (
     left join column_usage as cu
         on tc.table_fqn = cu.table_fqn
         and tc.column_name = cu.column_name
-    {% if is_enterprise %}
     left join total_queries_per_table as tqa
         on tc.table_fqn = tqa.table_fqn
-    {% endif %}
 ),
 
 column_scored as (
@@ -166,6 +189,14 @@ column_scored as (
     where filter_query_count > 0
         -- Proportion gate: column must be filtered on in >= 1/3 of analyzed queries
         and filter_query_count::float / nullif(total_queries_analyzed, 0) >= 0.33
+        -- Selectivity gate: column must have low enough cardinality for clustering benefit
+        -- High-selectivity columns (near-unique) can't consolidate into micropartitions
+        and (
+            distinct_values is null
+            or cardinality_total_rows is null
+            or cardinality_total_rows = 0
+            or distinct_values::float / cardinality_total_rows <= 0.05
+        )
 ),
 
 final as (

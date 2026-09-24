@@ -110,9 +110,10 @@ A large table rebuilt frequently wastes the most compute. Simple, intuitive, and
 
 **`rebuild_redundancy_rate`** — efficiency signal:
 ```
-rebuild_redundancy_rate = rows_at_period_start / rows_at_period_end
+rebuild_redundancy_rate = median(prev_day_rows / current_day_rows)
+                          across consecutive build days in the lookback window
 ```
-Measures what fraction of the table already existed before the latest rebuild. A rate of 0.95 means 95% of rows were already present — only 5% was new data, but the entire table was rebuilt. Higher = more waste.
+Measures the median fraction of each rebuild that reprocesses unchanged rows, computed from consecutive-day row count deltas using LAG. A rate of 0.95 means the typical build reprocesses 95% unchanged data — only 5% was new, but the entire table was rebuilt. Higher = more waste. This approach is resilient to one-time data reloads (outlier pairs produce NULL and are excluded from the median).
 
 **`est_daily_redundant_gb_scanned`** — dollar impact:
 ```
@@ -137,8 +138,8 @@ A table appears in recommendations when ANY of these conditions is met:
 | Candidate | `redundancy_rate >= 0.7` | 70-90% unchanged — clear benefit |
 | Candidate — Moderate Redundancy | `redundancy_rate >= 0.5` | 50-70% unchanged — benefit exists but smaller |
 | Low ROI — Minimal Rebuild Redundancy | `redundancy_rate < 0.5` | Most data changes between rebuilds — incremental may not help much |
-| Candidate — Insufficient History | `qualified_build_days < min_qualified_build_days` | Not enough build history to measure growth reliably |
-| Candidate — Verify Growth Signal | `rows_at_period_end < rows_at_period_start` | Table shrank — unusual; verify data lifecycle |
+| Candidate — Insufficient History | `qualified_build_pairs < min_qualified_build_days - 1` | Not enough consecutive build days to compute per-build redundancy |
+| Candidate — Verify Growth Signal | Insufficient consecutive pairs with valid deltas | Growth pattern unclear; verify data lifecycle |
 
 ### Variables
 
@@ -150,6 +151,8 @@ A table appears in recommendations when ANY of these conditions is met:
 | `incremental_candidates_min_compute_waste_score` | `5` | Min waste score for waste trigger |
 | `incremental_candidates_min_qualified_build_days` | `3` | Min CTAS days to trust growth signal |
 | `incremental_candidates_min_compute_waste_avg_build_sec` | `30` | Min avg build time alongside waste score |
+| `incremental_candidates_roi_high_build_time_sec` | `300` | Min avg build time (seconds) for 'high' ROI tier |
+| `incremental_candidates_roi_medium_build_time_sec` | `120` | Min avg build time (seconds) for 'medium' ROI tier |
 
 ---
 

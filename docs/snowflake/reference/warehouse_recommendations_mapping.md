@@ -35,7 +35,7 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 
 | # | Config Check | Edition Constraint | Recommendation (DDL) | Recommendation Reason |
 |---|---|---|---|---|
-| 1.1 | `auto_suspend > 60` | Any | `ALTER WAREHOUSE {wh} SET AUTO_SUSPEND = 60;` | Warehouse is idle {idle_credit_pct}% of the time. Current auto_suspend is {auto_suspend}s -- reducing to 60s will eliminate ~{estimated_savings} idle credits/month without impacting query performance for most workloads. |
+| 1.1 | `auto_suspend > 60` | Any | `ALTER WAREHOUSE {wh} SET AUTO_SUSPEND = 60;` | Warehouse is idle {idle_credit_pct}% of the time. Current auto_suspend is {auto_suspend}s -- reducing to 60s will eliminate ~{autosuspend_cycles * (auto_suspend - 60) / 3600} idle credits/month without impacting query performance for most workloads. |
 | 1.2 | `auto_suspend <= 60 AND is_multicluster = TRUE AND scaling_policy = 'ECONOMY'` | Enterprise+ | `ALTER WAREHOUSE {wh} SET SCALING_POLICY = 'STANDARD';` | Warehouse is idle {idle_credit_pct}% despite auto_suspend={auto_suspend}s. ECONOMY scaling policy keeps clusters running for 2-3 extra minutes after load drops. STANDARD scaling shuts down idle clusters immediately. |
 | 1.3 | `auto_suspend <= 60 AND is_multicluster = TRUE AND scaling_policy = 'STANDARD' AND max_cluster_count > 2` | Enterprise+ | `ALTER WAREHOUSE {wh} SET MAX_CLUSTER_COUNT = {max_cluster_count - 1};` | Warehouse is idle {idle_credit_pct}% with aggressive suspend and STANDARD scaling. Reducing max clusters from {max_cluster_count} to {max_cluster_count - 1} limits over-provisioning while still allowing scale-out. |
 | 1.4 | `auto_suspend <= 60 AND is_multicluster = TRUE AND scaling_policy = 'STANDARD' AND max_cluster_count <= 2 AND min_cluster_count > 1` | Enterprise+ | `ALTER WAREHOUSE {wh} SET MIN_CLUSTER_COUNT = 1;` | Warehouse is idle {idle_credit_pct}% but min_cluster_count={min_cluster_count} forces clusters to stay running. Setting min to 1 allows full scale-down during low-demand periods. |
@@ -134,7 +134,7 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 | `queued_provisioning_time` (per query, aggregated) | SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY | Distinguish between cold-start types (full suspend vs cluster add) |
 | `avg_running` / `avg_queued_load` | SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_LOAD_HISTORY | Time-series view of warehouse saturation -- enables "peak hour" recommendations |
 | `snowflake_edition` | SHOW ORGANIZATION ACCOUNTS or param check | Gate MCW recommendations (critical for Standard edition accounts) |
-| `resume_count` / `suspend_count` (per day) | Derivable from WAREHOUSE_EVENTS_HISTORY (RESUME_CLUSTER / SPINUP_CLUSTER events) | Quantify cold-start frequency for provisioning recommendations |
+| `resume_count` / `suspend_count` (per day) | Yes | `INT_SNOWFLAKE__WAREHOUSE_SUSPEND_CYCLES` (derived from WAREHOUSE_EVENTS_HISTORY SUSPEND_WAREHOUSE / SUSPEND_CLUSTER events) | Quantify cold-start frequency for provisioning recommendations and compute data-driven idle credit savings |
 | `cluster_utilization` (per cluster in MCW) | WAREHOUSE_LOAD_HISTORY broken by interval | Detect if MCW is spinning clusters that sit idle (scaling_policy tuning) |
 | `query_acceleration_eligible` | QUERY_HISTORY.QUERY_ACCELERATION_MAX_SCALE_FACTOR | Recommend Query Acceleration Service instead of size-up for long-tail queries |
 

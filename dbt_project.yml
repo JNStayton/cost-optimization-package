@@ -69,6 +69,10 @@ models:
     # Databricks optimization models
     databricks:
       +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
 
 # Package variables — override in consuming project's dbt_project.yml vars: section
 vars:
@@ -99,6 +103,7 @@ vars:
   # --- Snowflake: Materialization ---
   table_materialization_lookback_days: 14
   table_materialization_min_query_count: 10
+  suppress_staging_materialization_recs: false  # Set true to hide staging-layer (stg_/stage_) view-to-table recommendations
   incremental_overlap_days: 31  # Re-scan window on incremental runs. Set to your longest gap between builds.
   incremental_unique_key_probe_threshold: 0.95  # Uniqueness ratio threshold for key candidates
   incremental_candidates_lookback_days: 60
@@ -107,6 +112,8 @@ vars:
   incremental_candidates_min_compute_waste_score: 5
   incremental_candidates_min_qualified_build_days: 3
   incremental_candidates_min_compute_waste_avg_build_sec: 30
+  incremental_candidates_roi_high_build_time_sec: 300
+  incremental_candidates_roi_medium_build_time_sec: 120
   incremental_large_table_row_threshold: 10000000
   incremental_large_table_gb_threshold: 10
 

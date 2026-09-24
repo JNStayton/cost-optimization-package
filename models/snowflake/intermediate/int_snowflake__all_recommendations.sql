@@ -31,9 +31,10 @@
 
 with warehouse_rates as (
     -- Derive credits-per-second per warehouse from actual metering data
+    -- Note: int_snowflake__warehouse_daily is daily grain, so divide by 86400 (seconds/day)
     select
         warehouse_name,
-        avg(total_credits) / 3600.0 as credits_per_second
+        avg(total_credits) / 86400.0 as credits_per_second
     from {{ ref('int_snowflake__warehouse_daily') }}
     where total_credits > 0
     group by warehouse_name
@@ -57,10 +58,42 @@ all_recommendations as (
         ws.total_credits_30d as score,
         ws.total_credits_30d * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         case
-            when ws.symptom = 'idle_credit_consumption'
+            -- 1.1: Auto-suspend reduction — save (current - 60)s per suspend cycle
+            when ws.recommendation_key = 'idle_reduce_auto_suspend'
+                then coalesce(sc.autosuspend_cycles_30d, 0)
+                     * greatest(ws.auto_suspend_seconds - 60, 0) / 3600.0
+                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * 12 * {{ credit_rate_usd }}
+            -- 1.2: ECONOMY→STANDARD — eliminate ~150s idle per MCW spindown cycle
+            when ws.recommendation_key = 'idle_switch_scaling_policy'
+                then coalesce(sc.mcw_spindown_cycles_30d, 0)
+                     * 150.0 / 3600.0
+                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * 12 * {{ credit_rate_usd }}
+            -- 1.3: Reduce max clusters — fewer spindown idle periods
+            when ws.recommendation_key = 'idle_reduce_max_clusters'
+                then coalesce(sc.mcw_spindown_cycles_30d, 0)
+                     * 150.0 / 3600.0
+                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * 12 * {{ credit_rate_usd }}
+            -- 1.4: Reduce min clusters — eliminate forced-idle cluster time
+            when ws.recommendation_key = 'idle_reduce_min_clusters'
+                then (ws.min_cluster_count - 1)
+                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * ws.avg_idle_credit_pct_30d * 720.0
+                     * 12 * {{ credit_rate_usd }}
+            -- 1.7: Consolidate underloaded — warehouse retires entirely
+            when ws.recommendation_key = 'idle_consolidate_underloaded'
                 then ws.total_idle_credits_30d * 12 * {{ credit_rate_usd }}
+            -- 1.5: Consolidate standard — conservative 50%
+            when ws.recommendation_key = 'idle_consolidate_standard'
+                then ws.total_idle_credits_30d * 0.5 * 12 * {{ credit_rate_usd }}
+            -- 1.6: Enable MCW bursty — adds cost, benefit is reduced queuing
+            when ws.recommendation_key = 'idle_enable_mcw_bursty'
+                then null
+            -- Oversized: save ~50% by scaling down
             when ws.symptom = 'oversized'
-                then ws.total_idle_credits_30d * 12 * {{ credit_rate_usd }}
+                then ws.total_credits_30d * 0.50 * 12 * {{ credit_rate_usd }}
             else ws.total_credits_30d * 0.10 * 12 * {{ credit_rate_usd }}
         end as estimated_annual_savings_usd,
         ws.snowflake_ddl,
@@ -74,6 +107,9 @@ all_recommendations as (
         null as identified_unique_key,
         ws.recommendation_key as signal_id
     from {{ ref('fct_snowflake__warehouse_config_recommendations') }} as ws
+    left join {{ ref('int_snowflake__warehouse_suspend_cycles') }} as sc
+        on sc.warehouse_name = ws.warehouse_name
+    left join warehouse_rates as wr on wr.warehouse_name = ws.warehouse_name
     where ws.recommendation not like 'Stable%'
 
     union all
@@ -232,8 +268,10 @@ all_recommendations as (
         tm.select_count * tm.avg_query_duration_s
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        (tm.select_count - 1) * tm.avg_query_duration_s
-            * coalesce(wr.credits_per_second, 0.000278)
+        (
+            greatest(tm.select_count - 1, 0) * tm.avg_query_duration_s
+            + coalesce(tm.downstream_build_time_s, 0) * coalesce(tm.downstream_table_count, 0)
+        ) * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tm.snapshot_date,
@@ -249,6 +287,14 @@ all_recommendations as (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
     where tm.recommendation != 'Monitor'
+      {% if var('suppress_staging_materialization_recs', false) %}
+      and not (
+          lower(tm.model_name) like 'stg\_%' escape '\\'
+          or lower(tm.model_name) like 'stage\_%' escape '\\'
+          or lower(tm.model_name) like 'staging\_%' escape '\\'
+          or lower(tm.schema_name) like '%staging%'
+      )
+      {% endif %}
 
     union all
 
@@ -370,13 +416,22 @@ all_recommendations as (
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         tc.select_count * tc.avg_query_duration_s
-            * greatest(tc.scan_ratio_pct / 100.0 - 0.2, 0)
+            * (coalesce(ck_top.filter_query_count, 0)::float / nullif(tc.select_count, 0))
+            * greatest(
+                tc.scan_ratio_pct / 100.0
+                - (1.0 / nullif(coalesce(ck_top.top_key_distinct_values, 1), 0)),
+                0
+            )
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tc.snapshot_date,
-        'actionable' as backlog_status,
-        '{% raw %}{{ config(cluster_by=[{% endraw %}' || coalesce('''' || replace(tc.clustering_key, ', ', ''', ''') || '''', '''<recommended_columns>''') || '{% raw %}]) }}{% endraw %}' as dbt_model_config,
+        case when ck_top.table_fqn is not null then 'actionable' else 'monitor' end as backlog_status,
+        case
+            when tc.clustering_key is not null
+                then '{% raw %}{{ config(cluster_by=[{% endraw %}' || '''' || replace(tc.clustering_key, ', ', ''', ''') || '''' || '{% raw %}]) }}{% endraw %}'
+            else null
+        end as dbt_model_config,
         null as identified_unique_key,
         case
             when tc.recommendation_tier = 'Strong' then 'add_clustering_key_strong'
@@ -387,7 +442,19 @@ all_recommendations as (
     left join warehouse_rates as wr on wr.warehouse_name = (
         select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
     )
+    left join (
+        select
+            ck.table_fqn,
+            ck.filter_query_count,
+            cc.distinct_values as top_key_distinct_values
+        from {{ ref('fct_snowflake__clustering_key_candidates') }} as ck
+        left join {{ ref('int_snowflake__column_cardinality') }} as cc
+            on ck.table_fqn = cc.table_fqn and ck.column_name = cc.column_name
+        where ck.recommended_key_position = 1
+          and ck.snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__clustering_key_candidates') }})
+    ) as ck_top on ck_top.table_fqn = tc.table_fqn
     where tc.is_candidate = true
+        and tc.recommendation_status in ('evaluate_clustering', 'evaluate_key_alignment', 'insufficient_evidence')
 
     union all
 

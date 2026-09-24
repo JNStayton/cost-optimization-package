@@ -1,34 +1,48 @@
-{% macro suggest_clustering_keys(model_name, include_boolean_cols=false, preview_only=true) %}
+{% macro suggest_clustering_keys(model_name, database=none, schema=none, include_boolean_cols=false) %}
 
   {#--
     Orchestrates all macros to suggest a clustering key for a given model.
 
-    Use this in combination with the find_table_clustering_candidates macro. Once you have identified a table that may benefit from clustering, run this macro to get column-level recommendations on good clustering keys for that specific table.
+    Use this in combination with the find_table_clustering_candidates macro. Once you have
+    identified a table that may benefit from clustering, run this macro to get column-level
+    recommendations on good clustering keys for that specific table.
 
     1. Calls get_clustering_cardinality_stats() to find structurally good candidates.
-    2. For each candidate, calls get_column_usage_count() to find query history usage on filtering and joins.
-    3. For each candidate, calls get_clustering_score() to get a weighted score based on the above criteria.
+    2. For each candidate, calls get_column_usage_count() to find query history usage.
+    3. For each candidate, calls get_clustering_score() to get a weighted score.
     4. Prints the top 3 recommendations.
-    5. [TODO] Creates/updates a model with the information.
 
     Args:
-      model_name: name of the dbt model to analyze (ref-able).
+      model_name: name of the dbt model (or table) to analyze.
+      database (optional): override database. When provided with schema, bypasses ref()
+        and targets the specified relation directly. Useful for analyzing production tables
+        from a dev environment.
+      schema (optional): override schema. Must be provided alongside database.
       include_boolean_cols (default false): when true, lowers the cardinality
         floor from > 10 distinct values to >= 2 so booleans and small enums are
-        considered as candidates. Useful when query patterns are dominated by
-        filters on small categorical columns or flag columns.
-      preview_only (default true): print to log without persisting.
+        considered as candidates.
 
     How to run:
-    dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name}'
+    dbt run-operation suggest_clustering_keys --args '{model_name: fct_order_items}'
+
+    With explicit database/schema (analyze production from dev):
+    dbt run-operation suggest_clustering_keys --args '{model_name: fct_order_items, database: MY_DB, schema: PROD_MARTS}'
 
     With low-cardinality columns included:
-    dbt run-operation suggest_clustering_keys --args '{model_name: your_model_name, include_boolean_cols: true}'
+    dbt run-operation suggest_clustering_keys --args '{model_name: fct_order_items, include_boolean_cols: true}'
   --#}
 
   {% if execute %}
 
-    {% set model_relation = ref(model_name) %}
+    {% if database and schema %}
+      {% set model_relation = adapter.get_relation(database=database, schema=schema, identifier=model_name) %}
+      {% if not model_relation %}
+        {{ log("ERROR: Could not find relation " ~ database ~ "." ~ schema ~ "." ~ model_name ~ ". Check that the table exists and your role has access.", info=true) }}
+        {{ return('') }}
+      {% endif %}
+    {% else %}
+      {% set model_relation = ref(model_name) %}
+    {% endif %}
 
     {{ log("--- Step 1: Analyzing column cardinality for '" ~ model_relation ~ "' ---", info=true) }}
 
@@ -70,130 +84,12 @@
     {{ log("\n--- Top 3 Clustering Key Candidates for " ~ model_relation ~ " ---", info=true) }}
     {{ log("Sorted by a score combining cardinality and actual query usage.", info=true) }}
 
-    {% if preview_only %}
-
     {% for rec in sorted_recommendations %}
       {% if loop.index <= 3 %}
         {{ log("  - Candidate " ~ loop.index ~ ": " ~ rec.column_name ~ " (Score: " ~ rec.score ~ ", Distinct: " ~ rec.distinct_values ~ ", Uses: " ~ rec.usage_count ~ ")", info=true) }}
       {% endif %}
     {% endfor %}
 
-    {% else %}
-    
-    -- TODO
-    {{ log("Populating model clustering_key_candidates with results...", info=true) }}
-
-    {% endif %}
-
   {% endif %}
-
-{% endmacro %}
-
-
-
-{% macro get_clustering_cardinality_stats(model_relation, include_boolean_cols=false) %}
-  {#--
-    Queries the given relation to get cardinality statistics for each column.
-    Filters out columns that are poor clustering candidates (e.g., unique keys
-    or very low cardinality keys).
-
-    When include_boolean_cols=true, the cardinality floor drops from > 10 to >= 2,
-    allowing booleans and small enums through. Default behavior excludes those
-    since they often produce too-coarse pruning on average workloads.
-
-    Returns an Agate table with:
-    - column_name
-    - distinct_values
-    - total_rows
-    - avg_rows_per_value
-  --#}
-
-  {% set cardinality_sql %}
-    with column_stats as (
-      {% for column in adapter.get_columns_in_relation(model_relation) %}
-        select
-          '{{ column.name | upper }}' as column_name,
-          approx_count_distinct({{ adapter.quote(column.name) }}) as distinct_values
-        from {{ model_relation }}
-        {% if not loop.last %}union all{% endif %}
-      {% endfor %}
-    ),
-    table_stats as (
-      select count(*) as total_rows from {{ model_relation }}
-    )
-    select
-      cs.column_name,
-      cs.distinct_values,
-      ts.total_rows,
-      DIV0(ts.total_rows, cs.distinct_values) as avg_rows_per_value
-    from column_stats cs
-    cross join table_stats ts
-    where cs.distinct_values < ts.total_rows -- Exclude unique keys
-      {% if include_boolean_cols %}
-      and cs.distinct_values >= 2 -- Include boolean and small-enum columns (include_boolean_cols=true)
-      {% else %}
-      and cs.distinct_values > 10 -- Exclude very low cardinality columns
-      {% endif %}
-    order by distinct_values desc
-  {% endset %}
-
-  {% set cardinality_results = run_query(cardinality_sql) %}
-
-  {{ return(cardinality_results) }}
-
-{% endmacro %}
-
-
-
-{% macro get_column_usage_count(column_name, model_relation, days_to_check=7) %}
-  {#--
-    Queries SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY to find how many times
-    a column was used in a JOIN or WHERE clause for a specific model.
-
-    NOTE: The role running this macro must have privileges
-    on SNOWFLAKE.ACCOUNT_USAGE.
-  --#}
-
-  {% set usage_sql %}
-    select
-      count(*) as usage_count
-    from snowflake.account_usage.query_history
-    where start_time >= dateadd('day', -{{ days_to_check }}, current_timestamp())
-      and (
-        query_text ilike '%JOIN%ON%{{ column_name }}%'
-        or query_text ilike '%WHERE%{{ column_name }}%'
-      )
-      and query_text ilike '%{{ model_relation.identifier }}%'
-  {% endset %}
-
-  {% set usage_results = run_query(usage_sql) %}
-
-  {% set usage_count = usage_results.columns[0].values()[0] if usage_results else 0 %}
-
-  {{ return(usage_count | string | int) }}
-
-{% endmacro %}
-
-
-
-{% macro get_clustering_score(avg_rows, total_rows, usage_count) %}
-  {#--
-    Calculates a recommendation score based on cardinality and usage.
-    Gives a heavy weighting to columns that are actually used in queries.
-  --#}
-  {% set recommendation_score = 0 %}
-  {% set avg_rows = avg_rows | string | float %}
-  {% set total_rows = total_rows | string | float %}
-  {% set usage_count = usage_count | string | int %}
-
-  {% if total_rows > 0 %}
-      {# Calculate cardinality score as a percentage of total rows #}
-      {% set cardinality_pct_score = (avg_rows / total_rows) * 100 %}
-
-      {# Add weighted usage score. (Each use is worth 20 points) #}
-      {% set recommendation_score = cardinality_pct_score + (usage_count * 20) %}
-  {% endif %}
-
-  {{ return(recommendation_score) }}
 
 {% endmacro %}

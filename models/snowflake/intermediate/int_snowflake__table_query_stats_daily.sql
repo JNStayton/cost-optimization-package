@@ -121,7 +121,10 @@ matched_queries as (
         qh.rows_inserted
     from query_history as qh
     inner join candidate_tables as ct
-        on qh.query_text ilike '%' || ct.table_name || '%'
+        on contains(
+            upper(replace(qh.query_text, '"', '')),
+            upper(ct.table_database || '.' || ct.table_schema || '.' || ct.table_name)
+        )
 )
 {% endif %}
 ,
