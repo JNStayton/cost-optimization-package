@@ -59,6 +59,18 @@ models:
         +materialized: view
       intermediate:
         +materialized: view
+      marts:
+        +tags: ['dbt_cost_optimization']
+        fct_redshift__sortkey_recommendations:
+          +tags: ['clustering']
+        fct_redshift__distkey_recommendations:
+          +tags: ['clustering']
+        fct_redshift__table_materialization_candidates:
+          +tags: ['materialization']
+        fct_redshift__incremental_materialization_candidates:
+          +tags: ['materialization']
+        fct_redshift__incremental_config_recommendations:
+          +tags: ['materialization']
     # BigQuery optimization models
     bigquery:
       +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) }}"
@@ -70,6 +82,12 @@ models:
           +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) and var('use_query_text_attribution', true) }}"
         int_bigquery__column_query_stats:
           +enabled: "{{ target.type == 'bigquery' and var('dbt_cost_optimization_enabled', false) and var('use_query_text_attribution', true) }}"
+      marts:
+        +tags: ['dbt_cost_optimization']
+        fct_bigquery__table_clustering_candidates:
+          +tags: ['clustering']
+        fct_bigquery__clustering_key_candidates:
+          +tags: ['clustering']
     # Databricks optimization models
     databricks:
       +enabled: "{{ target.type == 'databricks' and var('dbt_cost_optimization_enabled', false) }}"
@@ -77,6 +95,18 @@ models:
         +materialized: view
       intermediate:
         +materialized: view
+      marts:
+        +tags: ['dbt_cost_optimization']
+        fct_databricks__liquid_clustering_candidates:
+          +tags: ['clustering']
+        fct_databricks__incremental_model_candidates:
+          +tags: ['materialization']
+        fct_databricks__table_materialization_candidates:
+          +tags: ['materialization']
+        fct_databricks__snapshot_optimization_candidates:
+          +tags: ['materialization']
+        vw_databricks__recommendations_by_model:
+          +tags: ['gold']
 
 # Package variables — override in consuming project's dbt_project.yml vars: section.
 # Vars share one namespace across platforms. Section headers list which platforms read each group.
