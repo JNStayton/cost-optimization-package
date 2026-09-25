@@ -1,59 +1,51 @@
 # Changelog
 
-## v1.0.0 — GA Release (August 2026)
+All notable changes to this package are documented in this file.
 
-Initial GA release of the dbt Cost Optimization Package for Snowflake.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-### Gold Layer Views (10 dashboard-ready outputs)
+## [Unreleased]
 
-- `vw_snowflake__top_recommendations` — P1+P2 recommendations across all domains, deduplicated per entity
-- `vw_snowflake__dbt_model_optimizations` — Actionable model changes with dbt config templates
-- `vw_snowflake__warehouse_optimizations` — Warehouse config changes with ready-to-run DDL
-- `vw_snowflake__optimization_backlog` — Full signal inventory for sprint planning and agent intake
-- `vw_snowflake__cross_domain_insights` — Multi-signal correlation (why issues co-occur on the same model)
-- `vw_snowflake__top_expensive_queries` — Top 10 expensive queries with co-occurring fix signals
-- `vw_snowflake__top_spillage_models` — Models causing the most memory spillage, with dbt platform traceability
-- `vw_snowflake__top_queried_models` — Most-queried models by SELECT consumption
-- `vw_snowflake__cost_savings_summary` — KPI tiles: total opportunity per domain
-- `vw_snowflake__user_level_cost_attribution` — User-level cost attribution for chargeback
+## [1.0.0] - Unreleased
 
-### Priority System
+First public release: one package with a shared design across Snowflake, Databricks, BigQuery, and Redshift.
 
-- Per-entity relative priority ordering (not fixed global tiers)
-- Hierarchy rank: always-safe config > incremental/materialization > clustering > conditional config > monitor
-- Priority cascades automatically as optimizations are applied
-- Backlog status sort ensures investigate items never outrank actionable ones
+### Added
 
-### Confidence-Based Incremental Recommendations
+#### Package design (all platforms)
+- Platform-first layout: each platform's models live in `models/<platform>/` (staging, intermediate, marts), and cross-platform models live in `models/shared/`.
+- Opt-in by default: package models only build when `dbt_cost_optimization_enabled: true`, and only the models for your data platform are enabled.
+- Macros behind `adapter.dispatch`: each command and utility keeps one public name and runs the right implementation for your data platform, or raises a clear "not yet implemented" error where one doesn't exist yet. Implementations live in `macros/platforms/<platform>/`, and `macros/_macros.yml` documents every macro's arguments and which platforms implement it.
+- Domain tags on marts for scheduled jobs (`+tag:clustering`, `+tag:materialization`, `+tag:warehouse`, `+tag:ai_spend`, `+tag:gold`), plus `dbt_cost_optimization` on every mart.
+- Package vars grouped into package-wide, shared, and per-platform sections in `dbt_project.yml`. Override them in a `vars.yml` file in your project root or with `--vars`.
+- Shared dbt graph models: `int_dbt__relations` (models) and `int_dbt__snapshots` (snapshots).
 
-- Strategy inference from data semantics (not table size): merge when key + watermark + no deletes; append when INSERT-only
-- Confidence scoring (0-100) with explicit assumptions and blocking signals arrays
-- Exact unique key probe: `count(*) = count(distinct key) AND count_if(key IS NULL) = 0`
-- Four recommendation statuses: `actionable_review`, `investigate`, `do_not_recommend`
-- Phase 1 actionable strategies: merge and append only
+#### Snowflake (GA)
+- Eleven dashboard-ready gold views, including `vw_snowflake__top_recommendations`, `vw_snowflake__dbt_model_optimizations`, `vw_snowflake__warehouse_optimizations`, `vw_snowflake__optimization_backlog`, and `vw_snowflake__cost_savings_summary`.
+- Optimization domains:
+  - **Warehouse:** sizing, spillage (aggregate and per-model), idle credits, expensive queries, Gen2, and multi-cluster recommendations
+  - **Materialization:** view-to-table candidates and incremental candidates with confidence scoring
+  - **Clustering:** pruning-based candidate scoring and clustering key recommendations from query operator stats
+  - **AI/Cortex:** model cost, token efficiency, user concentration, and batch opportunities
+- Per-entity priority tiers (P1, P2, P3+) that cascade as optimizations are applied.
+- Confidence-based incremental recommendations: strategy inferred from data semantics, a 0–100 confidence score with explicit assumptions and blocking signals, and an exact unique key probe.
+- Scope filtering with `dbt_monitored_projects`, and dbt platform run and job traceability in the spillage and expensive query views.
+- Quick-use `dbt run-operation` commands: `find_table_clustering_candidates`, `suggest_clustering_keys`, `find_table_materialization_candidates`, `find_incremental_materialization_candidates`, `find_warehouse_sizing_recommendations`, `find_spillage_candidates`, and `find_expensive_dbt_queries`.
+- Support for Enterprise and Standard editions (`snowflake_enterprise_edition`).
 
-### Scope Filtering
+#### Databricks (Beta)
+- Liquid clustering, OPTIMIZE, table materialization, incremental materialization, and snapshot optimization candidates.
+- Model run summary for performance trends.
+- Per-model recommendation rollup (`vw_databricks__recommendations_by_model`).
 
-- Model-level recommendations: project models only (requires dbt graph context)
-- Warehouse-level recommendations: any warehouse the project uses
-- Spillage/performance: project + installed packages
-- Configurable via `dbt_monitored_projects` variable
+#### BigQuery (Beta)
+- Table clustering candidates and clustering key recommendations.
+- Optional query-text column attribution (`use_query_text_attribution`).
 
-### dbt platform traceability
+#### Redshift (Beta)
+- Sort key and distribution key recommendations.
+- Table materialization, incremental materialization, and incremental config recommendations.
+- VACUUM and ANALYZE candidates.
 
-- `dbt_cloud_run_id` and `dbt_cloud_job_id` parsed from query comments through staging/intermediate layers
-- Surfaced in spillage and expensive query views for linking back to specific builds
-
-### Optimization Domains
-
-- **Warehouse**: sizing, spillage (aggregate + per-model), idle credits, expensive queries, Gen2, MCW
-- **Materialization**: view-to-table candidates, incremental candidates with confidence scoring
-- **Clustering**: V3 pruning-based scoring, key recommendations via operator stats analysis
-- **AI/Cortex**: model cost, token efficiency, user concentration, batch opportunities
-
-### Package Design
-
-- All models disabled by default (`dbt_cost_optimization_enabled: true` to opt in)
-- Macros available immediately after `dbt deps` (no opt-in needed)
-- Tag-based domain selectors for scheduled jobs (`+tag:warehouse`, `+tag:materialization`, etc.)
-- `int_snowflake__all_recommendations` materialized as TABLE for performance
+[Unreleased]: https://github.com/dbt-labs/dbt-cost-optimization-package/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/dbt-labs/dbt-cost-optimization-package/releases/tag/v1.0.0
