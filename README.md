@@ -2,18 +2,36 @@
 
 A dbt package that analyzes your data platform's compute, storage, and query patterns to identify optimization opportunities and produce actionable recommendations.
 
-## Supported Platforms
+## Supported platforms
 
 | Platform | Status | Documentation |
 |----------|--------|---------------|
-| **Snowflake** | Active | [docs/snowflake/index.md](docs/snowflake/index.md) |
-| **Redshift** | In development | [docs/redshift/](docs/redshift/) |
-| **BigQuery** | In development | — |
-| **Databricks** | Planned | — |
+| **Snowflake** | GA | [docs/snowflake/](docs/snowflake/index.md) |
+| **Databricks** | Beta [WIP] | [docs/databricks/](docs/databricks/) |
+| **BigQuery** | Beta [WIP] | [docs/bigquery/](docs/bigquery/clustering_key_candidates.md) |
+| **Redshift** | Beta [WIP] | [docs/redshift/](docs/redshift/) |
 
-## What You'll Get
+## What you'll get
 
-The package produces **gold-layer views** — dashboard-ready outputs that surface ranked, prioritized recommendations:
+### Quick-use commands
+
+On-demand optimization checks you can run with `dbt run-operation`, with no models to build first. Currently available for Snowflake:
+
+| Command | What it finds |
+|---------|---------------|
+| `find_table_clustering_candidates` | Tables that would benefit from clustering |
+| `suggest_clustering_keys` | The best clustering key columns for a specific model |
+| `find_table_materialization_candidates` | Views queried often enough to materialize as tables |
+| `find_incremental_materialization_candidates` | Large, slow-building tables suited to incremental models |
+| `find_warehouse_sizing_recommendations` | Warehouse sizing changes (scale up or down, multi-cluster, Gen2) |
+| `find_spillage_candidates` | Models whose builds spill to local or remote storage |
+| `find_expensive_dbt_queries` | The most expensive recurring dbt queries by projected annual cost |
+
+For example: `dbt run-operation find_table_clustering_candidates --args '{lookback_days: 14}'`. See [docs/snowflake/macros.md](docs/snowflake/macros.md) for every command's arguments.
+
+### Snowflake
+
+The package produces **gold-layer views**: dashboard-ready outputs that surface ranked, prioritized recommendations.
 
 | View | Audience | What it shows |
 |------|----------|--------------|
@@ -26,31 +44,27 @@ The package produces **gold-layer views** — dashboard-ready outputs that surfa
 | `vw_snowflake__top_queried_models` | Platform engineers | Most-queried models (downstream consumption pressure) |
 | `vw_snowflake__cross_domain_insights` | Architecture leads | Multi-signal correlation (why issues co-occur on the same model) |
 | `vw_snowflake__cost_savings_summary` | Dashboards | KPI tiles: total opportunity per domain |
+| `vw_snowflake__user_level_cost_attribution` | Cost owners | User-level cost attribution for chargeback |
 | `vw_snowflake__ai_optimizations` | AI/ML teams | Cortex model cost, token efficiency, agent spend |
 
-### Priority System
-
-Each recommendation includes a `priority_tier` — a per-entity relative ordering:
+Each recommendation includes a `priority_tier`, a per-entity relative ordering:
 - **P1** = do this first (highest in the optimization hierarchy for this model/warehouse)
 - **P2** = do this second (after P1 is applied)
 - **P3+** = deferred (waiting for higher-priority fixes to resolve the symptom)
 
 Priority cascades naturally: when you apply a P1 fix (e.g., add a clustering key) and rebuild, the signal disappears and P2 promotes to P1 automatically.
 
----
+### Databricks, BigQuery, and Redshift (Beta)
 
-## Scope
+These platforms produce recommendations at the fact-model layer. Dashboard views and charts like Snowflake's are coming soon.
 
-The package monitors:
+| Platform | Recommendations |
+|----------|-----------------|
+| **Databricks** | Liquid clustering, OPTIMIZE, table and incremental materialization, snapshot optimization, and model run trends, plus a per-model rollup (`vw_databricks__recommendations_by_model`) |
+| **BigQuery** | Table clustering candidates and clustering key recommendations |
+| **Redshift** | Sort key and distribution key recommendations, table and incremental materialization, incremental config, and VACUUM and ANALYZE candidates |
 
-| What | Scope | Notes |
-|------|-------|-------|
-| Model-level recommendations (clustering, materialization, incremental) | **This project only** | Requires dbt graph context (model configs, lineage) |
-| Warehouse-level recommendations (config changes, spillage, idle credits) | **Warehouses used by this project** | Surfaces for any warehouse that runs project models |
-| Spillage / performance | **Project + installed packages** | Package models (e.g., dbt_artifacts) that run on your warehouse are included |
-| Expensive queries | **Project models** | Queries attributed to dbt node_ids in the monitored project |
-
-Graph-dependent recommendations require the dbt project graph. Warehouse and expensive query signals use Snowflake query_history, which provides account-wide visibility scoped to warehouses the project uses.
+See each platform's docs for model details and configuration.
 
 ---
 
@@ -70,14 +84,43 @@ Then run:
 dbt deps
 ```
 
-## Package Models Are Disabled by Default
+Installation from the dbt package hub (`package:` / `version:`) is coming soon.
 
-This package is **opt-in** for persistent model builds. After installation:
+## Getting started
 
-- **Macros are immediately available** via `dbt run-operation` (no configuration needed)
+After installation, see your platform's documentation for required permissions, configuration, and quick start commands:
+
+- **Snowflake:** [docs/snowflake/index.md](docs/snowflake/index.md)
+- **Databricks:** [docs/databricks/](docs/databricks/)
+- **BigQuery:** [docs/bigquery/](docs/bigquery/clustering_key_candidates.md)
+- **Redshift:** [docs/redshift/](docs/redshift/)
+
+## Configuration
+
+The package is **opt-in**. Package models only build when `dbt_cost_optimization_enabled` is `true`.
+
+To customize the package's behavior, create a `vars.yml` file in your project root:
+
+```yaml
+# vars.yml
+vars:
+  dbt_cost_optimization_enabled: true
+```
+
+Or pass vars on the command line with `--vars '{var_name: value}'`. Overriding package vars in your own `dbt_project.yml` `vars:` section is not supported.
+
+Every other var has a default. For the full list, see your platform's documentation or the `vars:` section of [dbt_project.yml](dbt_project.yml), which groups them into shared and per-platform sections.
+
+## How it works
+
+### Package models are disabled by default
+
+After installation:
+
+- **Snowflake optimization commands are immediately available** via `dbt run-operation` (no configuration needed)
 - **Package models do not run** during your project's normal `dbt run` / `dbt build`
 
-To build package models, explicitly opt in:
+To build package models, explicitly opt in.
 
 **Recommended: dedicated scheduled jobs** (no changes to existing jobs required)
 ```bash
@@ -85,107 +128,85 @@ To build package models, explicitly opt in:
 dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
 
 # Or select by optimization domain
-dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:clustering
 ```
 
-**Alternative: enable at the project level** (models build on every run)
-```yaml
-# In a vars.yml file in your project root
-vars:
-  dbt_cost_optimization_enabled: true
-```
-Note: if enabled at the project level, you will need to explicitly exclude package models from general runs where they are not desired. Overriding package vars in `dbt_project.yml` `vars:` is not supported — use a `vars.yml` file or CLI instead.
+**Alternative: enable in your `vars.yml`** (models build on every run)
 
-This avoids unexpectedly querying large `ACCOUNT_USAGE` views on every regular dbt build.
+If you set `dbt_cost_optimization_enabled: true` in your `vars.yml`, you will need to explicitly exclude package models from general runs where they are not desired.
+
+Either way, this avoids unexpectedly querying large platform system tables (such as Snowflake's `ACCOUNT_USAGE` views) on every regular dbt build. Only the models for your data platform are enabled.
 
 ### Suggested cadences for scheduled jobs
 
-| Domain | Selector | Suggested Cadence |
-|--------|----------|-------------------|
-| Warehouse (sizing, spillage, expensive queries) | `+tag:warehouse` | Weekly |
-| AI / Cortex spend | `+tag:ai_spend` | Weekly |
-| Materialization (view→table, table→incremental) | `+tag:materialization` | Monthly |
-| Clustering candidates | `+tag:clustering` | Monthly |
+| Domain | Selector | Platforms | Suggested cadence |
+|--------|----------|-----------|-------------------|
+| Warehouse (sizing, spillage, expensive queries) | `+tag:warehouse` | Snowflake | Weekly |
+| AI / Cortex spend | `+tag:ai_spend` | Snowflake | Weekly |
+| Materialization (view→table, table→incremental) | `+tag:materialization` | Snowflake, Databricks, Redshift | Monthly |
+| Clustering candidates | `+tag:clustering` | All | Monthly |
+| Dashboard views | `+tag:gold` | Snowflake, Databricks | After the domains above |
 
-Example dedicated job:
-```bash
-dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
-```
+Every package mart also has the `dbt_cost_optimization` tag.
 
----
+### Scope (Snowflake)
 
-## Getting Started
+| What | Scope | Notes |
+|------|-------|-------|
+| Model-level recommendations (clustering, materialization, incremental) | **This project only** | Requires dbt graph context (model configs, lineage) |
+| Warehouse-level recommendations (config changes, spillage, idle credits) | **Warehouses used by this project** | Surfaces for any warehouse that runs project models |
+| Spillage / performance | **Project + installed packages** | Package models (e.g., dbt_artifacts) that run on your warehouse are included |
+| Expensive queries | **Project models** | Queries attributed to dbt node_ids in the monitored project |
 
-After installation, see your platform's documentation for:
+Graph-dependent recommendations require the dbt project graph. Warehouse and expensive query signals use Snowflake query_history, which provides account-wide visibility scoped to warehouses the project uses.
 
-- Required permissions and grants
-- Package variables and configuration
-- Available optimization paths
-- Quick start commands
+On Databricks, BigQuery, and Redshift, recommendations are scoped to your project's dbt models by default. See each platform's docs for the scope settings.
 
-**Snowflake users:** Start with [docs/snowflake/index.md](docs/snowflake/index.md)
-
----
-
-## Key Configuration Variables
-
-Override these in your project's `vars.yml` or via CLI `--vars`:
-
-### Required
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `dbt_cost_optimization_enabled` | `false` | Must be `true` to build package models |
-| `credit_rate_usd` | `2` | Your Snowflake credit rate (for cost estimation) |
-
-### Scope
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `dbt_monitored_projects` | `[]` (current project) | List of project names to monitor; `['*']` for all |
-| `incremental_overlap_days` | `31` | Re-scan window on incremental runs; set to your longest gap between builds |
-| `snowflake_enterprise_edition` | `true` | Set `false` for Standard edition (disables ACCESS_HISTORY features) |
-
-### Thresholds (tune to your environment)
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `expensive_query_high_cost_threshold` | `500` | Annual cost (USD) above which a query is flagged as high-cost |
-| `spillage_aggregate_threshold_gb` | `100` | Total GB spilled across models before recommending warehouse scale-up |
-| `clustering_candidates_min_size_gb` | `100` | Minimum table size for clustering analysis |
-| `incremental_candidates_min_build_time_sec` | `300` | Minimum build time to consider incremental conversion |
-
-For the full variable reference, see [dbt_project.yml](dbt_project.yml) vars section.
-
-## Repository Structure
+## Repository structure
 
 ```
 models/
-  shared/          Platform-agnostic models (dbt graph introspection)
+  shared/              Platform-agnostic models (dbt graph introspection)
   snowflake/
-    staging/       Snowflake ACCOUNT_USAGE source staging models
-    intermediate/  Transforms, aggregations, and cross-environment discovery
+    staging/           Source staging models
+    intermediate/      Transforms, aggregations, and cross-environment discovery
     marts/
-      clustering/       Table clustering candidate recommendations
-      materialization/  View-to-table and incremental strategy recommendations
-      warehouse/        Sizing, spillage, and expensive query recommendations
+      clustering/      Table clustering candidate recommendations
+      materialization/ View-to-table and incremental strategy recommendations
+      warehouse/       Sizing, spillage, and expensive query recommendations
       ai/              AI/Cortex spend and token efficiency recommendations
       gold/            Dashboard-ready views (cross-domain, deduplicated by model)
+  databricks/          staging/, intermediate/, marts/
+  bigquery/            staging/, intermediate/, marts/
+  redshift/            staging/, intermediate/, marts/
 
 macros/
-  snowflake/       Snowflake optimization macros and utilities
+  _macros.yml          Every macro's arguments and which platforms implement it
+  optimizations/       Commands you run with dbt run-operation (and their helpers)
+  utils/               Internal utilities used by models and hooks
+  platforms/           Each platform's implementation of the macros above
 
 docs/
-  snowflake/
-    index.md       Setup guide, permissions, configuration, quick start
-    reference/     Architecture docs, signal inventories, design decisions
+  snowflake/           Setup guide, permissions, configuration, and reference docs
+  databricks/          Model docs
+  bigquery/            Model docs
+  redshift/            Model docs and platform notes
 ```
+
+Macros use `adapter.dispatch`, so each command keeps the same name across platforms and runs the right implementation for your data platform.
 
 ## Contributing
 
-Each platform has its own model subtree, source definitions, and documentation. When adding support for a new platform:
+We welcome bug reports and feature requests. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to open an issue. We aren't accepting outside pull requests yet.
 
-1. Create `models/<platform>/staging/`, `intermediate/`, and `marts/` directories
-2. Add a `_<platform>_sources.yml` in the staging folder
-3. Add platform documentation in `docs/<platform>/`
-4. Gate models with `+enabled: "{{ target.type == '<platform>' and var('dbt_cost_optimization_enabled', false) }}"` in `dbt_project.yml`
+## Support
+
+This package is provided as-is, without SLAs, and is maintained on a best-effort basis. To report a bug or request a feature, open a GitHub issue. We read every issue, but we can't guarantee response times.
+
+## Security
+
+Please don't report security vulnerabilities in a public issue. Use the **Security** tab of this repository to report them privately.
+
+## License
+
+This package is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
