@@ -1,5 +1,5 @@
 name: 'dbt_cost_optimization_package'
-version: '3.0.0'
+version: '1.0.0'
 config-version: 2
 
 profile: 'dbt_cost_optimization_package'
