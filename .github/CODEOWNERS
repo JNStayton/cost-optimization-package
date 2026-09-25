@@ -1,0 +1,28 @@
+# Code owners for dbt-cost-optimization-package.
+# Owners are requested for review and receive vulnerability reports for the paths they own.
+# Later rules take precedence over earlier ones.
+
+# Default owner: everything not matched below, including shared paths
+# (models/shared/, macros/optimizations/, macros/utils/, macros/_macros.yml,
+# dbt_project.yml, and root-level docs)
+*                               @jessicastayton-dbt @dbt-labs/proserv
+
+# Snowflake
+/models/snowflake/              @jessicastayton-dbt @dbt-labs/proserv
+/macros/platforms/snowflake/    @jessicastayton-dbt @dbt-labs/proserv
+/docs/snowflake/                @jessicastayton-dbt @dbt-labs/proserv
+
+# Databricks
+/models/databricks/             @mpagden17 @dbt-labs/proserv
+/macros/platforms/databricks/   @mpagden17 @dbt-labs/proserv
+/docs/databricks/               @mpagden17 @dbt-labs/proserv
+
+# BigQuery
+/models/bigquery/               @lucidviews @dbt-labs/proserv
+/macros/platforms/bigquery/     @lucidviews @dbt-labs/proserv
+/docs/bigquery/                 @lucidviews @dbt-labs/proserv
+
+# Redshift
+/models/redshift/               @kevinsoenandar-dbt @dbt-labs/proserv
+/macros/platforms/redshift/     @kevinsoenandar-dbt @dbt-labs/proserv
+/docs/redshift/                 @kevinsoenandar-dbt @dbt-labs/proserv
