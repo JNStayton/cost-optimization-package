@@ -8,7 +8,7 @@
   Top spillage models — models whose BUILD queries cause the most spillage.
   Useful for identifying where clustering or warehouse scaling has the biggest impact.
 
-  Includes the most recent dbt Cloud run_id that caused spillage for traceability.
+  Includes the most recent dbt platform run_id that caused spillage for traceability.
 
   Audience: dbt developers, Snowflake admins.
   Grain: one row per model (table_fqn).

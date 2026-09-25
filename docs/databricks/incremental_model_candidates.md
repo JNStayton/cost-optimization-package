@@ -89,7 +89,7 @@ An `incremental` model instead processes only rows that are new or changed since
 ### Example configuration
 
 ```yaml
-# dbt_project.yml
+# vars.yml
 vars:
   # Widen the analysis window
   incremental_candidates_lookback_days: 14

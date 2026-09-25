@@ -37,4 +37,4 @@ Even before pull requests are open, it can help to know where things live when y
 - **`macros/optimizations/`** holds the commands you run with `dbt run-operation`, such as `find_table_clustering_candidates`.
 - **`macros/platforms/<platform>/`** holds each platform's implementation of those macros. The package uses `adapter.dispatch`, so a command with the same name runs the right implementation for your data platform, or tells you it isn't available on your platform yet.
 - **`macros/_macros.yml`** documents every macro's arguments and which platforms it's implemented for.
-- **`dbt_project.yml`** lists every package var, grouped into shared and per-platform sections.
+- **`dbt_project.yml`** lists every package var and its default, grouped into shared and per-platform sections. To change one, set it in a `vars.yml` file in your project root or with `--vars`.

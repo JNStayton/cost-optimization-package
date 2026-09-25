@@ -108,7 +108,7 @@ tiebreaker, capped at four columns per table.
 | `clustering_key_cardinality_table_limit` | `10` | Max number of candidate tables for which APPROX_COUNT_DISTINCT is computed each run. |
 | `use_query_text_attribution` | `true` | When `false`, disables the heuristic column-access pipeline. `usage_count` becomes 0 and ranking falls back to cardinality only. |
 
-Override via `dbt_project.yml`:
+Override in a `vars.yml` file in your project root (or with `--vars`):
 
 ```yaml
 vars:

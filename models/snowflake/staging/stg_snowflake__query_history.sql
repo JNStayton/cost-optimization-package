@@ -29,7 +29,7 @@ select
     session_id,
     execution_status,
     rows_inserted,
-    -- dbt Cloud context parsed from query comment
+    -- dbt platform context parsed from query comment
     parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_run_id::string as dbt_cloud_run_id,
     parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_job_id::string as dbt_cloud_job_id,
     parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as dbt_node_id,

@@ -98,7 +98,7 @@ A large, read-heavy, fragmented table with Predictive Optimization disabled will
 ### Example configuration
 
 ```yaml
-# dbt_project.yml
+# vars.yml
 vars:
   # Include all tables, not just dbt models
   optimize_candidates_dbt_project_only: false

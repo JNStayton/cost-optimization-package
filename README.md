@@ -22,7 +22,7 @@ The package produces **gold-layer views** — dashboard-ready outputs that surfa
 | `vw_snowflake__warehouse_optimizations` | Snowflake admins | Warehouse config changes: auto-suspend, scaling, sizing — with linked model context |
 | `vw_snowflake__optimization_backlog` | Sprint planning / agents | Full inventory of all signals (all priority tiers) for ticket creation |
 | `vw_snowflake__top_expensive_queries` | Cost owners | Top 10 expensive queries enriched with root-cause co-signals |
-| `vw_snowflake__top_spillage_models` | Performance engineers | Models causing the most memory spillage, with dbt Cloud run traceability |
+| `vw_snowflake__top_spillage_models` | Performance engineers | Models causing the most memory spillage, with dbt platform run traceability |
 | `vw_snowflake__top_queried_models` | Platform engineers | Most-queried models (downstream consumption pressure) |
 | `vw_snowflake__cross_domain_insights` | Architecture leads | Multi-signal correlation (why issues co-occur on the same model) |
 | `vw_snowflake__cost_savings_summary` | Dashboards | KPI tiles: total opportunity per domain |

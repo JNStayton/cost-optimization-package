@@ -12,7 +12,7 @@ Initial GA release of the dbt Cost Optimization Package for Snowflake.
 - `vw_snowflake__optimization_backlog` — Full signal inventory for sprint planning and agent intake
 - `vw_snowflake__cross_domain_insights` — Multi-signal correlation (why issues co-occur on the same model)
 - `vw_snowflake__top_expensive_queries` — Top 10 expensive queries with co-occurring fix signals
-- `vw_snowflake__top_spillage_models` — Models causing the most memory spillage, with dbt Cloud traceability
+- `vw_snowflake__top_spillage_models` — Models causing the most memory spillage, with dbt platform traceability
 - `vw_snowflake__top_queried_models` — Most-queried models by SELECT consumption
 - `vw_snowflake__cost_savings_summary` — KPI tiles: total opportunity per domain
 - `vw_snowflake__user_level_cost_attribution` — User-level cost attribution for chargeback
@@ -39,7 +39,7 @@ Initial GA release of the dbt Cost Optimization Package for Snowflake.
 - Spillage/performance: project + installed packages
 - Configurable via `dbt_monitored_projects` variable
 
-### dbt Cloud Traceability
+### dbt platform traceability
 
 - `dbt_cloud_run_id` and `dbt_cloud_job_id` parsed from query comments through staging/intermediate layers
 - Surfaced in spillage and expensive query views for linking back to specific builds

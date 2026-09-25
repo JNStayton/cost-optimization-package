@@ -34,7 +34,7 @@ This model is a direct extension of the incremental model candidates pipeline. I
 ### Example configuration
 
 ```yaml
-# dbt_project.yml
+# vars.yml
 vars:
   model_run_summary_lookback_days: 14
 ```

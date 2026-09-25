@@ -132,7 +132,7 @@ When these views are unavailable (Standard edition), the package gracefully fall
 - Spillage recommendations produce no rows (with an explanatory message)
 - Query-to-table attribution falls back to `query_text ILIKE` matching
 
-Set `snowflake_enterprise_edition: false` in your `dbt_project.yml` if you're on Standard edition.
+Set `snowflake_enterprise_edition: false` in your `vars.yml` (or with `--vars`) if you're on Standard edition.
 
 ### ACCOUNT_USAGE Latency
 
@@ -186,7 +186,7 @@ dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse
 
 **Alternative: enable at the project level** (builds on every dbt run)
 ```yaml
-# In your dbt_project.yml vars: section OR in a vars.yml file
+# In a vars.yml file in your project root
 vars:
   dbt_cost_optimization_enabled: true
 ```

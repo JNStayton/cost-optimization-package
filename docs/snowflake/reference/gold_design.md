@@ -140,13 +140,13 @@ Key columns:
 
 ### `vw_snowflake__top_spillage_models`
 
-**Performance engineering view.** Models causing the most memory spillage, with dbt Cloud run traceability.
+**Performance engineering view.** Models causing the most memory spillage, with dbt platform run traceability.
 
 Key columns:
 - `model_name` / `node_id`: the dbt model
 - `model_source`: 'project' or 'installed_package'
 - `total_gb_spilled`: aggregate spillage across runs
-- `last_spilling_run_id` / `last_spilling_job_id`: dbt Cloud run and job IDs for the most recent spilling execution
+- `last_spilling_run_id` / `last_spilling_job_id`: dbt platform run and job IDs for the most recent spilling execution
 - `warehouse_name`: warehouse where spillage occurred
 
 Filtered to models only (dbt_model IS NOT NULL). Includes installed packages since they run on your warehouse.
@@ -518,8 +518,8 @@ When multiple environments have the same recommendation for the same logical mod
 
 | Field | Source | Description |
 |-------|--------|-------------|
-| `dbt_cloud_environment_id` | Query comment JSON | Unique per dbt Cloud environment. Primary grouping key. |
-| `target_name` | Query comment JSON | Human-readable but unreliable (often "default" in dbt Cloud). |
+| `dbt_cloud_environment_id` | Query comment JSON | Unique per dbt platform environment. Primary grouping key. |
+| `target_name` | Query comment JSON | Human-readable but unreliable (often "default" in dbt platform). |
 | `environment_count` | Derived | Number of distinct environments where this model exists. |
 | `environment_ids` | Derived | Array of all `dbt_cloud_environment_id` values for this model. |
 

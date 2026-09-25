@@ -1,7 +1,7 @@
 {#--
   Daily query stats per table. Attribution uses either access_history (Enterprise+)
-  or query_text ILIKE (Standard). Set vars.snowflake_enterprise_edition = false
-  in dbt_project.yml for Standard edition (no ACCESS_HISTORY view).
+  or query_text ILIKE (Standard). Set snowflake_enterprise_edition = false
+  in vars.yml (or with --vars) for Standard edition (no ACCESS_HISTORY view).
 
   Scope:
     - Default: only tables that are dbt models in the current project.

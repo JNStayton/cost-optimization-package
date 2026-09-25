@@ -165,7 +165,7 @@ models/
 ## Configurable Variables
 
 ```yaml
-# dbt_project.yml
+# vars.yml
 vars:
   # Lookback windows
   ai_spend_lookback_days: 30

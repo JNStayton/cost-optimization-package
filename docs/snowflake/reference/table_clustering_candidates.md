@@ -96,7 +96,7 @@ fct_snowflake__table_clustering_candidates (identifies WHICH tables)
 
 ## Project Variables
 
-Set these in your `dbt_project.yml` under `vars:` to customize behavior.
+Set these in a `vars.yml` file in your project root (or with `--vars`) to customize behavior.
 
 ### Attribution and edition
 
@@ -125,7 +125,7 @@ Set these in your `dbt_project.yml` under `vars:` to customize behavior.
 ### Example configuration
 
 ```yaml
-# dbt_project.yml
+# vars.yml
 vars:
   # Standard edition Snowflake
   snowflake_enterprise_edition: false

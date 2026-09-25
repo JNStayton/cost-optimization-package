@@ -66,7 +66,7 @@ Items below are validated as valuable but deferred from the initial release. Ord
 
 ### Current state
 
-dbt Wizard (formerly dbt Copilot) usage is metered internally as "Copilot Actions" and visible only in the dbt Cloud billing UI (Account Settings → Billing → Copilot Actions tab). After July 13, 2026, Wizard usage is metered separately from Copilot.
+dbt Wizard (formerly dbt Copilot) usage is metered internally as "Copilot Actions" and visible only in the dbt platform billing UI (Account Settings → Billing → Copilot Actions tab). After July 13, 2026, Wizard usage is metered separately from Copilot.
 
 **What's NOT available:**
 - No API endpoint exposing per-request Wizard usage
@@ -80,7 +80,7 @@ Per internal confirmation (dbt Labs, July 2026): forwarding AI/audit events to e
 ### What integration would look like (once available)
 
 If dbt exposes Wizard usage via API or event stream:
-- New staging model: `stg_dbt__wizard_usage` (via External Access Integration calling dbt Cloud Admin API)
+- New staging model: `stg_dbt__wizard_usage` (via External Access Integration calling dbt platform Admin API)
 - Intermediate: `int_dbt__wizard_usage_daily` (per-user, per-action-type aggregation)
 - Fact: `fct_dbt__wizard_optimization_recommendations` (heavy users, action patterns, cost trends)
 - Gold: surfaced in `ai_optimizations` as a "dbt AI" sub-domain
@@ -93,7 +93,7 @@ If dbt exposes Wizard usage via API or event stream:
 | CoCo (Cortex Code) Snowsight/CLI/Desktop | METERING_HISTORY (service_type) | Yes (account-wide, platform insights mode) |
 | Snowflake Intelligence | SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY | Yes (account-wide, platform insights mode) |
 | Cortex Agents | METERING_HISTORY + CORTEX_AGENT_USAGE_HISTORY | Yes |
-| dbt Wizard / Copilot actions | dbt Cloud billing UI only | No — pending platform export capability |
+| dbt Wizard / Copilot actions | dbt platform billing UI only | No — pending platform export capability |
 
 ## Adaptive Compute (Preview — Enterprise+)
 
@@ -439,14 +439,14 @@ This makes storage optimization easy to fold into the broader cross-domain prior
        '70437463672596': {name: 'CI/PR Checks', type: 'dev'}
    ```
 
-2. **dbt Cloud Admin API integration** — A `dbt run-operation populate_environment_map` macro that calls `GET /api/v2/accounts/{id}/environments/{env_id}/` via Snowflake External Access Integration and writes results to a seed table. Requires: External Access Integration (ACCOUNTADMIN), dbt Cloud service token as Snowflake secret, network rule for `cloud.getdbt.com`.
+2. **dbt platform Admin API integration** — A `dbt run-operation populate_environment_map` macro that calls `GET /api/v2/accounts/{id}/environments/{env_id}/` via Snowflake External Access Integration and writes results to a seed table. Requires: External Access Integration (ACCOUNTADMIN), dbt platform service token as Snowflake secret, network rule for `cloud.getdbt.com`.
 
 3. **dbt-artifacts-style on-run-end hook** — Capture `env_var('DBT_CLOUD_ENVIRONMENT_TYPE', '')` and `env_var('DBT_CLOUD_ENVIRONMENT_NAME', '')` at the package's own runtime and store in a metadata table. Limited: only captures the env where the package itself runs.
 
 ### Limitations
 
 - **Cross-account architectures:** `QUERY_HISTORY` is account-scoped. Multi-account setups must deploy the package per account.
-- **target_name unreliability:** In dbt Cloud, `target_name` defaults to "default" unless explicitly set per job. Multiple environments can share the same target_name.
+- **target_name unreliability:** In dbt platform, `target_name` defaults to "default" unless explicitly set per job. Multiple environments can share the same target_name.
 - **dbt Core users:** No `dbt_cloud_environment_id` available. Only `target_name` from query comments.
 
 ---

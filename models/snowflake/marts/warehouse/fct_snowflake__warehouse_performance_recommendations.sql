@@ -331,7 +331,7 @@ select
     'Not available — requires Enterprise edition (snowflake_enterprise_edition = true)'
                             as recommendation,
     'ACCESS_HISTORY is required for table-level spillage attribution. '
-    || 'Set snowflake_enterprise_edition = true in dbt_project.yml vars '
+    || 'Set snowflake_enterprise_edition = true in your vars.yml '
     || 'to enable this model (requires Snowflake Enterprise Edition or higher).'
                             as recommendation_reason,
     null::string            as snowflake_ddl,

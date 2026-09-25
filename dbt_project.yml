@@ -108,7 +108,8 @@ models:
         vw_databricks__recommendations_by_model:
           +tags: ['gold']
 
-# Package variables — override in consuming project's dbt_project.yml vars: section.
+# Package variables — override in a vars.yml file in your project root, or with --vars on the command line.
+# (Overriding package vars in your own dbt_project.yml vars: section is not supported.)
 # Vars share one namespace across platforms. Section headers list which platforms read each group.
 vars:
   # =============================================================================

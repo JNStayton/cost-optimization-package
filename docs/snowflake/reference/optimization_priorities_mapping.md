@@ -213,7 +213,7 @@ A warehouse cannot simultaneously be "oversized" and have "query_overload" — o
 | `vw_snowflake__top_recommendations` | Highest-impact across all domains, P1+P2 per entity | P1 + P2 | priority_tier, savings desc |
 | `vw_snowflake__optimization_backlog` | Full inventory — ALL tiers (users filter by priority_tier) | None — all | priority_tier, savings desc |
 | `vw_snowflake__cross_domain_insights` | Multi-signal correlation (2+ domains per model) | Actionable + monitor | signal_count desc |
-| `vw_snowflake__top_spillage_models` | Top spilling models with dbt Cloud traceability | N/A — metric-ranked | spillage desc |
+| `vw_snowflake__top_spillage_models` | Top spilling models with dbt platform traceability | N/A — metric-ranked | spillage desc |
 | `vw_snowflake__top_queried_models` | Top 25 most-queried models by SELECT consumption | N/A — metric-ranked | query count desc |
 
 ---
