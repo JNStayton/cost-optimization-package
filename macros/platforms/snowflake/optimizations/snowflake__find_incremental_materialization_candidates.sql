@@ -1,4 +1,4 @@
-{% macro snowflake__find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30) %}
+{% macro snowflake__find_incremental_materialization_candidates(min_table_size_gb=10, max_build_time_sec=600, lookback_days=30, include_package_models=false) %}
 
   {#--
     Identifies dbt models currently configured as TABLEs that are large, slow to build,
@@ -113,7 +113,7 @@
     {# Build list of table models from dbt graph #}
     {% set table_models = [] %}
     {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
-        {% if node.config.materialized == 'table' and node.database and node.schema %}
+        {% if (include_package_models or node.package_name == project_name) and node.config.materialized == 'table' and node.database and node.schema %}
             {% set node_identifier = node.alias if node.alias else node.name %}
             {% do table_models.append({
                 'database': node.database | upper,
@@ -197,6 +197,7 @@
         {# check dbt materialization #}
         {% set ns = namespace(model_node=none) %}
         {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
+            {% if include_package_models or node.package_name == project_name %}
             {% set node_identifier = node.alias if node.alias else node.name %}
             {% if node.database
                   and node.schema
@@ -207,9 +208,15 @@
                 {% set ns.model_node = node %}
                 {% break %}
             {% endif %}
+            {% endif %}
         {% endfor %}
 
-        {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A' %}
+        {# Skip non-project tables #}
+        {% if ns.model_node is none %}
+            {# skip — not a model in this project #}
+        {% else %}
+
+        {% set current_materialization = ns.model_node.config.materialized %}
         {% set is_incremental_candidate = false %}
         {% set incremental_key_suggestion = 'N/A' %}
 
@@ -253,6 +260,7 @@
             'priority': row["PRIORITY_KEY"],
             'recommendation': recommendation
         }) %}
+        {% endif %}
         
     {% endfor %}
 

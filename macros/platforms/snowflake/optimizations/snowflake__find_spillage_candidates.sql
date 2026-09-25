@@ -1,4 +1,4 @@
-{% macro snowflake__find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1) %}
+{% macro snowflake__find_spillage_candidates(lookback_days=7, min_total_gb_spilled=0.05, min_runs=1, include_package_models=false) %}
 
   {#--
     Identifies dbt-managed tables whose builds are spilling to local or remote
@@ -149,6 +149,7 @@
             {# attach dbt graph node so we can surface current materialization #}
             {% set ns = namespace(model_node=none) %}
             {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
+                {% if include_package_models or node.package_name == project_name %}
                 {% set node_identifier = node.alias if node.alias else node.name %}
                 {% if node.database
                       and node.schema
@@ -159,9 +160,14 @@
                     {% set ns.model_node = node %}
                     {% break %}
                 {% endif %}
+                {% endif %}
             {% endfor %}
 
-            {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A (not in dbt project)' %}
+            {# Skip non-project tables #}
+            {% if ns.model_node is none %}
+                {# skip — not a model in this project #}
+            {% else %}
+            {% set current_materialization = ns.model_node.config.materialized %}
             {% set recommendation = none %}
             {% set reason = none %}
             {% set severity = 'info' %}
@@ -195,6 +201,7 @@
                 'reason': reason,
                 'severity': severity
             }) %}
+            {% endif %}
         {% endfor %}
 
         {# warns first; SQL already sorted by remote desc then local desc, preserving that order within buckets #}

@@ -1,4 +1,4 @@
-{% macro snowflake__find_table_materialization_candidates(lookback_days=14, min_query_count=10) %}
+{% macro snowflake__find_table_materialization_candidates(lookback_days=14, min_query_count=10, include_package_models=false) %}
 
   {#--
     Identifies dbt models currently configured as VIEWs that are experiencing high 
@@ -27,7 +27,7 @@
     {% set suppress_staging = var('suppress_staging_materialization_recs', false) %}
 
     {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
-        {% if node.config.materialized == 'view' and node.database and node.schema %}
+        {% if (include_package_models or node.package_name == project_name) and node.config.materialized == 'view' and node.database and node.schema %}
             {% set node_identifier = node.alias if node.alias else node.name %}
             {% if not (suppress_staging and node.name.startswith('stg_')) %}
             {% do view_models.append({
@@ -119,6 +119,7 @@
         {# namespace() avoids Jinja loop-scoping bug #}
         {% set ns = namespace(model_node=none) %}
         {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
+            {% if (include_package_models or node.package_name == project_name) %}
             {% set node_identifier = node.alias if node.alias else node.name %}
             {% if node.database
                   and node.schema
@@ -129,9 +130,15 @@
                 {% set ns.model_node = node %}
                 {% break %}
             {% endif %}
+            {% endif %}
         {% endfor %}
 
-        {% set current_materialization = ns.model_node.config.materialized if ns.model_node else 'N/A (Not in dbt project)' %}
+        {# Skip non-project tables from account-wide Enterprise query #}
+        {% if ns.model_node is none %}
+            {# skip — not a model in this project #}
+        {% else %}
+
+        {% set current_materialization = ns.model_node.config.materialized %}
 
         {# Skip staging models if suppressed #}
         {% if suppress_staging and ns.model_node and ns.model_node.name.startswith('stg_') %}
@@ -142,14 +149,12 @@
         {% set recommendation_reason = 'Low Priority' %}
 
         {% set recommendation_key = row['RECOMMENDATION_KEY'] %}
-        {% if current_materialization != 'N/A (Not in dbt project)' %}
-            {% if recommendation_key == 'large_scan' %}
-                {% set recommendation = 'Materialize as TABLE' %}
-                {% set recommendation_reason = 'Large Scan' %}
-            {% elif recommendation_key == 'slow_frequent' %}
-                {% set recommendation = 'Materialize as TABLE' %}
-                {% set recommendation_reason = 'Slow performance, frequently queried' %}
-            {% endif %}
+        {% if recommendation_key == 'large_scan' %}
+            {% set recommendation = 'Materialize as TABLE' %}
+            {% set recommendation_reason = 'Large Scan' %}
+        {% elif recommendation_key == 'slow_frequent' %}
+            {% set recommendation = 'Materialize as TABLE' %}
+            {% set recommendation_reason = 'Slow performance, frequently queried' %}
         {% endif %}
 
         {% do candidates.append({
@@ -163,6 +168,7 @@
             'recommendation_reason': recommendation_reason
         }) %}
 
+        {% endif %}
         {% endif %}
         
     {% endfor %}

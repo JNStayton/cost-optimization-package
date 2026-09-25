@@ -1,4 +1,4 @@
-{% macro snowflake__find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, target_databases=[], target_schemas=[]) %}
+{% macro snowflake__find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, include_package_models=false, target_databases=[], target_schemas=[]) %}
 
   {#--
     Identifies Snowflake tables that may benefit from clustering, scored by
@@ -52,12 +52,14 @@
         {# --- 1. Build dbt Model List --- #}
         {% set model_list = {} %}
         {% for node in graph.nodes.values() | selectattr("resource_type", "equalto", "model") %}
+            {% if include_package_models or node.package_name == project_name %}
             {% set db = node.database | upper %}
             {% set sc = node.schema | upper %}
             {% set node_identifier = node.alias if node.alias else node.name %}
             {% set tb = node_identifier | upper %}
             {% set fqn_key = db ~ "." ~ sc ~ "." ~ tb %}
             {% do model_list.update({fqn_key: node.unique_id}) %}
+            {% endif %}
         {% endfor %}
 
         {# --- 2. Get Large Tables --- #}

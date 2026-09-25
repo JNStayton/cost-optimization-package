@@ -18,6 +18,7 @@ dbt run-operation find_table_clustering_candidates --args '{lookback_days: 14, i
 | `lookback_days` | 7 | Days of query history to analyze |
 | `ignore_table_size` | false | Skip the 1 GB minimum size filter |
 | `dbt_project_only` | true | Only evaluate tables that are dbt models in the current project |
+| `include_package_models` | false | Include models from installed dbt packages (e.g., dbt_cost_optimization_package). By default, only the installing project's models are evaluated. |
 | `target_databases` | [] | Limit scan to specific databases |
 | `target_schemas` | [] | Limit scan to specific schemas |
 
@@ -54,6 +55,7 @@ dbt run-operation find_table_materialization_candidates --args '{lookback_days: 
 |----------|---------|-------------|
 | `lookback_days` | 14 | Days of query history to analyze |
 | `min_query_count` | 10 | Minimum queries in the window to surface a view |
+| `include_package_models` | false | Include models from installed dbt packages |
 
 ---
 
@@ -71,6 +73,7 @@ dbt run-operation find_incremental_materialization_candidates --args '{min_table
 | `min_table_size_gb` | 10 | Minimum table size to consider |
 | `max_build_time_sec` | 600 | Minimum build time (seconds) to flag |
 | `lookback_days` | 30 | Days of build history to analyze |
+| `include_package_models` | false | Include models from installed dbt packages |
 
 ---
 
@@ -91,6 +94,7 @@ dbt run-operation find_expensive_dbt_queries --args '{lookback_days: 14, dbt_pro
 | `credit_rate_usd` | 2 | Dollar cost per Snowflake credit |
 | `high_cost_threshold_usd` | 10000 | Threshold for "high cost" warning tier |
 | `dbt_project_only` | true | Only show queries belonging to models in the current project |
+| `include_package_models` | false | Include models from installed dbt packages |
 
 ---
 
@@ -108,6 +112,7 @@ dbt run-operation find_spillage_candidates --args '{lookback_days: 14, min_total
 | `lookback_days` | 7 | Days of query history to analyze |
 | `min_total_gb_spilled` | 0.05 | Minimum total GB spilled to surface |
 | `min_runs` | 1 | Minimum query runs with spillage |
+| `include_package_models` | false | Include models from installed dbt packages |
 
 ---
 
@@ -132,5 +137,6 @@ dbt run-operation find_warehouse_sizing_recommendations --args '{lookback_days: 
 
 - All macros require `IMPORTED PRIVILEGES` on the `SNOWFLAKE` database (ACCOUNT_USAGE access).
 - Macros respect `snowflake_enterprise_edition` var — Standard edition uses query_text matching instead of ACCESS_HISTORY where applicable.
+- **Project scoping**: By default, macros only surface models from the installing project (`include_package_models=false`). Set `include_package_models: true` to also evaluate models from installed dbt packages.
 - `suppress_staging_materialization_recs` var is respected by `find_table_materialization_candidates`.
 - For full analysis with strategy recommendations, confidence scores, and template code, run the model pipeline instead (`dbt run -s tag:dbt_cost_optimization`).

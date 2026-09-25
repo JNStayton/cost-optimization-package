@@ -4,7 +4,8 @@
     min_total_credits=0.1,
     credit_rate_usd=2,
     high_cost_threshold_usd=10000,
-    dbt_project_only=true
+    dbt_project_only=true,
+    include_package_models=false
 ) %}
 
   {#--
@@ -169,6 +170,8 @@
             {# Skip queries not in the current project when dbt_project_only is true #}
             {% if dbt_project_only and model_fqn is none %}
                 {# skip — not a model in this project #}
+            {% elif not include_package_models and dbt_node_id and dbt_node_id in graph.nodes and graph.nodes[dbt_node_id].package_name != project_name %}
+                {# skip — package model #}
             {% else %}
 
             {% do recommendations.append({
