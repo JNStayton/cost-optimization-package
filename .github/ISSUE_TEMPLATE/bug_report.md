@@ -60,7 +60,7 @@ Remove anything sensitive (account identifiers, hostnames, table names) before p
 <vars go here>
 ```
 
-**The output of `dbt --version`** (dbt Core or Fusion):
+**The output of `dbt --version`** (dbt v1 or v2):
 ```
 <output goes here>
 ```
