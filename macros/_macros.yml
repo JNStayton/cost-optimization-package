@@ -23,6 +23,8 @@ macros:
         description: "When true, lowers the minimum table size from 100 GB to 1 GB (default: false)"
       - name: dbt_project_only
         description: "When true, only tables built by this dbt project are considered (default: true)"
+      - name: include_package_models
+        description: "When true, also evaluates models from installed dbt packages; by default only the installing project's models are evaluated (default: false)"
       - name: target_databases
         description: "Optional list of databases to limit the search to (default: [] = all)"
       - name: target_schemas
@@ -57,6 +59,8 @@ macros:
         description: "Minimum total GB spilled for a table to be reported (default: 0.05)"
       - name: min_runs
         description: "Minimum number of builds in the window for a table to be reported (default: 1)"
+      - name: include_package_models
+        description: "When true, also evaluates models from installed dbt packages; by default only the installing project's models are evaluated (default: false)"
 
   - name: find_table_materialization_candidates
     description: >
@@ -68,6 +72,8 @@ macros:
         description: "Days of query history to analyze (default: 14)"
       - name: min_query_count
         description: "Minimum number of queries against a view for it to be reported (default: 10)"
+      - name: include_package_models
+        description: "When true, also evaluates models from installed dbt packages; by default only the installing project's models are evaluated (default: false)"
 
   - name: find_expensive_dbt_queries
     description: >
@@ -87,6 +93,8 @@ macros:
         description: "Projected annual cost above which a query is flagged high_cost (default: 10000)"
       - name: dbt_project_only
         description: "When true, only queries from this dbt project are considered (default: true)"
+      - name: include_package_models
+        description: "When true, also evaluates models from installed dbt packages; by default only the installing project's models are evaluated (default: false)"
 
   - name: find_warehouse_sizing_recommendations
     description: >
@@ -115,6 +123,8 @@ macros:
         description: "Build-time threshold in seconds. Despite the name, this is a minimum: only builds slower than this qualify (default: 600)"
       - name: lookback_days
         description: "Days of build history to analyze (default: 30)"
+      - name: include_package_models
+        description: "When true, also evaluates models from installed dbt packages; by default only the installing project's models are evaluated (default: false)"
 
   # ===========================================================================
   # Helpers (internal) — macros/optimizations/helpers/
