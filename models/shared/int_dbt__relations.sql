@@ -89,6 +89,7 @@ with dbt_relations as (
             {{ make_string_array([]) }} as parent_models,
             {{ make_string_array([]) }} as child_models,
             0 as downstream_model_count
+        from (select 1 as _placeholder) as _empty
         where 1 = 0
     {% endif %}
 )
