@@ -15,6 +15,13 @@ models:
         - ai_credit_rate_usd    (default 2)
     config:
       materialized: table
+    columns:
+      - name: snapshot_date
+        data_tests:
+          - not_null
+      - name: service_type
+        data_tests:
+          - not_null
 
   - name: fct_snowflake__ai_model_cost_recommendations
     description: >
@@ -36,6 +43,13 @@ models:
         - ai_min_credits_for_recommendation             (default 1)
     config:
       materialized: table
+    columns:
+      - name: snapshot_date
+        data_tests:
+          - not_null
+      - name: model_name
+        data_tests:
+          - not_null
 
   - name: fct_snowflake__ai_user_spend_recommendations
     description: >
@@ -57,6 +71,13 @@ models:
         - ai_min_credits_for_recommendation     (default 1)
     config:
       materialized: table
+    columns:
+      - name: snapshot_date
+        data_tests:
+          - not_null
+      - name: user_id
+        data_tests:
+          - not_null
 
   - name: fct_snowflake__ai_token_efficiency_recommendations
     description: >
@@ -80,3 +101,19 @@ models:
         - ai_min_queries_for_recommendation         (default 10)
     config:
       materialized: table
+    columns:
+      - name: snapshot_date
+        data_tests:
+          - not_null
+      - name: model_name
+        data_tests:
+          - not_null
+
+  - name: fct_snowflake__ai_agent_optimization_recommendations
+    columns:
+      - name: snapshot_date
+        data_tests:
+          - not_null
+      - name: agent_fqn
+        data_tests:
+          - not_null

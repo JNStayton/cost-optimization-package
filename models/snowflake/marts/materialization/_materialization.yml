@@ -37,6 +37,8 @@ models:
     columns:
       - name: snapshot_date
         description: Calendar date when this analysis was run.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
@@ -46,6 +48,8 @@ models:
 
       - name: table_fqn
         description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+        data_tests:
+          - not_null
 
       - name: database_name
         description: Snowflake database containing the table.
@@ -204,12 +208,16 @@ models:
     columns:
       - name: snapshot_date
         description: Calendar date when this analysis was run.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
 
       - name: table_fqn
         description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+        data_tests:
+          - not_null
 
       - name: database_name
         description: Snowflake database containing the table.
@@ -371,12 +379,16 @@ models:
     columns:
       - name: snapshot_date
         description: Calendar date when this analysis was run.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
 
       - name: table_fqn
         description: Fully-qualified view name in DATABASE.SCHEMA.TABLE format (uppercased).
+        data_tests:
+          - not_null
 
       - name: database_name
         description: Snowflake database containing the view.
@@ -489,4 +501,3 @@ models:
           Number of distinct physical environments (table_fqn values) where this logical
           dbt model has been materialized. Useful for identifying models that exist across
           dev/staging/prod.
-

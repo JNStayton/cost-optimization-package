@@ -29,6 +29,8 @@ models:
     columns:
       - name: snapshot_date
         description: Calendar date when this analysis was run.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
@@ -38,6 +40,8 @@ models:
 
       - name: warehouse_name
         description: Name of the Snowflake virtual warehouse.
+        data_tests:
+          - not_null
 
       - name: warehouse_size
         description: >
@@ -155,6 +159,8 @@ models:
     columns:
       - name: snapshot_date
         description: Calendar date when this analysis was run.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
@@ -164,6 +170,8 @@ models:
 
       - name: table_fqn
         description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+        data_tests:
+          - not_null
 
       - name: table_database
         description: Snowflake database containing the table.
@@ -294,6 +302,8 @@ models:
     columns:
       - name: snapshot_date
         description: Calendar date when this analysis was run.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
@@ -309,6 +319,8 @@ models:
           Snowflake query hash that uniquely identifies the logical query structure.
           Repeated runs of the same compiled SQL share a query_hash, enabling
           aggregation across runs.
+        data_tests:
+          - not_null
 
       - name: dbt_node_id
         description: >

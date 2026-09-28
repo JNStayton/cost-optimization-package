@@ -9,14 +9,23 @@ models:
     columns:
       - name: priority_rank
         description: Rank by estimated annual savings (1 = highest savings)
+        data_tests:
+          - not_null
       - name: signal_id
         description: Unique signal identifier matching the optimization priorities mapping
+        data_tests:
+          - not_null
       - name: related_signals_count
         description: Total P1 signals for this entity (1 = only this one, 2+ = more available)
       - name: snowflake_ddl
         description: Ready-to-execute ALTER statement (when applicable)
       - name: dbt_model_config
         description: Copy-paste dbt config block (when applicable)
+      - name: domain
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ai', 'clustering', 'materialization', 'warehouse']
 
   - name: vw_snowflake__cost_savings_summary
     description: >
@@ -25,6 +34,11 @@ models:
     columns:
       - name: domain
         description: Optimization domain
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ai', 'clustering', 'materialization', 'warehouse']
       - name: total_recommendations
         description: Count of actionable recommendations in this domain
       - name: estimated_annual_savings_usd
@@ -38,12 +52,27 @@ models:
     columns:
       - name: signal_id
         description: Unique signal identifier
+        data_tests:
+          - not_null
       - name: priority_tier
         description: Per-entity relative priority (1 = do first for this entity, 2 = do second, etc.)
       - name: effort_category
         description: Effort required — used for sprint planning grouping
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['actionable_review', 'architecture', 'config_change', 'investigation', 'sql_refactor']
       - name: action_type
         description: Type of fix (snowflake_ddl, dbt_config, investigation)
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['dbt_config', 'investigation', 'snowflake_ddl']
+      - name: domain
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ai', 'clustering', 'materialization', 'warehouse']
 
   - name: vw_snowflake__cross_domain_insights
     description: >
@@ -61,6 +90,9 @@ models:
         description: Domain of the primary recommendation
       - name: root_cause
         description: Why these signals co-occur on the same table
+      - name: insight_id
+        data_tests:
+          - not_null
 
   - name: vw_snowflake__dbt_model_optimizations
     description: >
@@ -83,6 +115,19 @@ models:
         description: Array of factors reducing confidence (e.g., low_build_frequency, key_not_exact_or_nullable)
       - name: environment_ids
         description: Array of dbt_cloud_environment_ids where this model exists
+      - name: signal_id
+        data_tests:
+          - not_null
+      - name: domain
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ai', 'clustering', 'materialization', 'warehouse']
+      - name: effort_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['actionable_review', 'architecture', 'config_change', 'investigation', 'sql_refactor']
 
   - name: vw_snowflake__warehouse_optimizations
     description: >
@@ -96,12 +141,27 @@ models:
         description: Warehouse type category (standard, gen2, multi_cluster, adaptive)
       - name: signal_id
         description: Signal type (idle_reduce_auto_suspend, spillage_moderate_worsening, etc.)
+        data_tests:
+          - not_null
       - name: snowflake_ddl
         description: Concrete ALTER WAREHOUSE DDL (for config recs)
       - name: affected_model_count
         description: Count of models contributing to this signal (for aggregated model-level signals)
       - name: affected_models
         description: Comma-separated list of affected model names
+      - name: warehouse_name
+        data_tests:
+          - not_null
+      - name: effort_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['actionable_review', 'architecture', 'config_change', 'investigation', 'sql_refactor']
+      - name: backlog_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['actionable', 'monitor', 'stable']
 
   - name: vw_snowflake__top_expensive_queries
     description: >
@@ -111,6 +171,8 @@ models:
     columns:
       - name: query_hash
         description: Unique identifier for this recurring query pattern
+        data_tests:
+          - not_null
       - name: estimated_annual_cost_usd
         description: Projected annual cost at current run rate
       - name: recommendation
@@ -124,8 +186,20 @@ models:
     columns:
       - name: service_or_model
         description: AI service, model name, or agent identifier
+        data_tests:
+          - not_null
       - name: estimated_annual_savings_usd
         description: Estimated annual savings from applying the recommendation
+      - name: effort_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['actionable_review', 'architecture', 'config_change', 'investigation', 'sql_refactor']
+      - name: backlog_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['actionable', 'monitor', 'stable']
 
   - name: vw_snowflake__user_level_cost_attribution
     description: >
@@ -134,7 +208,31 @@ models:
     columns:
       - name: user_name
         description: Snowflake user driving the cost
+        data_tests:
+          - not_null
       - name: combined_credits_30d
         description: Total credits (query + AI) consumed in the last 30 days
       - name: estimated_annual_cost_usd
         description: Projected annual cost at current rate
+      - name: user_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['ai_user', 'builder', 'consumer', 'mixed', 'unknown']
+
+  - name: vw_snowflake__top_spillage_models
+    columns:
+      - name: table_fqn
+        data_tests:
+          - not_null
+      - name: model_source
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['installed_package', 'project']
+
+  - name: vw_snowflake__top_queried_models
+    columns:
+      - name: table_fqn
+        data_tests:
+          - not_null

@@ -34,9 +34,13 @@ models:
         description: >
           Surrogate key for the snapshot. Derived from md5(snapshot_date || table_fqn).
           Used as the merge key for incremental runs — one record per table per day.
+        data_tests:
+          - not_null
 
       - name: snapshot_date
         description: Calendar date of the snapshot. Combined with table_fqn to form the unique key.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
@@ -55,6 +59,8 @@ models:
 
       - name: table_fqn
         description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+        data_tests:
+          - not_null
 
       - name: dbt_model
         description: >
@@ -251,9 +257,13 @@ models:
         description: >
           Surrogate key for the snapshot. Derived from md5(snapshot_date || table_fqn || column_name).
           Used as the merge key for incremental runs — one record per column per table per day.
+        data_tests:
+          - not_null
 
       - name: snapshot_date
         description: Calendar date of the snapshot.
+        data_tests:
+          - not_null
 
       - name: analyzed_at
         description: Timestamp when this model run produced the record.
@@ -263,6 +273,8 @@ models:
       # ---------------------------------------------------------------------------
       - name: table_fqn
         description: Fully-qualified table name in DATABASE.SCHEMA.TABLE format (uppercased).
+        data_tests:
+          - not_null
 
       - name: database_name
         description: Snowflake database containing the table.
