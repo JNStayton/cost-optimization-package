@@ -59,3 +59,4 @@ merge-conflict-resolution-plan-pr14.md
 # Internal dev tooling (kept locally, not tracked)
 CLAUDE.md
 .mcp.json
+claude-chat.txt
