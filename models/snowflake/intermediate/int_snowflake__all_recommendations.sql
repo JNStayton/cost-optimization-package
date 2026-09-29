@@ -24,6 +24,7 @@
 --#}
 
 {% set credit_rate_usd = var('credit_rate_usd', 2) %}
+{% set min_savings = var('min_annual_savings_usd', 1) %}
 {% set monitored_projects = var('dbt_monitored_projects', []) %}
 {% if monitored_projects | length == 0 %}
   {% set monitored_projects = [project_name] %}
@@ -781,7 +782,16 @@ select
     estimated_annual_savings_usd,
     snowflake_ddl,
     snapshot_date,
-    backlog_status,
+    case
+        -- Demote only recommendations whose estimate exists and is below the floor.
+        -- A null estimate means the benefit isn't expressed in dollars (e.g. MCW for
+        -- bursty workloads), not that it's worthless, so those keep their status.
+        when backlog_status = 'actionable'
+             and estimated_annual_savings_usd is not null
+             and estimated_annual_savings_usd < {{ min_savings }}
+            then 'stable'
+        else backlog_status
+    end as backlog_status,
     dbt_model_config,
     identified_unique_key,
     signal_id,

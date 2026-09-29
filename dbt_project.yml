@@ -214,6 +214,7 @@ vars:
 
   # --- Gold views ---
   top_models_lookback_days: 30          # Lookback for vw_snowflake__top_queried_models
+  min_annual_savings_usd: 1             # Recommendations with savings below this threshold are set to 'stable' (filtered from actionable gold views)
 
   # =============================================================================
   # BigQuery

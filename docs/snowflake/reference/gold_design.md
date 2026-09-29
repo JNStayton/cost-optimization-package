@@ -584,3 +584,7 @@ The package monitors all models visible in `QUERY_HISTORY` within the current Sn
 - Query patterns over the lookback window are representative of future patterns
 - All recommendations are independent (in practice, fixing one may eliminate another)
 - Cross-domain savings are NOT double-counted — the `combined_estimated_savings` in cross-domain insights represents the expected savings from addressing the root cause, not the sum of both domains
+
+### Minimum savings threshold
+
+Recommendations with `estimated_annual_savings_usd` below `min_annual_savings_usd` (default: $1) are downgraded to `backlog_status = 'stable'` in `int_snowflake__all_recommendations`. This filters noise (e.g., a view chain recommendation saving $0.0002/year) from all gold views without deleting the data. The threshold is configurable — organizations with higher spend may want to raise it to $10 or $100 to focus on material opportunities.
