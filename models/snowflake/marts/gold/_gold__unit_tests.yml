@@ -435,3 +435,84 @@ unit_tests:
         - {user_name: u_consumer, user_category: consumer, build_credits_30d: 0,   consumption_credits_30d: 0.278, ai_credits_30d: 0, combined_credits_30d: 0.278, estimated_annual_cost_usd: 6.67,  recommendation: "Low cost user"}
         - {user_name: u_mixed,    user_category: mixed,    build_credits_30d: 36,  consumption_credits_30d: 1,     ai_credits_30d: 0, combined_credits_30d: 37,    estimated_annual_cost_usd: 888,   recommendation: "High cost user — review workload patterns"}
         - {user_name: u_ai,       user_category: ai_user,  build_credits_30d: 0,   consumption_credits_30d: 0,     ai_credits_30d: 5, combined_credits_30d: 5,     estimated_annual_cost_usd: 120,   recommendation: "Moderate cost user — monitor trends"}
+
+  - name: top_queried_models_monitor_all_projects
+    description: >
+      With dbt_monitored_projects set to ['*'], vw_snowflake__top_queried_models includes
+      tables from every dbt project instead of filtering to a list. Previously '*' was
+      treated as a literal project name and the view returned no rows.
+    model: vw_snowflake__top_queried_models
+    overrides:
+      vars:
+        dbt_monitored_projects: ['*']
+    given:
+      - input: ref('int_snowflake__table_query_stats_daily')
+        rows:
+          - {table_database: DB, table_schema: S, table_name: T1, stats_date: 2099-01-01, select_count: 10, select_execution_time_ms_sum: 1000, bytes_scanned_sum: 0}
+          - {table_database: DB, table_schema: S, table_name: T3, stats_date: 2099-01-01, select_count: 5,  select_execution_time_ms_sum: 1000, bytes_scanned_sum: 0}
+      - input: ref('int_dbt__relations')
+        rows:
+          - {table_fqn: DB.S.T1, dbt_model: model.dbt_cost_optimization_package.t1, model_name: t1, package_name: dbt_cost_optimization_package}
+          - {table_fqn: DB.S.T3, dbt_model: model.other_project.t3,                model_name: t3, package_name: other_project}
+    expect:
+      rows:
+        - {table_fqn: DB.S.T1, model_name: t1, total_selects_30d: 10}
+        - {table_fqn: DB.S.T3, model_name: t3, total_selects_30d: 5}
+
+  - name: top_spillage_models_one_row_per_model_with_multiple_signals
+    description: >
+      When a model has more than one spillage signal, vw_snowflake__top_spillage_models
+      still returns one row: priority_tier and signal_id come from the highest-priority
+      (lowest-tier) signal, and spillage_signal_count / all_spillage_signals list them
+      all. Previously the priority join fanned out to one row per signal.
+    model: vw_snowflake__top_spillage_models
+    given:
+      - input: ref('fct_snowflake__warehouse_performance_recommendations')
+        rows:
+          - {table_fqn: DB.S.M1, model_name: m1, dbt_model: model.dbt_cost_optimization_package.m1, warehouse_name: WH1, total_gb_spilled_local: 2, total_gb_spilled_remote: 1, recommendation: Scale up warehouse}
+      - input: ref('int_snowflake__query_history')
+        rows: []
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {table_fqn: DB.S.M1, priority_tier: 4, signal_id: spillage_scale_up}
+          - {table_fqn: DB.S.M1, priority_tier: 5, signal_id: spillage_moderate_stable}
+    expect:
+      rows:
+        - {model_name: m1, priority_tier: 4, signal_id: spillage_scale_up, spillage_signal_count: 2, all_spillage_signals: 'spillage_moderate_stable, spillage_scale_up'}
+
+  - name: user_level_cost_attribution_counts_each_query_once_at_its_own_rate
+    description: >
+      vw_snowflake__user_level_cost_attribution computes credits per query, using that
+      query's own warehouse rate, before summing per user. Previously a SELECT that read
+      several project models was counted once per model, and a single maximum rate across
+      a user's warehouses was applied to all of their time.
+
+      Cases:
+        - u_multi: one 1,000 s SELECT on WH1 (0.001 credits/s) that reads two project
+          models → 1.0 consumption credit (previously 2.0).
+        - u_two_wh: 1,000 s of builds on WH1 (0.001/s) and 1,000 s on WH2 (0.01/s)
+          → 1 + 10 = 11 build credits (previously 0.01 × 2,000 s = 20).
+    model: vw_snowflake__user_level_cost_attribution
+    given:
+      - input: ref('int_snowflake__warehouse_daily')
+        rows:
+          - {warehouse_name: WH1, total_credits: 86.4}
+          - {warehouse_name: WH2, total_credits: 864}
+      - input: ref('int_snowflake__dbt_sessions')
+        rows:
+          - {session_id: 1}
+      - input: ref('int_snowflake__query_history')
+        rows:
+          - {user_name: u_multi,  role_name: ANALYST,     query_id: q1, session_id: 9, warehouse_name: WH1, query_type: SELECT, dbt_node_id: null, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: select * from DB.S.T1 join DB.S.T2 using (id)}
+          - {user_name: u_two_wh, role_name: TRANSFORMER, query_id: q2, session_id: 1, warehouse_name: WH1, query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_two_wh, role_name: TRANSFORMER, query_id: q3, session_id: 1, warehouse_name: WH2, query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+      - input: ref('int_dbt__relations')
+        rows:
+          - {database_name: DB, schema_name: S, table_name: T1, package_name: dbt_cost_optimization_package}
+          - {database_name: DB, schema_name: S, table_name: T2, package_name: dbt_cost_optimization_package}
+      - input: ref('fct_snowflake__ai_user_spend_recommendations')
+        rows: []
+    expect:
+      rows:
+        - {user_name: u_multi,  user_category: consumer, build_credits_30d: 0,  consumption_credits_30d: 1.0, combined_credits_30d: 1.0}
+        - {user_name: u_two_wh, user_category: builder,  build_credits_30d: 11, consumption_credits_30d: 0,   combined_credits_30d: 11}

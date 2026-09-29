@@ -63,10 +63,12 @@ priority_context as (
     select
         table_fqn,
         min(priority_tier) as priority_tier,
-        signal_id
+        min_by(signal_id, priority_tier) as signal_id,
+        count(distinct signal_id) as spillage_signal_count,
+        listagg(distinct signal_id, ', ') within group (order by signal_id) as all_spillage_signals
     from {{ ref('int_snowflake__all_recommendations') }}
     where signal_id like 'spillage%'
-    group by table_fqn, signal_id
+    group by table_fqn
 )
 
 select
@@ -85,6 +87,8 @@ select
     sm.snowflake_ddl,
     pc.priority_tier,
     pc.signal_id,
+    pc.spillage_signal_count,
+    pc.all_spillage_signals,
     -- Most recent spilling run context
     rsb.dbt_cloud_run_id as last_spilling_run_id,
     rsb.dbt_cloud_job_id as last_spilling_job_id,

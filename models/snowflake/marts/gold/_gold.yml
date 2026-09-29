@@ -203,15 +203,15 @@ models:
 
   - name: vw_snowflake__user_level_cost_attribution
     description: >
-      User-level cost attribution across expensive queries and AI usage.
-      Aggregates credits consumed by user for chargeback and awareness dashboards.
+      User-level cost attribution across three categories: dbt build users,
+      consumption users (SELECT queries against project models), and AI users.
     columns:
       - name: user_name
         description: Snowflake user driving the cost
         data_tests:
           - not_null
       - name: combined_credits_30d
-        description: Total credits (query + AI) consumed in the last 30 days
+        description: Total credits (build + consumption + AI) consumed in the last 30 days
       - name: estimated_annual_cost_usd
         description: Projected annual cost at current rate
       - name: user_category
@@ -230,6 +230,10 @@ models:
           - accepted_values:
               arguments:
                 values: ['installed_package', 'project']
+      - name: spillage_signal_count
+        description: Number of distinct spillage signals for this model
+      - name: all_spillage_signals
+        description: Comma-separated list of all spillage signal_ids (e.g., 'spillage_moderate_stable, spillage_scale_up')
 
   - name: vw_snowflake__top_queried_models
     columns:

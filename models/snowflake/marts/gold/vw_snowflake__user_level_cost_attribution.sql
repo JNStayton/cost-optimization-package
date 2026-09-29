@@ -31,16 +31,14 @@ with warehouse_rates as (
     group by warehouse_name
 ),
 
-build_users as (
-    select
+build_queries as (
+    select distinct
         qh.user_name,
-        max(qh.role_name) as role_name,
-        round(
-            sum(qh.total_elapsed_time_ms / 1000.0)
-            * coalesce(max(wr.credits_per_second), 0.000278)
-        , 4) as build_credits_30d,
-        count(distinct qh.query_id) as build_query_count,
-        max(qh.warehouse_name) as primary_warehouse
+        qh.role_name,
+        qh.query_id,
+        qh.warehouse_name,
+        qh.total_elapsed_time_ms / 1000.0
+            * coalesce(wr.credits_per_second, 0.000278) as query_credits
     from {{ ref('int_snowflake__query_history') }} as qh
     inner join {{ ref('int_snowflake__dbt_sessions') }} as s
         on qh.session_id = s.session_id
@@ -56,18 +54,26 @@ build_users as (
           {% endfor %}
       )
     {% endif %}
-    group by qh.user_name
 ),
 
-consumption_users as (
+build_users as (
     select
+        user_name,
+        max(role_name) as role_name,
+        round(sum(query_credits), 4) as build_credits_30d,
+        count(distinct query_id) as build_query_count,
+        max(warehouse_name) as primary_warehouse
+    from build_queries
+    group by user_name
+),
+
+consumption_queries as (
+    select distinct
         qh.user_name,
-        max(qh.role_name) as role_name,
-        round(
-            sum(qh.total_elapsed_time_ms / 1000.0)
-            * coalesce(max(wr.credits_per_second), 0.000278)
-        , 4) as consumption_credits_30d,
-        count(distinct qh.query_id) as consumption_query_count
+        qh.role_name,
+        qh.query_id,
+        qh.total_elapsed_time_ms / 1000.0
+            * coalesce(wr.credits_per_second, 0.000278) as query_credits
     from {{ ref('int_snowflake__query_history') }} as qh
     inner join {{ ref('int_dbt__relations') }} as dr
         on qh.query_text ilike '%' || dr.database_name || '.' || dr.schema_name || '.' || dr.table_name || '%'
@@ -82,7 +88,16 @@ consumption_users as (
           {% endfor %}
       )
     {% endif %}
-    group by qh.user_name
+),
+
+consumption_users as (
+    select
+        user_name,
+        max(role_name) as role_name,
+        round(sum(query_credits), 4) as consumption_credits_30d,
+        count(distinct query_id) as consumption_query_count
+    from consumption_queries
+    group by user_name
 ),
 
 ai_users as (

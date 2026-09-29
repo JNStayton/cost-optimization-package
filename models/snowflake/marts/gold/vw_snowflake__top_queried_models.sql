@@ -40,8 +40,10 @@ enriched as (
     from query_stats as qs
     inner join {{ ref('int_dbt__relations') }} as dr
         on dr.table_fqn = qs.table_fqn
+    {%- set monitored_projects = var('dbt_monitored_projects', []) -%}
+    {%- set monitor_all = (monitored_projects | length == 1 and monitored_projects[0] == '*') -%}
+    {%- if not monitor_all %}
     where dr.package_name in (
-        {%- set monitored_projects = var('dbt_monitored_projects', []) -%}
         {%- if monitored_projects | length == 0 -%}
             '{{ project_name }}'
         {%- else -%}
@@ -50,6 +52,7 @@ enriched as (
             {%- endfor -%}
         {%- endif -%}
     )
+    {%- endif %}
 )
 
 select

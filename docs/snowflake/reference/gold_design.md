@@ -146,6 +146,11 @@ Key columns:
 - `model_name` / `node_id`: the dbt model
 - `model_source`: 'project' or 'installed_package'
 - `total_gb_spilled`: aggregate spillage across runs
+- `spill_trend`: Worsening / Improving / Stable
+- `priority_tier`: per-entity relative priority from int_all_recommendations
+- `signal_id`: primary (lowest-tier) spillage signal for this model
+- `spillage_signal_count`: number of distinct spillage signals (e.g., scale_up + moderate)
+- `all_spillage_signals`: comma-separated list of all spillage signal_ids
 - `last_spilling_run_id` / `last_spilling_job_id`: dbt platform run and job IDs for the most recent spilling execution
 - `warehouse_name`: warehouse where spillage occurred
 
@@ -209,6 +214,9 @@ Signal categories: spillage, clustering, incremental, materialization, expensive
 | `estimated_annual_cost_usd` | float | Projected annual cost |
 | `primary_warehouse` | string | Warehouse used for builds (builders only) |
 | `user_category` | string | builder / consumer / ai_user / mixed |
+| `build_query_count` | int | Number of build queries (INSERT/MERGE/CTAS) in last 30 days |
+| `consumption_query_count` | int | Number of SELECT queries against project models in last 30 days |
+| `ai_query_count` | int | Number of AI/Cortex queries in last 30 days |
 | `recommendation` | string | Action/awareness text |
 
 ---
