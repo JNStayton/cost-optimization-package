@@ -634,7 +634,9 @@ enriched as (
     -- Warehouse fallback: most common warehouse that built this model (from query_history comments)
     left join (
         select
-            parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
+            -- try_parse_json, not parse_json: query_text LIKE '%node_id%' does not
+            -- guarantee valid JSON in the comment, only that the substring appears.
+            try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
             mode(warehouse_name) as build_warehouse_name
         from {{ ref('int_snowflake__query_history') }}
         where query_text like '%node_id%'
@@ -655,7 +657,7 @@ enriched as (
             and query_start_time >= dateadd(day, -30, current_timestamp())
             and warehouse_name is not null
             and split_part(
-                parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string,
+                try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string,
                 '.', 2
             ) in (
                 {%- for proj in monitored_projects -%}

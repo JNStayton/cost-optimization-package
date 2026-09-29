@@ -43,13 +43,15 @@ with spillage_models as (
 -- Find the most recent spilling build query per model for run_id traceability
 recent_spilling_builds as (
     select
-        parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
+        -- try_parse_json, not parse_json: the regex matches any /* {...} */ comment,
+        -- not just dbt's own, so it can capture non-JSON content from non-dbt query traffic.
+        try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
         dbt_cloud_run_id,
         dbt_cloud_job_id,
         query_start_time,
         round(bytes_spilled_local / power(1024, 3), 3) as gb_spilled_local,
         row_number() over (
-            partition by parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string
+            partition by try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string
             order by query_start_time desc
         ) as rn
     from {{ ref('int_snowflake__query_history') }}
