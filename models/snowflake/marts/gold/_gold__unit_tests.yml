@@ -35,3 +35,88 @@ unit_tests:
         - {priority_rank: 2, signal_id: add_clustering_key_strong,   model_name: fct_a,     related_signals_count: 2}
         - {priority_rank: 3, signal_id: oversized_scale_down,        model_name: wh_x_name, related_signals_count: 1}
         - {priority_rank: 4, signal_id: add_clustering_key_evaluate, model_name: fct_e,     related_signals_count: 1}
+
+  - name: cost_savings_summary_aggregates_actionable_by_domain
+    description: >
+      vw_snowflake__cost_savings_summary counts only actionable signals, groups them by
+      domain, counts config_change signals as quick wins, treats null cost/savings as 0,
+      returns a null savings_pct when the domain's cost total is 0, and picks the
+      highest-savings recommendation as the domain's top recommendation.
+
+      Cases:
+        - clustering: two actionable signals (one config_change, one sql_refactor) plus a
+          large 'monitor' signal that must be ignored. Totals 2000 cost / 1000 savings → 50.0%.
+        - warehouse: one actionable signal with null savings and 0 cost → savings 0,
+          savings_pct null (no divide-by-zero).
+        - ai: only a 'monitor' signal, so the domain does not appear.
+    model: vw_snowflake__cost_savings_summary
+    given:
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {domain: clustering, backlog_status: actionable, effort_category: config_change, estimated_annual_cost_usd: 1000, estimated_annual_savings_usd: 300,  recommendation: cl_quick_win}
+          - {domain: clustering, backlog_status: actionable, effort_category: sql_refactor,  estimated_annual_cost_usd: 1000, estimated_annual_savings_usd: 700,  recommendation: cl_refactor}
+          - {domain: clustering, backlog_status: monitor,    effort_category: config_change, estimated_annual_cost_usd: 9000, estimated_annual_savings_usd: 9000, recommendation: cl_ignored}
+          - {domain: warehouse,  backlog_status: actionable, effort_category: config_change, estimated_annual_cost_usd: 0,    estimated_annual_savings_usd: null, recommendation: wh_only}
+          - {domain: ai,         backlog_status: monitor,    effort_category: config_change, estimated_annual_cost_usd: 500,  estimated_annual_savings_usd: 100,  recommendation: ai_ignored}
+    expect:
+      rows:
+        - {domain: clustering, total_recommendations: 2, quick_win_count: 1, estimated_annual_cost_usd: 2000, estimated_annual_savings_usd: 1000, savings_pct: 50.0, top_recommendation: cl_refactor, top_recommendation_savings_usd: 700}
+        - {domain: warehouse,  total_recommendations: 1, quick_win_count: 1, estimated_annual_cost_usd: 0,    estimated_annual_savings_usd: 0,    savings_pct: null, top_recommendation: wh_only,     top_recommendation_savings_usd: 0}
+
+  - name: ai_optimizations_filters_and_dedupes_ai_signals
+    description: >
+      vw_snowflake__ai_optimizations keeps only ai-domain signals that are actionable or
+      monitor, returns one row per dedup_key (highest savings with nulls last, then score),
+      and exposes entity_name as service_or_model.
+
+      Cases:
+        - m1: two signals; the one with higher savings wins.
+        - m2: a signal WITH savings beats a null-savings signal even though the null one
+          has a higher score (nulls last).
+        - m5: a 'monitor' signal is kept, with backlog_status = monitor.
+        - m3 ('stable') and m4 (clustering domain) are excluded.
+    model: vw_snowflake__ai_optimizations
+    given:
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {dedup_key: m1, domain: ai,         backlog_status: actionable, entity_name: svc_m1, recommendation: r_m1_low,  estimated_annual_savings_usd: 100,  score: 1}
+          - {dedup_key: m1, domain: ai,         backlog_status: actionable, entity_name: svc_m1, recommendation: r_m1_high, estimated_annual_savings_usd: 200,  score: 1}
+          - {dedup_key: m2, domain: ai,         backlog_status: actionable, entity_name: svc_m2, recommendation: r_m2_null, estimated_annual_savings_usd: null, score: 9}
+          - {dedup_key: m2, domain: ai,         backlog_status: actionable, entity_name: svc_m2, recommendation: r_m2_ten,  estimated_annual_savings_usd: 10,   score: 1}
+          - {dedup_key: m3, domain: ai,         backlog_status: stable,     entity_name: svc_m3, recommendation: r_m3,      estimated_annual_savings_usd: 999,  score: 1}
+          - {dedup_key: m4, domain: clustering, backlog_status: actionable, entity_name: svc_m4, recommendation: r_m4,      estimated_annual_savings_usd: 999,  score: 1}
+          - {dedup_key: m5, domain: ai,         backlog_status: monitor,    entity_name: svc_m5, recommendation: r_m5,      estimated_annual_savings_usd: 5,    score: 1}
+    expect:
+      rows:
+        - {service_or_model: svc_m1, recommendation: r_m1_high, backlog_status: actionable}
+        - {service_or_model: svc_m2, recommendation: r_m2_ten,  backlog_status: actionable}
+        - {service_or_model: svc_m5, recommendation: r_m5,      backlog_status: monitor}
+
+  - name: top_expensive_queries_upgrades_queries_with_fixable_root_causes
+    description: >
+      vw_snowflake__top_expensive_queries keeps warehouse sql_refactor signals that are
+      actionable or monitor. When the same model has an ACTIONABLE clustering or
+      materialization signal, the query is upgraded: priority_tier capped at 2,
+      backlog_status set to actionable, and the recommendation and reason rewritten to name
+      the fix. Queries without such co-signals keep their original values.
+
+      Cases:
+        - hash_1 (model n1): a 'monitor' query with an actionable clustering co-signal is
+          upgraded (tier 5 → 2, monitor → actionable). n1's second, 'monitor' clustering
+          signal is ignored, so co_signal_count = 1.
+        - hash_2 (model n2): no co-signals, so it is unchanged.
+        - hash_3 (config_change) and hash_4 ('stable') are excluded.
+    model: vw_snowflake__top_expensive_queries
+    given:
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {domain: warehouse,  effort_category: sql_refactor,  backlog_status: monitor,    node_id: n1, entity_name: hash_1, signal_id: expensive_query_monitor,   priority_tier: 5, recommendation: base_rec_1, recommendation_reason: Projected cost high.}
+          - {domain: clustering, effort_category: config_change, backlog_status: actionable, node_id: n1, entity_name: tbl_n1, signal_id: add_clustering_key_strong, priority_tier: 3, recommendation: add_key,    recommendation_reason: Poor pruning.}
+          - {domain: clustering, effort_category: config_change, backlog_status: monitor,    node_id: n1, entity_name: tbl_n1, signal_id: add_clustering_key_good,   priority_tier: 3, recommendation: add_key_2,  recommendation_reason: Ignored.}
+          - {domain: warehouse,  effort_category: sql_refactor,  backlog_status: monitor,    node_id: n2, entity_name: hash_2, signal_id: expensive_query_monitor,   priority_tier: 5, recommendation: base_rec_2, recommendation_reason: Recurring cost.}
+          - {domain: warehouse,  effort_category: config_change, backlog_status: actionable, node_id: n3, entity_name: hash_3, signal_id: oversized_scale_down,      priority_tier: 4, recommendation: rec_3,      recommendation_reason: Excluded.}
+          - {domain: warehouse,  effort_category: sql_refactor,  backlog_status: stable,     node_id: n4, entity_name: hash_4, signal_id: expensive_query_monitor,   priority_tier: 5, recommendation: rec_4,      recommendation_reason: Excluded.}
+    expect:
+      rows:
+        - {query_hash: hash_1, priority_tier: 2, backlog_status: actionable, co_signal_count: 1, co_occurring_fixes: clustering, recommendation: "Actionable — clustering optimization(s) available", recommendation_reason: "Projected cost high. Root cause: clustering signal(s) detected for this model."}
+        - {query_hash: hash_2, priority_tier: 5, backlog_status: monitor,    co_signal_count: 0, co_occurring_fixes: null,       recommendation: base_rec_2, recommendation_reason: Recurring cost.}
