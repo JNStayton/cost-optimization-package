@@ -54,6 +54,12 @@
     {'table': 'demo_infrequent_builds', 'days': 10, 'growth': 'linear'},
 ] -%}
 
+{#-
+  Warehouse cases (fct_snowflake__warehouse_config_recommendations and
+  fct_snowflake__expensive_query_recommendations): 4 queries a day for 6 days on each
+  fixture warehouse, from that warehouse's dbt session (macros/demo_warehouse_catalog.sql).
+  One query hash per warehouse; a dbt query comment carries node_id where one is set.
+-#}
 {%- set cases = [
     {'view': 'demo_slow_view',  'queries': 60, 'elapsed_ms': 45000},
     {'view': 'demo_quiet_view', 'queries': 15, 'elapsed_ms': 1000},
@@ -116,6 +122,21 @@ select
     'FIXTURE_DBT', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH', 'X-Small', 400000, 1073741824, 100, 0, 0,
     'CREATE_TABLE_AS_SELECT', 400000, 100, 100, 0, 0,
     'create or replace transient table {{ fqn }} as (select * from upstream)', 1, 'SUCCESS', {{ rows }}
+{%- endfor %}
+{%- endfor %}
+{% for w in demo_warehouse_catalog() %}
+{%- for d in range(1, 7) %}
+{%- for i in range(4) %}
+union all
+select
+    'wh_{{ w.name | lower }}_{{ d }}_{{ i }}',
+    dateadd(minute, {{ 5 + i * 10 }}, date_trunc('hour', dateadd(day, -{{ d }}, current_timestamp()))),
+    'hash_{{ w.name | lower }}', 'phash_{{ w.name | lower }}',
+    'FIXTURE_DBT', 'FIXTURE_TRANSFORMER', '{{ w.name }}', '{{ w.qh_size }}',
+    {{ w.elapsed }}, 1048576, {{ w.load }}, {{ w.overload }}, {{ w.provisioning }}, 'SELECT', {{ w.exec }}, 1, 1, 0, 0,
+    '{% if w.node_id %}/* {"app": "dbt", "node_id": "{{ w.node_id }}"} */ {% endif %}select 1',
+    {{ w.session_id }}, 'SUCCESS', 0
+{%- endfor %}
 {%- endfor %}
 {%- endfor %}
 
