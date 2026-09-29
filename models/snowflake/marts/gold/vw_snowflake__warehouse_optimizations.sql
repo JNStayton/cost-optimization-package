@@ -68,8 +68,28 @@ model_signals as (
         end as signal_id,
         min(ar.priority_tier) as priority_tier,
         min(ar.hierarchy_rank) as hierarchy_rank,
-        max(ar.effort_category) as effort_category,
-        max(ar.backlog_status) as backlog_status,
+        case max(case ar.effort_category
+                 when 'architecture'      then 5
+                 when 'sql_refactor'      then 4
+                 when 'investigation'     then 3
+                 when 'actionable_review' then 2
+                 when 'config_change'     then 1
+                 else 0 end)
+            when 5 then 'architecture'
+            when 4 then 'sql_refactor'
+            when 3 then 'investigation'
+            when 2 then 'actionable_review'
+            when 1 then 'config_change'
+            else 'config_change'
+        end as effort_category,
+        case max(case ar.backlog_status
+                 when 'actionable' then 2
+                 when 'monitor'    then 1
+                 else 0 end)
+            when 2 then 'actionable'
+            when 1 then 'monitor'
+            else 'monitor'
+        end as backlog_status,
         max(case when ar.signal_id = 'spillage_scale_up' then ar.recommendation else null end) as scale_up_rec,
         max(ar.recommendation) as recommendation,
         count(distinct ar.node_id) as affected_model_count,
