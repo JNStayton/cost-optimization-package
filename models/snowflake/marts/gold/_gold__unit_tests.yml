@@ -218,8 +218,8 @@ unit_tests:
         - WH_B expensive_query: grouped as 'expensive_query'; no config row → null size.
         - Excluded: a stable config signal, a spillage signal with no warehouse, and a
           non-warehouse-domain signal.
-      All signals in a group share one backlog_status here, pending a decision on how
-      mixed actionable/monitor groups should be labeled.
+      Mixed actionable/monitor and mixed-effort groups are covered by
+      warehouse_optimizations_mixed_groups_use_most_actionable_status_and_highest_effort.
     model: vw_snowflake__warehouse_optimizations
     given:
       - input: ref('int_snowflake__all_recommendations')
@@ -239,3 +239,34 @@ unit_tests:
         - {warehouse_name: WH_A, signal_id: oversized_scale_down, warehouse_current_size: MEDIUM, affected_model_count: null, recommendation: scale_down, recommendation_reason: oversized_reason, estimated_annual_savings_usd: 400}
         - {warehouse_name: WH_A, signal_id: spillage,             warehouse_current_size: MEDIUM, affected_model_count: 2,    recommendation: A_scale_up, recommendation_reason: "2 model(s) affected: m_one, m_two. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.", estimated_annual_savings_usd: 150}
         - {warehouse_name: WH_B, signal_id: expensive_query,      warehouse_current_size: null,   affected_model_count: 1,    recommendation: refactor,   recommendation_reason: "1 model(s) affected: m_three. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.", estimated_annual_savings_usd: 40}
+
+  - name: warehouse_optimizations_mixed_groups_use_most_actionable_status_and_highest_effort
+    description: >
+      When vw_snowflake__warehouse_optimizations groups several model-level signals into
+      one row, the row is actionable if ANY signal is actionable, and its effort_category
+      is the highest-effort one (architecture > sql_refactor > investigation >
+      actionable_review > config_change). This replaced an alphabetical max(), which
+      labeled mixed actionable/monitor groups as monitor and ranked efforts by spelling.
+
+      Cases (each one gave a wrong answer under the old alphabetical max()):
+        - WH_M spillage: actionable + monitor → actionable (old: monitor).
+        - WH_N expensive_query: both monitor; config_change + actionable_review →
+          actionable_review (old: config_change).
+        - WH_P spillage: architecture + sql_refactor → architecture (old: sql_refactor).
+    model: vw_snowflake__warehouse_optimizations
+    given:
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {domain: warehouse, warehouse_name: WH_M, signal_id: spillage_scale_up,          backlog_status: actionable, effort_category: sql_refactor,      priority_tier: 4, hierarchy_rank: 3, recommendation: rec, node_id: m1, model_name: m_one}
+          - {domain: warehouse, warehouse_name: WH_M, signal_id: spillage_moderate_stable,   backlog_status: monitor,    effort_category: config_change,     priority_tier: 5, hierarchy_rank: 3, recommendation: rec, node_id: m2, model_name: m_two}
+          - {domain: warehouse, warehouse_name: WH_N, signal_id: expensive_query_monitor,    backlog_status: monitor,    effort_category: config_change,     priority_tier: 5, hierarchy_rank: 3, recommendation: rec, node_id: m3, model_name: m_three}
+          - {domain: warehouse, warehouse_name: WH_N, signal_id: expensive_query_actionable, backlog_status: monitor,    effort_category: actionable_review, priority_tier: 5, hierarchy_rank: 3, recommendation: rec, node_id: m4, model_name: m_four}
+          - {domain: warehouse, warehouse_name: WH_P, signal_id: spillage_scale_up,          backlog_status: actionable, effort_category: architecture,      priority_tier: 4, hierarchy_rank: 3, recommendation: rec, node_id: m5, model_name: m_five}
+          - {domain: warehouse, warehouse_name: WH_P, signal_id: spillage_moderate_worsening, backlog_status: actionable, effort_category: sql_refactor,     priority_tier: 5, hierarchy_rank: 3, recommendation: rec, node_id: m6, model_name: m_six}
+      - input: ref('int_snowflake__warehouse_config')
+        rows: []
+    expect:
+      rows:
+        - {warehouse_name: WH_M, signal_id: spillage,        backlog_status: actionable, effort_category: sql_refactor}
+        - {warehouse_name: WH_N, signal_id: expensive_query, backlog_status: monitor,    effort_category: actionable_review}
+        - {warehouse_name: WH_P, signal_id: spillage,        backlog_status: actionable, effort_category: architecture}
