@@ -2,8 +2,8 @@ version: 2
 
 sources:
   - name: snowflake_usage
-    database: SNOWFLAKE
-    schema: ACCOUNT_USAGE
+    database: "{{ var('snowflake_usage_database', 'SNOWFLAKE') }}"
+    schema: "{{ var('snowflake_usage_schema', 'ACCOUNT_USAGE') }}"
     config:
       enabled: "{{ target.type == 'snowflake' }}"
     tables:

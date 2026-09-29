@@ -169,6 +169,10 @@ vars:
   # Snowflake
   # =============================================================================
 
+  # --- Source location ---
+  snowflake_usage_database: SNOWFLAKE     # Database the package reads ACCOUNT_USAGE views from
+  snowflake_usage_schema: ACCOUNT_USAGE   # Override both to read from a copy of ACCOUNT_USAGE (or, in integration tests, fixtures)
+
   # --- Edition and feature flags ---
   snowflake_enterprise_edition: true    # Set to false for Standard edition (disables ACCESS_HISTORY, MCW recs)
   ai_rest_api_enabled: true             # Set to false to exclude REST API from AI analysis
