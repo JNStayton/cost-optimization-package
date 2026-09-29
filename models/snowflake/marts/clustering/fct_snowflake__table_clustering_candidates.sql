@@ -2,6 +2,7 @@
   Historical snapshot of clustering candidates based on Snowflake metadata and query history.
   This model ports the logic from the find_table_clustering_candidates macro into SQL.
 --#}
+-- depends_on: {{ ref('int_snowflake__column_query_access') }}
 {{
   config(
     materialized='incremental',
