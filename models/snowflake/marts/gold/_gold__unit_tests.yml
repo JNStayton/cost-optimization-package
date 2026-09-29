@@ -1,0 +1,37 @@
+version: 2
+
+unit_tests:
+  - name: top_recommendations_filters_dedupes_and_ranks
+    description: >
+      vw_snowflake__top_recommendations keeps only P1/P2 actionable signals, returns
+      one row per dedup_key (lowest tier, then highest savings), counts the entity's
+      qualifying signals in related_signals_count, and dense-ranks the result by tier,
+      then savings (nulls last).
+
+      Cases:
+        - model_a: a P1 signal with LOWER savings beats a P2 signal with higher savings
+          (tier wins over savings); related_signals_count = 2.
+        - model_b: highest-savings P1 signal ranks first. Its extra 'monitor' signal is
+          filtered out, so related_signals_count = 1. model_name comes from
+          node_model_name (coalesce).
+        - wh_x: a P2 warehouse signal with no node_model_name falls back to model_name.
+        - model_e: a P2 signal with null savings ranks after one with savings.
+        - model_c (P3) and model_d (P1 but 'monitor') are excluded entirely.
+    model: vw_snowflake__top_recommendations
+    given:
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {dedup_key: model_a, domain: clustering,      signal_id: add_clustering_key_strong, priority_tier: 1, backlog_status: actionable, estimated_annual_savings_usd: 500,  score: 10, node_model_name: fct_a, model_name: fct_a}
+          - {dedup_key: model_a, domain: materialization, signal_id: materialize_as_table,      priority_tier: 2, backlog_status: actionable, estimated_annual_savings_usd: 900,  score: 10, node_model_name: fct_a, model_name: fct_a}
+          - {dedup_key: model_b, domain: materialization, signal_id: convert_to_incremental,    priority_tier: 1, backlog_status: actionable, estimated_annual_savings_usd: 1000, score: 10, node_model_name: fct_b, model_name: raw_b}
+          - {dedup_key: model_b, domain: clustering,      signal_id: add_clustering_key_good,   priority_tier: 2, backlog_status: monitor,    estimated_annual_savings_usd: 50,   score: 10, node_model_name: fct_b, model_name: raw_b}
+          - {dedup_key: wh_x,    domain: warehouse,       signal_id: oversized_scale_down,      priority_tier: 2, backlog_status: actionable, estimated_annual_savings_usd: 300,  score: 10, node_model_name: null,  model_name: wh_x_name}
+          - {dedup_key: model_e, domain: clustering,      signal_id: add_clustering_key_evaluate, priority_tier: 2, backlog_status: actionable, estimated_annual_savings_usd: null, score: 10, node_model_name: fct_e, model_name: fct_e}
+          - {dedup_key: model_c, domain: clustering,      signal_id: add_clustering_key_good,   priority_tier: 3, backlog_status: actionable, estimated_annual_savings_usd: 5000, score: 10, node_model_name: fct_c, model_name: fct_c}
+          - {dedup_key: model_d, domain: warehouse,       signal_id: provisioning_gen2,         priority_tier: 1, backlog_status: monitor,    estimated_annual_savings_usd: 5000, score: 10, node_model_name: fct_d, model_name: fct_d}
+    expect:
+      rows:
+        - {priority_rank: 1, signal_id: convert_to_incremental,      model_name: fct_b,     related_signals_count: 1}
+        - {priority_rank: 2, signal_id: add_clustering_key_strong,   model_name: fct_a,     related_signals_count: 2}
+        - {priority_rank: 3, signal_id: oversized_scale_down,        model_name: wh_x_name, related_signals_count: 1}
+        - {priority_rank: 4, signal_id: add_clustering_key_evaluate, model_name: fct_e,     related_signals_count: 1}
