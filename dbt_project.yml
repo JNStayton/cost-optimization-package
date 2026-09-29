@@ -108,6 +108,14 @@ models:
         vw_databricks__recommendations_by_model:
           +tags: ['gold']
 
+# Package tests (singular tests in tests/). Enabled per platform, like the models.
+data_tests:
+  dbt_cost_optimization_package:
+    snowflake:
+      macros:
+        +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) }}"
+        +tags: ['dbt_cost_optimization', 'macro_tests']
+
 # Package variables — override in a vars.yml file in your project root, or with --vars on the command line.
 # (Overriding package vars in your own dbt_project.yml vars: section is not supported.)
 # Vars share one namespace across platforms. Section headers list which platforms read each group.
