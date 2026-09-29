@@ -3,6 +3,7 @@
   This model ports the logic from the find_table_clustering_candidates macro into SQL.
 --#}
 -- depends_on: {{ ref('int_snowflake__column_query_access') }}
+-- depends_on: {{ ref('int_snowflake__column_query_stats') }}
 {{
   config(
     materialized='incremental',

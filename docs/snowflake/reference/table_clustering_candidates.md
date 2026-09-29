@@ -80,7 +80,9 @@ fct_snowflake__table_clustering_candidates (identifies WHICH tables)
 
 **Downstream children expansion:** The extract macro doesn't only look at queries that directly accessed the candidate table — it also finds queries against the candidate's direct child models (from `int_dbt__relations.parent_models`). This captures filter evidence from analyst queries hitting downstream marts that read from the candidate.
 
-**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed consumption queries. Join-only columns are excluded entirely — filter usage is the admission ticket, join usage is the scoring bonus.
+**Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed consumption queries. Join-only columns are excluded entirely - filter usage is the admission ticket, join usage is the scoring bonus.
+
+**Known limitation: `GET_QUERY_OPERATOR_STATS` privilege requirement.** This function only returns results for the caller if they own the query or hold the `MONITOR` privilege on the warehouse the query ran on. In a multi-user account, `extract_operator_evidence()` will inevitably discover representative queries owned by other users/roles. Rather than failing the whole model build on the first such query, each per-query extraction runs inside a Snowflake Scripting block that catches the access-control error, logs a warning (`extract_operator_evidence: skipped query <id> (...)`), and moves on - that query is simply skipped and contributes no operator evidence. To get full coverage, grant `MONITOR` on the relevant warehouse(s) to the role running this package.
 
 **Selectivity gating:** Columns with high cardinality (distinct_values / total_rows > 5%) are excluded. Near-unique columns (like surrogate keys or customer IDs) cannot consolidate into micropartitions effectively. This prevents columns like `customer_id` from being recommended even when they appear frequently in filters.
 

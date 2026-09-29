@@ -145,7 +145,14 @@
             {% set qstart = q_row['QUERY_START_TIME'] %}
             {% set qhash = q_row['QUERY_PARAMETERIZED_HASH'] %}
 
+            {# GET_QUERY_OPERATOR_STATS requires the caller to own the query or hold
+               MONITOR privilege on its warehouse. In a multi-user account, some of the
+               representative queries discovered above will belong to other users/roles,
+               so this is wrapped in a Snowflake Scripting block to skip just that query
+               (logging a warning) instead of failing the whole model build. #}
             {% set merge_sql %}
+            execute immediate $$
+            begin
               merge into {{ evidence_table }} as target
               using (
                   -- TableScan evidence: exact per-table partition pruning
@@ -210,10 +217,18 @@
               values
                   (source.operator_evidence_key, source.query_id, source.table_fqn, source.operator_type,
                    source.column_name, source.partitions_scanned, source.partitions_total, source.bytes_scanned,
-                   source.condition_text, source.query_parameterized_hash, source.query_start_time, source.access_date)
+                   source.condition_text, source.query_parameterized_hash, source.query_start_time, source.access_date);
+            exception
+              when other then
+                return 'extract_operator_evidence: skipped query {{ qid }} (' || sqlerrm || ')';
+            end;
+            $$;
             {% endset %}
 
-            {% do run_query(merge_sql) %}
+            {% set merge_result = run_query(merge_sql) %}
+            {% if merge_result and merge_result.rows | length > 0 and merge_result.rows[0][0] is not none %}
+              {{ log(merge_result.rows[0][0], info=true) }}
+            {% endif %}
 
           {% endfor %}
 

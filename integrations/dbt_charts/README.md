@@ -72,3 +72,15 @@ dct render charts/snowflake_cost_overview.yml --dbt-project-dir /path/to/your/pr
 - Every SQL result column name is lowercased by dct regardless of how it's
   written in the query - alias new columns in lowercase (`AS my_column`),
   or `x:`/`y:`/`color:` field references will silently fail to match.
+
+## Known package limitation: partial clustering key coverage
+
+`fct_snowflake__table_clustering_candidates` calls Snowflake's
+`GET_QUERY_OPERATOR_STATS`, which only returns data for queries the caller
+owns or for warehouses where the caller's role holds `MONITOR`. In a
+multi-user account, some representative queries will belong to other
+users/roles; those are skipped (with a logged warning) rather than failing
+the build. This means clustering key evidence coverage will be partial until
+`MONITOR` is granted on the relevant warehouse(s) to the role running this
+package. See [`docs/snowflake/reference/table_clustering_candidates.md`](../../docs/snowflake/reference/table_clustering_candidates.md)
+for details.
