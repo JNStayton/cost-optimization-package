@@ -270,3 +270,168 @@ unit_tests:
         - {warehouse_name: WH_M, signal_id: spillage,        backlog_status: actionable, effort_category: sql_refactor}
         - {warehouse_name: WH_N, signal_id: expensive_query, backlog_status: monitor,    effort_category: actionable_review}
         - {warehouse_name: WH_P, signal_id: spillage,        backlog_status: actionable, effort_category: architecture}
+
+  - name: top_queried_models_aggregates_recent_selects_for_project_models
+    description: >
+      vw_snowflake__top_queried_models sums SELECT activity per table over the lookback
+      window (default 30 days), computes daily averages and durations, and keeps only
+      tables that are models of the monitored project(s) (default: this project).
+
+      Cases:
+        - DB.S.T1: two recent days (10 + 20 selects, 3s each, 1 GB each) → 30 selects,
+          1.0/day, 6.0s total, 0.2s avg, 2.0 GB, 2 active days. A row dated 2000-01-01 is
+          outside the window and ignored.
+        - DB.S.T2: only zero-select activity → excluded.
+        - DB.S.T3: a model of another project → excluded.
+        - DB.S.T4: no matching dbt model → excluded.
+      Recent rows use 2099 dates so they always fall inside the window.
+      Not covered yet: dbt_monitored_projects = ['*'] (see open question).
+    model: vw_snowflake__top_queried_models
+    given:
+      - input: ref('int_snowflake__table_query_stats_daily')
+        rows:
+          - {table_database: DB, table_schema: S, table_name: T1, stats_date: 2099-01-01, select_count: 10,   select_execution_time_ms_sum: 3000,   bytes_scanned_sum: 1073741824}
+          - {table_database: DB, table_schema: S, table_name: T1, stats_date: 2099-01-02, select_count: 20,   select_execution_time_ms_sum: 3000,   bytes_scanned_sum: 1073741824}
+          - {table_database: DB, table_schema: S, table_name: T1, stats_date: 2000-01-01, select_count: 1000, select_execution_time_ms_sum: 999999, bytes_scanned_sum: 999999999999}
+          - {table_database: DB, table_schema: S, table_name: T2, stats_date: 2099-01-01, select_count: 0,    select_execution_time_ms_sum: 0,      bytes_scanned_sum: 0}
+          - {table_database: DB, table_schema: S, table_name: T3, stats_date: 2099-01-01, select_count: 5,    select_execution_time_ms_sum: 100,    bytes_scanned_sum: 100}
+          - {table_database: DB, table_schema: S, table_name: T4, stats_date: 2099-01-01, select_count: 5,    select_execution_time_ms_sum: 100,    bytes_scanned_sum: 100}
+      - input: ref('int_dbt__relations')
+        rows:
+          - {table_fqn: DB.S.T1, dbt_model: model.dbt_cost_optimization_package.t1, model_name: t1, package_name: dbt_cost_optimization_package}
+          - {table_fqn: DB.S.T2, dbt_model: model.dbt_cost_optimization_package.t2, model_name: t2, package_name: dbt_cost_optimization_package}
+          - {table_fqn: DB.S.T3, dbt_model: model.other_project.t3,                model_name: t3, package_name: other_project}
+    expect:
+      rows:
+        - {table_fqn: DB.S.T1, model_name: t1, total_selects_30d: 30, avg_daily_selects: 1.0, total_select_time_sec: 6.0, avg_query_duration_sec: 0.2, total_gb_scanned: 2.0, active_days: 2}
+
+  - name: top_spillage_models_attributes_source_and_latest_spilling_run
+    description: >
+      vw_snowflake__top_spillage_models lists spilling dbt models, labels each as this
+      project's or an installed package's (from the node id), totals local + remote
+      spillage, attaches the most recent spilling build in the last 30 days (run and job
+      ids parsed from the dbt query comment), and adds the spillage signal's priority.
+
+      Cases:
+        - m1 (this project): 2 + 1 GB → 3.0; of two recent spilling builds, the newer one
+          (run r_new) is attached; a build dated 2000-01-01 is ignored; priority 4.
+        - m2 (installed package): no spilling builds or priority → nulls.
+        - excluded: a 'Not available…' recommendation, and a row with no dbt model.
+      Recent builds use 2099 timestamps so they always fall inside the window.
+      Not covered yet: a table with more than one spillage signal (see open question).
+    model: vw_snowflake__top_spillage_models
+    given:
+      - input: ref('fct_snowflake__warehouse_performance_recommendations')
+        rows:
+          - {table_fqn: DB.S.M1, model_name: m1, dbt_model: model.dbt_cost_optimization_package.m1, warehouse_name: WH1, total_gb_spilled_local: 2, total_gb_spilled_remote: 1, recommendation: Scale up warehouse}
+          - {table_fqn: DB.S.M2, model_name: m2, dbt_model: model.other_pkg.m2,                     warehouse_name: WH1, total_gb_spilled_local: 1, total_gb_spilled_remote: 0, recommendation: Monitor}
+          - {table_fqn: DB.S.M3, model_name: m3, dbt_model: model.dbt_cost_optimization_package.m3, warehouse_name: WH1, total_gb_spilled_local: 9, total_gb_spilled_remote: 9, recommendation: Not available on Standard edition}
+          - {table_fqn: DB.S.M4, model_name: m4, dbt_model: null,                                   warehouse_name: WH1, total_gb_spilled_local: 9, total_gb_spilled_remote: 9, recommendation: Scale up warehouse}
+      - input: ref('int_snowflake__query_history')
+        rows:
+          - {query_text: '/* {"node_id": "model.dbt_cost_optimization_package.m1"} */ insert into t', dbt_cloud_run_id: r_new, dbt_cloud_job_id: j1, query_start_time: '2099-01-02 00:00:00', bytes_spilled_local: 1073741824}
+          - {query_text: '/* {"node_id": "model.dbt_cost_optimization_package.m1"} */ insert into t', dbt_cloud_run_id: r_old, dbt_cloud_job_id: j1, query_start_time: '2099-01-01 00:00:00', bytes_spilled_local: 1073741824}
+          - {query_text: '/* {"node_id": "model.dbt_cost_optimization_package.m1"} */ insert into t', dbt_cloud_run_id: r_ancient, dbt_cloud_job_id: j1, query_start_time: '2000-01-01 00:00:00', bytes_spilled_local: 1073741824}
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {table_fqn: DB.S.M1, priority_tier: 4, signal_id: spillage_scale_up}
+    expect:
+      rows:
+        - {model_name: m1, model_source: project,           total_gb_spilled: 3, last_spilling_run_id: r_new, last_spilling_job_id: j1,   last_spill_gb: 1.0,  priority_tier: 4,    signal_id: spillage_scale_up}
+        - {model_name: m2, model_source: installed_package, total_gb_spilled: 1, last_spilling_run_id: null,  last_spilling_job_id: null, last_spill_gb: null, priority_tier: null, signal_id: null}
+
+  - name: dbt_model_optimizations_builds_clustering_configs_and_incremental_context
+    description: >
+      vw_snowflake__dbt_model_optimizations lists actionable materialization and clustering
+      recommendations per model. For clustering, it recommends every column whose filter
+      usage is at least 70% of the top column's (from the latest candidate snapshot only),
+      lists the rest as additional candidates, builds a cluster_by config, and drops
+      clustering recommendations with no recommended key. Incremental confidence is
+      attached only to incremental recommendations.
+
+      Cases:
+        - DB.S.T1 (clustering): col_a (100) and col_b (80 ≥ 70%) are recommended in key
+          order; col_c (50) is an additional candidate; an older snapshot's col_z is ignored.
+        - DB.S.T2 (clustering): no candidate columns → dropped.
+        - DB.S.T3 (convert_to_incremental): seen in two environments → the higher-savings
+          row (300); incremental confidence 85 attached; environment_count 2.
+        - DB.S.T4 (materialize_as_table): incremental context stays null even though an
+          incremental config row exists for that table.
+        - excluded: a 'monitor' clustering signal and a warehouse-domain signal.
+    model: vw_snowflake__dbt_model_optimizations
+    given:
+      - input: ref('int_snowflake__all_recommendations')
+        rows:
+          - {dedup_key: d1, domain: clustering,      signal_id: add_clustering_key_strong, table_fqn: DB.S.T1, node_id: n1, backlog_status: actionable, priority_tier: 3, estimated_annual_savings_usd: 50,  score: 1}
+          - {dedup_key: d2, domain: clustering,      signal_id: add_clustering_key_good,   table_fqn: DB.S.T2, node_id: n2, backlog_status: actionable, priority_tier: 3, estimated_annual_savings_usd: 40,  score: 1}
+          - {dedup_key: d3, domain: materialization, signal_id: convert_to_incremental,    table_fqn: DB.S.T3, node_id: n3, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: 100, score: 1}
+          - {dedup_key: d3, domain: materialization, signal_id: convert_to_incremental,    table_fqn: DB.S.T3, node_id: n3, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: 300, score: 1}
+          - {dedup_key: d4, domain: materialization, signal_id: materialize_as_table,      table_fqn: DB.S.T4, node_id: n4, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: 20,  score: 1}
+          - {dedup_key: d5, domain: clustering,      signal_id: add_clustering_key_good,   table_fqn: DB.S.T1, node_id: n5, backlog_status: monitor,    priority_tier: 3, estimated_annual_savings_usd: 999, score: 1}
+          - {dedup_key: d6, domain: warehouse,       signal_id: oversized_scale_down,      table_fqn: null,    node_id: null, backlog_status: actionable, priority_tier: 4, estimated_annual_savings_usd: 999, score: 1}
+      - input: ref('fct_snowflake__clustering_key_candidates')
+        rows:
+          - {table_fqn: DB.S.T1, column_name: col_a, recommended_key_position: 1, filter_query_count: 100,  snapshot_date: 2026-09-02}
+          - {table_fqn: DB.S.T1, column_name: col_b, recommended_key_position: 2, filter_query_count: 80,   snapshot_date: 2026-09-02}
+          - {table_fqn: DB.S.T1, column_name: col_c, recommended_key_position: 3, filter_query_count: 50,   snapshot_date: 2026-09-02}
+          - {table_fqn: DB.S.T1, column_name: col_z, recommended_key_position: 1, filter_query_count: 1000, snapshot_date: 2026-09-01}
+      - input: ref('fct_snowflake__incremental_config_recommendations')
+        rows:
+          - {table_fqn: DB.S.T3, confidence_score: 85, recommendation_status: actionable_review}
+          - {table_fqn: DB.S.T4, confidence_score: 60, recommendation_status: investigate}
+      - input: ref('int_snowflake__dbt_relation_history')
+        rows:
+          - {node_id: n3, table_fqn: DB.DEV.T3,  dbt_cloud_environment_id: env_dev}
+          - {node_id: n3, table_fqn: DB.PROD.T3, dbt_cloud_environment_id: env_prod}
+    expect:
+      rows:
+        - {table_fqn: DB.S.T1, signal_id: add_clustering_key_strong, suggested_clustering_key: 'col_a, col_b', additional_clustering_candidates: col_c, estimated_annual_savings_usd: 50,  incremental_confidence_score: null, environment_count: 1}
+        - {table_fqn: DB.S.T3, signal_id: convert_to_incremental,    suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 300, incremental_confidence_score: 85,   environment_count: 2}
+        - {table_fqn: DB.S.T4, signal_id: materialize_as_table,      suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 20,  incremental_confidence_score: null, environment_count: 1}
+
+  - name: user_level_cost_attribution_splits_build_consumption_and_ai_spend
+    description: >
+      vw_snowflake__user_level_cost_attribution estimates each user's 30-day credits from
+      dbt builds (INSERT/MERGE/CTAS in dbt sessions for the monitored project),
+      consumption (SELECTs that read the project's models), and Cortex AI spend. Elapsed
+      time is converted with the warehouse's average credits per second (default 0.000278
+      when unknown). Users are categorized and given a cost tier (> 10 high, > 2 moderate).
+
+      Cases:
+        - u_builder: 3,600 s of builds on WH1 (0.001 credits/s) → 3.6 credits, builder, moderate.
+        - u_consumer: 1,000 s of SELECTs on an unknown warehouse → 0.278 credits, consumer, low.
+        - u_mixed: 36 credits of builds + 1 credit of SELECTs → mixed, high.
+        - u_ai: 5 AI credits only → ai_user, moderate.
+        - Ignored: a build for another project, a build outside a dbt session, and a build
+          dated 2000-01-01.
+      Recent queries use 2099 timestamps so they always fall inside the window.
+      Not covered yet: a SELECT that reads more than one project model (see open question).
+    model: vw_snowflake__user_level_cost_attribution
+    given:
+      - input: ref('int_snowflake__warehouse_daily')
+        rows:
+          - {warehouse_name: WH1, total_credits: 86.4}
+      - input: ref('int_snowflake__dbt_sessions')
+        rows:
+          - {session_id: 1}
+      - input: ref('int_snowflake__query_history')
+        rows:
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q1, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 3600000,  query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_mixed,    role_name: TRANSFORMER, query_id: q2, session_id: 1, warehouse_name: WH1,        query_type: MERGE,  dbt_node_id: model.dbt_cost_optimization_package.b, total_elapsed_time_ms: 36000000, query_start_time: '2099-01-01 00:00:00', query_text: merge}
+          - {user_name: u_mixed,    role_name: TRANSFORMER, query_id: q3, session_id: 9, warehouse_name: WH1,        query_type: SELECT, dbt_node_id: null,                                   total_elapsed_time_ms: 1000000,  query_start_time: '2099-01-01 00:00:00', query_text: select * from DB.S.T1}
+          - {user_name: u_consumer, role_name: ANALYST,     query_id: q4, session_id: 9, warehouse_name: WH_UNKNOWN, query_type: SELECT, dbt_node_id: null,                                   total_elapsed_time_ms: 1000000,  query_start_time: '2099-01-01 00:00:00', query_text: select * from DB.S.T1}
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q5, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.other_project.x,                 total_elapsed_time_ms: 99000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q6, session_id: 9, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 99000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q7, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 99000000, query_start_time: '2000-01-01 00:00:00', query_text: insert}
+      - input: ref('int_dbt__relations')
+        rows:
+          - {database_name: DB, schema_name: S, table_name: T1, package_name: dbt_cost_optimization_package}
+      - input: ref('fct_snowflake__ai_user_spend_recommendations')
+        rows:
+          - {user_name: u_ai, default_role: DATA_SCIENTIST, total_credits_30d: 5, total_queries_30d: 50}
+    expect:
+      rows:
+        - {user_name: u_builder,  user_category: builder,  build_credits_30d: 3.6, consumption_credits_30d: 0,     ai_credits_30d: 0, combined_credits_30d: 3.6,   estimated_annual_cost_usd: 86.4,  recommendation: "Moderate cost user — monitor trends"}
+        - {user_name: u_consumer, user_category: consumer, build_credits_30d: 0,   consumption_credits_30d: 0.278, ai_credits_30d: 0, combined_credits_30d: 0.278, estimated_annual_cost_usd: 6.67,  recommendation: "Low cost user"}
+        - {user_name: u_mixed,    user_category: mixed,    build_credits_30d: 36,  consumption_credits_30d: 1,     ai_credits_30d: 0, combined_credits_30d: 37,    estimated_annual_cost_usd: 888,   recommendation: "High cost user — review workload patterns"}
+        - {user_name: u_ai,       user_category: ai_user,  build_credits_30d: 0,   consumption_credits_30d: 0,     ai_credits_30d: 5, combined_credits_30d: 5,     estimated_annual_cost_usd: 120,   recommendation: "Moderate cost user — monitor trends"}
