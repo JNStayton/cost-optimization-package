@@ -15,7 +15,7 @@ with produced as (
 expected as (
     select 'demo_events' as table_name, true as is_candidate, 'Moderate impact' as recommendation_tier,
            'evaluate_clustering' as recommendation_status, 20 as select_count, 2 as dml_count, 90.0 as scan_ratio_pct
-{%- for t in ['demo_orders', 'demo_sessions', 'demo_logs', 'demo_fast_growth', 'demo_new_table'] %}
+{%- for t in ['demo_orders', 'demo_sessions', 'demo_logs', 'demo_fast_growth', 'demo_new_table', 'demo_infrequent_builds'] %}
     union all select '{{ t }}', false, 'No read activity', 'insufficient_evidence', 0, 0, null
 {%- endfor %}
 )

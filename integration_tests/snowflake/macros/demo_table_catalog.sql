@@ -21,5 +21,7 @@
      'columns': [('ROW_ID', 'NUMBER'), ('LOADED_AT', 'TIMESTAMP_NTZ')]},
     {'name': 'DEMO_NEW_TABLE', 'id': 900006, 'size_gb': 50, 'row_count': 1005000,
      'columns': [('ROW_ID', 'NUMBER'), ('LOADED_AT', 'TIMESTAMP_NTZ')]},
+    {'name': 'DEMO_INFREQUENT_BUILDS', 'id': 900007, 'size_gb': 50, 'row_count': 1045000,
+     'columns': [('RECORD_ID', 'NUMBER'), ('UPDATED_AT', 'TIMESTAMP_NTZ')]},
   ]) }}
 {% endmacro %}

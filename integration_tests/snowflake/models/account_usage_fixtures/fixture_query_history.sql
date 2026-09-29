@@ -40,7 +40,10 @@
     - demo_orders, demo_sessions, demo_logs: 14 daily builds, +5,000 rows a day on
       1,000,000 (~99.5% unchanged per rebuild) → "Strong Candidate".
     - demo_fast_growth: 14 daily builds, rows triple each day (33% unchanged) → "Low ROI".
-    - demo_new_table: 2 builds → "Insufficient History".
+    - demo_new_table: 2 builds → "Insufficient History" (and, too thin for an ROI tier,
+      left out of the config recommendations).
+    - demo_infrequent_builds: 10 builds in the 60-day window (< 0.2 a day), so confidence
+      starts at 50 ('investigate'); the probe confirms its key → 60 ('actionable_review').
 -#}
 {%- set build_cases = [
     {'table': 'demo_orders',      'days': 14, 'growth': 'linear'},
@@ -48,6 +51,7 @@
     {'table': 'demo_logs',        'days': 14, 'growth': 'linear'},
     {'table': 'demo_fast_growth', 'days': 14, 'growth': 'triple'},
     {'table': 'demo_new_table',   'days': 2,  'growth': 'linear'},
+    {'table': 'demo_infrequent_builds', 'days': 10, 'growth': 'linear'},
 ] -%}
 
 {%- set cases = [
