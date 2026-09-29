@@ -2,8 +2,9 @@
   refresh_warehouse_config (post-hook on int_snowflake__warehouse_config) merges live
   SHOW WAREHOUSES settings. The fixture warehouses don't exist live, so they must keep null
   settings (the recommendations then fall back to 300 s auto-suspend). The target's own
-  warehouse does exist, so it must have its live auto-suspend, and the Standard edition
-  scaling policy. Also checks the auto-suspend cycle count for FIXTURE_WH_IDLE.
+  warehouse does exist, so it must have its live size and auto-suspend, and the Standard
+  edition scaling policy (the fixtures have no events for it, so its size comes only from
+  the hook). Also checks the auto-suspend cycle count for FIXTURE_WH_IDLE.
   Returns one row per failed check.
 -#}
 -- depends_on: {{ ref('int_snowflake__warehouse_config') }}
@@ -14,7 +15,8 @@ with config as (
 checks as (
     select 'target warehouse has live auto_suspend' as check_name,
            (select count(*) from config where warehouse_name = upper('{{ target.warehouse }}')
-              and auto_suspend_seconds is not null and scaling_policy = 'STANDARD') as produced,
+              and current_size is not null and auto_suspend_seconds is not null
+              and scaling_policy = 'STANDARD') as produced,
            1 as expected
     union all
     select 'fixture warehouses have no live settings',
