@@ -1,0 +1,111 @@
+version: 2
+
+unit_tests:
+  - name: expensive_query_scope_filter_default_monitors_this_project_only
+    description: >
+      scope_filter, as applied by fct_snowflake__expensive_query_recommendations to each
+      query's dbt project (parsed from dbt_node_id). Default settings: only queries from this dbt project are kept.
+      Fixture: one query each from this project, another project, and a non-dbt query
+      (null node id). Recent rows use 2099 dates so they are always in the window.
+    model: fct_snowflake__expensive_query_recommendations
+    overrides:
+      vars:
+        dbt_monitored_projects: []
+        include_full_platform_insights: false
+    given:
+      - input: ref('int_snowflake__warehouse_expensive_queries_daily')
+        rows:
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
+    expect:
+      rows:
+        - {query_hash: h_this_project}
+
+  - name: expensive_query_scope_filter_project_list_keeps_listed_projects
+    description: >
+      scope_filter, as applied by fct_snowflake__expensive_query_recommendations to each
+      query's dbt project (parsed from dbt_node_id). dbt_monitored_projects lists specific projects: only those projects' queries are kept (this project is not implied).
+      Fixture: one query each from this project, another project, and a non-dbt query
+      (null node id). Recent rows use 2099 dates so they are always in the window.
+    model: fct_snowflake__expensive_query_recommendations
+    overrides:
+      vars:
+        dbt_monitored_projects: ['other_project']
+        include_full_platform_insights: false
+    given:
+      - input: ref('int_snowflake__warehouse_expensive_queries_daily')
+        rows:
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
+    expect:
+      rows:
+        - {query_hash: h_other_project}
+
+  - name: expensive_query_scope_filter_all_projects_excludes_non_dbt_queries
+    description: >
+      scope_filter, as applied by fct_snowflake__expensive_query_recommendations to each
+      query's dbt project (parsed from dbt_node_id). dbt_monitored_projects = ['*']: queries from any dbt project are kept; queries with no dbt node are excluded.
+      Fixture: one query each from this project, another project, and a non-dbt query
+      (null node id). Recent rows use 2099 dates so they are always in the window.
+    model: fct_snowflake__expensive_query_recommendations
+    overrides:
+      vars:
+        dbt_monitored_projects: ['*']
+        include_full_platform_insights: false
+    given:
+      - input: ref('int_snowflake__warehouse_expensive_queries_daily')
+        rows:
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
+    expect:
+      rows:
+        - {query_hash: h_this_project}
+        - {query_hash: h_other_project}
+
+  - name: expensive_query_scope_filter_all_projects_with_platform_insights_keeps_everything
+    description: >
+      scope_filter, as applied by fct_snowflake__expensive_query_recommendations to each
+      query's dbt project (parsed from dbt_node_id). ['*'] plus include_full_platform_insights: no filtering at all, including non-dbt queries.
+      Fixture: one query each from this project, another project, and a non-dbt query
+      (null node id). Recent rows use 2099 dates so they are always in the window.
+    model: fct_snowflake__expensive_query_recommendations
+    overrides:
+      vars:
+        dbt_monitored_projects: ['*']
+        include_full_platform_insights: true
+    given:
+      - input: ref('int_snowflake__warehouse_expensive_queries_daily')
+        rows:
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
+    expect:
+      rows:
+        - {query_hash: h_this_project}
+        - {query_hash: h_other_project}
+        - {query_hash: h_non_dbt}
+
+  - name: expensive_query_scope_filter_platform_insights_adds_non_dbt_queries
+    description: >
+      scope_filter, as applied by fct_snowflake__expensive_query_recommendations to each
+      query's dbt project (parsed from dbt_node_id). Default projects plus include_full_platform_insights: this project's queries and non-dbt (account-wide) queries, but not other projects' queries.
+      Fixture: one query each from this project, another project, and a non-dbt query
+      (null node id). Recent rows use 2099 dates so they are always in the window.
+    model: fct_snowflake__expensive_query_recommendations
+    overrides:
+      vars:
+        dbt_monitored_projects: []
+        include_full_platform_insights: true
+    given:
+      - input: ref('int_snowflake__warehouse_expensive_queries_daily')
+        rows:
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
+    expect:
+      rows:
+        - {query_hash: h_this_project}
+        - {query_hash: h_non_dbt}
