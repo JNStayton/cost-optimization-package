@@ -36,7 +36,9 @@
 {#-
   Incremental cases (fct_snowflake__incremental_materialization_candidates and
   fct_snowflake__incremental_config_recommendations): daily CREATE TABLE AS SELECT builds
-  of the demo tables, 400 s each. Row counts per build set the rebuild redundancy.
+  of the demo tables, 400 s each, run by FIXTURE_BUILDER from dbt session 110 on
+  FIXTURE_WH_BUILD, each tagged with its model's node_id (so the gold user attribution
+  sees them as builds). Row counts per build set the rebuild redundancy.
     - demo_orders, demo_sessions, demo_logs: 14 daily builds, +5,000 rows a day on
       1,000,000 (~99.5% unchanged per rebuild) → "Strong Candidate".
     - demo_fast_growth: 14 daily builds, rows triple each day (33% unchanged) → "Low ROI".
@@ -119,9 +121,10 @@ union all
 select
     'build_{{ b.table }}_{{ n }}', dateadd(hour, -1, dateadd(day, -{{ b.days - n }}, current_timestamp())),
     'hash_build_{{ b.table }}', 'phash_build_{{ b.table }}',
-    'FIXTURE_DBT', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH', 'X-Small', 400000, 1073741824, 100, 0, 0,
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 400000, 1073741824, 100, 0, 0,
     'CREATE_TABLE_AS_SELECT', 400000, 100, 100, 0, 0,
-    'create or replace transient table {{ fqn }} as (select * from upstream)', 1, 'SUCCESS', {{ rows }}
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ b.table }}"} */ '
+        || 'create or replace transient table {{ fqn }} as (select * from upstream)', 110, 'SUCCESS', {{ rows }}
 {%- endfor %}
 {%- endfor %}
 {% for w in demo_warehouse_catalog() %}
