@@ -9,3 +9,6 @@ vars:
   # Materialization slice uses the Standard-edition path (query-text attribution),
   # so only the query_history fixture is needed.
   snowflake_enterprise_edition: false
+
+  # Clustering slice: the demo table is small, so drop the size floor.
+  clustering_candidates_min_size_gb: 0

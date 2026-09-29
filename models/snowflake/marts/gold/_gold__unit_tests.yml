@@ -275,7 +275,9 @@ unit_tests:
     description: >
       vw_snowflake__top_queried_models sums SELECT activity per table over the lookback
       window (default 30 days), computes daily averages and durations, and keeps only
-      tables that are models of the monitored project(s) (default: this project).
+      tables that are models of the monitored project(s). The test sets
+      dbt_monitored_projects explicitly, so it passes from any root project (the default,
+      [], means "the root project", which differs when the package is installed).
 
       Cases:
         - DB.S.T1: two recent days (10 + 20 selects, 3s each, 1 GB each) → 30 selects,
@@ -287,6 +289,9 @@ unit_tests:
       Recent rows use 2099 dates so they always fall inside the window.
       Not covered yet: dbt_monitored_projects = ['*'] (see open question).
     model: vw_snowflake__top_queried_models
+    overrides:
+      vars:
+        dbt_monitored_projects: ['dbt_cost_optimization_package']
     given:
       - input: ref('int_snowflake__table_query_stats_daily')
         rows:
