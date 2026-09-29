@@ -1,0 +1,11 @@
+vars:
+  dbt_cost_optimization_enabled: true
+
+  # Point the package's snowflake_usage source at the fixture tables
+  # (models/fixtures/, built into <target schema>_fixtures).
+  snowflake_usage_database: "{{ target.database }}"
+  snowflake_usage_schema: "{{ target.schema }}_fixtures"
+
+  # Materialization slice uses the Standard-edition path (query-text attribution),
+  # so only the query_history fixture is needed.
+  snowflake_enterprise_edition: false

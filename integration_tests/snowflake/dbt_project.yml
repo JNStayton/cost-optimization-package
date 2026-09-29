@@ -1,0 +1,28 @@
+name: 'cost_optimization_integration_tests'
+version: '1.0.0'
+config-version: 2
+
+# Integration tests for the Snowflake side of dbt_cost_optimization_package.
+# Fixture models stand in for SNOWFLAKE.ACCOUNT_USAGE views; vars.yml points the
+# package's snowflake_usage source at them. See TESTING.md at the repo root.
+#
+# Uses the package's own profile name, so the same ~/.dbt/profiles.yml target works
+# for unit tests (repo root) and integration tests (this project).
+profile: 'dbt_cost_optimization_package'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  cost_optimization_integration_tests:
+    # Deliberately shaped models for the package to analyze. They only need to exist;
+    # their behavior comes from the fixture query history that references them.
+    demo:
+      +materialized: view
+    # Stand-ins for ACCOUNT_USAGE views, built into <target schema>_fixtures.
+    # Build these first: dbt build --select tag:fixtures
+    account_usage_fixtures:
+      +materialized: table
+      +schema: fixtures
+      +tags: ['fixtures']
