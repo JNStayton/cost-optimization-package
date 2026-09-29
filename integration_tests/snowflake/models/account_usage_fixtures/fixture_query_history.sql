@@ -33,6 +33,23 @@
   {%- endfor -%}
 {%- endif %}
 
+{#-
+  Incremental cases (fct_snowflake__incremental_materialization_candidates and
+  fct_snowflake__incremental_config_recommendations): daily CREATE TABLE AS SELECT builds
+  of the demo tables, 400 s each. Row counts per build set the rebuild redundancy.
+    - demo_orders, demo_sessions, demo_logs: 14 daily builds, +5,000 rows a day on
+      1,000,000 (~99.5% unchanged per rebuild) → "Strong Candidate".
+    - demo_fast_growth: 14 daily builds, rows triple each day (33% unchanged) → "Low ROI".
+    - demo_new_table: 2 builds → "Insufficient History".
+-#}
+{%- set build_cases = [
+    {'table': 'demo_orders',      'days': 14, 'growth': 'linear'},
+    {'table': 'demo_sessions',    'days': 14, 'growth': 'linear'},
+    {'table': 'demo_logs',        'days': 14, 'growth': 'linear'},
+    {'table': 'demo_fast_growth', 'days': 14, 'growth': 'triple'},
+    {'table': 'demo_new_table',   'days': 2,  'growth': 'linear'},
+] -%}
+
 {%- set cases = [
     {'view': 'demo_slow_view',  'queries': 60, 'elapsed_ms': 45000},
     {'view': 'demo_quiet_view', 'queries': 15, 'elapsed_ms': 1000},
@@ -83,5 +100,18 @@ select
     'insert_events_{{ i }}', dateadd(hour, -{{ i + 3 }}, current_timestamp()), 'hash_events_insert', 'phash_events_insert',
     'FIXTURE_LOADER', 'FIXTURE_LOADER', 'FIXTURE_WH', 'X-Small', 3000, 1048576, 100, 0, 0, 'INSERT', 3000, 1, 1, 0, 0,
     'insert into {{ events_fqn }} select * from staging_events', 1, 'SUCCESS', 1000
+{%- endfor %}
+{% for b in build_cases %}
+{%- set fqn = target.database ~ '.' ~ target.schema ~ '.' ~ b.table %}
+{%- for n in range(b.days) %}
+{%- set rows = (1000 * 3 ** n) if b.growth == 'triple' else (1000000 + 5000 * n) %}
+union all
+select
+    'build_{{ b.table }}_{{ n }}', dateadd(hour, -1, dateadd(day, -{{ b.days - n }}, current_timestamp())),
+    'hash_build_{{ b.table }}', 'phash_build_{{ b.table }}',
+    'FIXTURE_DBT', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH', 'X-Small', 400000, 1073741824, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', 400000, 100, 100, 0, 0,
+    'create or replace transient table {{ fqn }} as (select * from upstream)', 1, 'SUCCESS', {{ rows }}
+{%- endfor %}
 {%- endfor %}
 

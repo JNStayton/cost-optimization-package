@@ -2,7 +2,8 @@
   fct_snowflake__table_clustering_candidates flags demo_events, which the fixtures describe
   as read-heavy (20 reads, 2 writes) with poor pruning (90% of partitions scanned), as a
   Moderate impact candidate whose consumption queries justify evaluating clustering.
-  Returns rows only on mismatch.
+  The incremental slice's demo tables have builds but no reads, so they're listed as
+  "No read activity" and aren't candidates. Returns rows only on mismatch.
 -#}
 with produced as (
     select lower(table_name) as table_name, is_candidate, recommendation_tier, recommendation_status,
@@ -14,6 +15,9 @@ with produced as (
 expected as (
     select 'demo_events' as table_name, true as is_candidate, 'Moderate impact' as recommendation_tier,
            'evaluate_clustering' as recommendation_status, 20 as select_count, 2 as dml_count, 90.0 as scan_ratio_pct
+{%- for t in ['demo_orders', 'demo_sessions', 'demo_logs', 'demo_fast_growth', 'demo_new_table'] %}
+    union all select '{{ t }}', false, 'No read activity', 'insufficient_evidence', 0, 0, null
+{%- endfor %}
 )
 
 select
@@ -31,4 +35,5 @@ where p.is_candidate          is distinct from e.is_candidate
    or p.recommendation_status is distinct from e.recommendation_status
    or p.select_count          is distinct from e.select_count
    or p.dml_count             is distinct from e.dml_count
-   or p.scan_ratio_pct        is distinct from e.scan_ratio_pct
+   -- Scan ratio is checked only for the candidate (null in expected = not checked).
+   or (e.scan_ratio_pct is not null and p.scan_ratio_pct is distinct from e.scan_ratio_pct)
