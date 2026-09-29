@@ -92,6 +92,7 @@ scored as (
         coalesce(wc.is_multicluster, false) as is_multicluster,
         coalesce(wc.is_adaptive, false) as is_adaptive,
         coalesce(wc.is_smallest_size, false) as is_smallest_size,
+        coalesce(wc.is_largest_size, false) as is_largest_size,
         coalesce(wc.current_warehouse_type, 'STANDARD') as current_warehouse_type,
         coalesce(wc.auto_suspend_seconds, 300) as auto_suspend_seconds,
         coalesce(wc.auto_resume, true) as auto_resume,
@@ -159,12 +160,12 @@ classified as (
                 then 'overload_enable_mcw'                                   -- 2.1
             when (overload_to_elapsed_ratio_30d > 0.10 or median_overload_sec_30d > 0.5)
                  and not is_multicluster and not {{ is_enterprise }}
-                 and not is_smallest_size
+                 and not is_largest_size
                 then 'overload_scale_up_standard'                            -- 2.2
             when (overload_to_elapsed_ratio_30d > 0.10 or median_overload_sec_30d > 0.5)
                  and not is_multicluster and not {{ is_enterprise }}
-                 and is_smallest_size
-                then 'overload_at_max_standard'                              -- 2.3 (smallest = can't scale, needs split)
+                 and is_largest_size
+                then 'overload_at_max_standard'                              -- 2.3 (largest = can't scale up, needs split)
             when (overload_to_elapsed_ratio_30d > 0.10 or median_overload_sec_30d > 0.5)
                  and is_multicluster and max_cluster_count < 10
                  and scaling_policy = 'ECONOMY'
@@ -263,6 +264,7 @@ select
     is_multicluster,
     is_adaptive,
     is_smallest_size,
+    is_largest_size,
     current_warehouse_type,
     auto_suspend_seconds,
     auto_resume,
@@ -437,28 +439,14 @@ select
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET MAX_CLUSTER_COUNT = 2, MIN_CLUSTER_COUNT = 1, SCALING_POLICY = ''STANDARD'';'
         when recommendation_key = 'overload_scale_up_standard'
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET WAREHOUSE_SIZE = '''
-                || case warehouse_size
-                    when 'X-Small' then 'SMALL'
-                    when 'Small' then 'MEDIUM'
-                    when 'Medium' then 'LARGE'
-                    when 'Large' then 'XLARGE'
-                    when 'X-Large' then '2X-LARGE'
-                    else 'MEDIUM'
-                end || ''';'
+                || {{ next_warehouse_size('warehouse_size', 'up') }} || ''';'
         when recommendation_key = 'overload_switch_scaling_policy'
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET SCALING_POLICY = ''STANDARD'';'
         when recommendation_key = 'overload_increase_clusters'
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET MAX_CLUSTER_COUNT = ' || (max_cluster_count + 1) || ';'
         when recommendation_key = 'overload_scale_up_large_mcw'
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET WAREHOUSE_SIZE = '''
-                || case warehouse_size
-                    when 'X-Small' then 'SMALL'
-                    when 'Small' then 'MEDIUM'
-                    when 'Medium' then 'LARGE'
-                    when 'Large' then 'XLARGE'
-                    when 'X-Large' then '2X-LARGE'
-                    else 'MEDIUM'
-                end || ''';'
+                || {{ next_warehouse_size('warehouse_size', 'up') }} || ''';'
         when recommendation_key = 'provisioning_increase_suspend'
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET AUTO_SUSPEND = 60;'
         when recommendation_key = 'provisioning_increase_suspend_300'
@@ -473,14 +461,7 @@ select
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET MAX_CLUSTER_COUNT = 1;'
         when recommendation_key = 'oversized_scale_down'
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET WAREHOUSE_SIZE = '''
-                || case warehouse_size
-                    when 'Small' then 'X-SMALL'
-                    when 'Medium' then 'SMALL'
-                    when 'Large' then 'MEDIUM'
-                    when 'X-Large' then 'LARGE'
-                    when '2X-Large' then 'X-LARGE'
-                    else 'X-SMALL'
-                end || ''';'
+                || {{ next_warehouse_size('warehouse_size', 'down') }} || ''';'
         else null
     end as snowflake_ddl
 from classified

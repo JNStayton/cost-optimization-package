@@ -16,11 +16,11 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 | `is_multicluster` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG |
 | `warehouse_size` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG |
 | `is_gen2` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG |
-| `auto_suspend` | No | Coming via SHOW WAREHOUSES macro |
-| `auto_resume` | No | Coming via SHOW WAREHOUSES macro |
-| `scaling_policy` | No | Coming via SHOW WAREHOUSES macro |
-| `max_cluster_count` | No | Coming via SHOW WAREHOUSES macro |
-| `min_cluster_count` | No | Coming via SHOW WAREHOUSES macro |
+| `auto_suspend` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG (via refresh_warehouse_config post-hook, SHOW WAREHOUSES) |
+| `auto_resume` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG (via refresh_warehouse_config post-hook, SHOW WAREHOUSES) |
+| `scaling_policy` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG (via refresh_warehouse_config post-hook, SHOW WAREHOUSES) |
+| `max_cluster_count` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG (via refresh_warehouse_config post-hook, SHOW WAREHOUSES) |
+| `min_cluster_count` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG (via refresh_warehouse_config post-hook, SHOW WAREHOUSES) |
 | `snowflake_edition` | No | Need org account view; we currently have a variable a user can set for this value and a default fallback, and without org admin permissions we cannot access this programmatically from Snowflake |
 | `queued_overload_time` (per-query) | No | Available in QUERY_HISTORY but not aggregated |
 | `queued_provisioning_time` (per-query) | No | Available in QUERY_HISTORY but not aggregated |
@@ -81,8 +81,8 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 | # | Config Check | Edition Constraint | Recommendation (DDL) | Recommendation Reason |
 |---|---|---|---|---|
 | 4.1 | `total_gb_spilled_remote > 0` (any remote spill) | Any | `ALTER WAREHOUSE {wh} SET WAREHOUSE_SIZE = '{next_size_up}';` | Remote spillage detected ({total_gb_spilled_remote} GB in 30 days). Remote spill writes to cloud storage, adding significant latency and egress cost. Scaling up from {current_size} provides more local SSD cache before spilling remotely. |
-| 4.2 | `total_gb_spilled_local > 50 AND total_gb_spilled_remote = 0 AND size < 'XLARGE'` | Any | `ALTER WAREHOUSE {wh} SET WAREHOUSE_SIZE = '{next_size_up}';` | Heavy local spillage ({total_gb_spilled_local} GB in 30 days) on a {current_size} warehouse. Queries are exceeding available RAM and spilling to local SSD. Scaling up doubles available memory and will reduce or eliminate spillage. |
-| 4.3 | `total_gb_spilled_local > 50 AND size >= 'XLARGE'` | Any | No DDL -- SQL optimization recommended | Heavy local spillage ({total_gb_spilled_local} GB in 30 days) on a {current_size} warehouse. At this size, further scaling has diminishing returns. Review query SQL for: wide JOINs missing filters, unnecessary columns in SELECT *, exploding CTEs, or missing partition pruning. |
+| 4.2 | `total_gb_spilled_local > 50 AND total_gb_spilled_remote = 0 AND size NOT in (X-Large through 6X-Large)` | Any | `ALTER WAREHOUSE {wh} SET WAREHOUSE_SIZE = '{next_size_up}';` | Heavy local spillage ({total_gb_spilled_local} GB in 30 days) on a {current_size} warehouse. Queries are exceeding available RAM and spilling to local SSD. Scaling up doubles available memory and will reduce or eliminate spillage. |
+| 4.3 | `total_gb_spilled_local > 50 AND size in (X-Large through 6X-Large)` | Any | No DDL -- SQL optimization recommended | Heavy local spillage ({total_gb_spilled_local} GB in 30 days) on a {current_size} warehouse. At this size, further scaling has diminishing returns. Review query SQL for: wide JOINs missing filters, unnecessary columns in SELECT *, exploding CTEs, or missing partition pruning. |
 | 4.4 | `total_gb_spilled_local BETWEEN 1 AND 50 AND spill_trend = 'Worsening'` | Any | Monitor -- SQL review first | Moderate local spillage ({total_gb_spilled_local} GB, trending worse). Profile the top spilling queries before scaling -- a SQL fix (adding filters, reducing join width) is cheaper than a permanent size increase. |
 | 4.5 | `total_gb_spilled_local BETWEEN 1 AND 50 AND spill_trend != 'Worsening'` | Any | Stable -- no action | Minor local spillage ({total_gb_spilled_local} GB, trend stable). Local SSD spill has minimal performance impact at this volume. Continue monitoring. |
 | 4.6 | `is_snowpark_optimized = FALSE AND spillage is from Snowpark/Python UDFs` | Any | `ALTER WAREHOUSE {wh} SET WAREHOUSE_TYPE = 'SNOWPARK-OPTIMIZED';` | Spillage appears driven by Snowpark/Python workloads. Snowpark-optimized warehouses provide 16x memory per node for in-memory processing. (Note: higher credit rate -- 1.5x) |
@@ -134,7 +134,7 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 | `queued_provisioning_time` (per query, aggregated) | SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY | Distinguish between cold-start types (full suspend vs cluster add) |
 | `avg_running` / `avg_queued_load` | SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_LOAD_HISTORY | Time-series view of warehouse saturation -- enables "peak hour" recommendations |
 | `snowflake_edition` | SHOW ORGANIZATION ACCOUNTS or param check | Gate MCW recommendations (critical for Standard edition accounts) |
-| `resume_count` / `suspend_count` (per day) | Yes | `INT_SNOWFLAKE__WAREHOUSE_SUSPEND_CYCLES` (derived from WAREHOUSE_EVENTS_HISTORY SUSPEND_WAREHOUSE / SUSPEND_CLUSTER events) | Quantify cold-start frequency for provisioning recommendations and compute data-driven idle credit savings |
+| `resume_count` / `suspend_count` (per day) | `INT_SNOWFLAKE__WAREHOUSE_SUSPEND_CYCLES` (derived from WAREHOUSE_EVENTS_HISTORY) | **Now measured.** Quantifies cold-start frequency for provisioning recs and data-driven idle credit savings |
 | `cluster_utilization` (per cluster in MCW) | WAREHOUSE_LOAD_HISTORY broken by interval | Detect if MCW is spinning clusters that sit idle (scaling_policy tuning) |
 | `query_acceleration_eligible` | QUERY_HISTORY.QUERY_ACCELERATION_MAX_SCALE_FACTOR | Recommend Query Acceleration Service instead of size-up for long-tail queries |
 
@@ -142,9 +142,21 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 
 ## Size Ladder Reference (for DDL generation)
 
-```
-XSMALL -> SMALL -> MEDIUM -> LARGE -> XLARGE -> 2XLARGE -> 3XLARGE -> 4XLARGE -> 5XLARGE -> 6XLARGE
-Credits/hr:  1       2        4       8        16        32         64        128       256       512
-```
+Snowflake uses two size formats depending on the source:
+
+| Size | SHOW WAREHOUSES (title case) | WAREHOUSE_EVENTS_HISTORY (uppercase) | Credits/hr |
+|------|------------------------------|--------------------------------------|------------|
+| 1    | X-Small                      | XSMALL                               | 1          |
+| 2    | Small                        | SMALL                                | 2          |
+| 3    | Medium                       | MEDIUM                               | 4          |
+| 4    | Large                        | LARGE                                | 8          |
+| 5    | X-Large                      | XLARGE                               | 16         |
+| 6    | 2X-Large                     | XXLARGE                              | 32         |
+| 7    | 3X-Large                     | XXXLARGE                             | 64         |
+| 8    | 4X-Large                     | X4LARGE                              | 128        |
+| 9    | 5X-Large                     | X5LARGE                              | 256        |
+| 10   | 6X-Large                     | X6LARGE                              | 512        |
+
+The `next_warehouse_size` macro (in `macros/platforms/snowflake/utils/`) handles both formats by lowercasing before comparison. It returns null at ladder boundaries (top for up, bottom for down) so concatenated DDL safely nulls out rather than generating incorrect SQL.
 
 Next-size-up/down logic should clamp at boundaries and account for credit doubling when calculating cost impact in the recommendation reason.

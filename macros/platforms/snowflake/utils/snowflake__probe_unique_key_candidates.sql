@@ -92,6 +92,15 @@
               likely_unique_key     = '{{ ns.confirmed_key }}',
               identified_unique_key = '{{ ns.confirmed_key }}',
               confidence_score      = {{ new_score }},
+              recommendation_status = case
+                when {{ new_score }} >= 60 then 'actionable_review'
+                when {{ new_score }} >= 30 then 'investigate'
+                else 'investigate'
+              end,
+              effort_category = case
+                when {{ new_score }} >= 60 then 'actionable_review'
+                else 'investigation'
+              end,
               blocking_signals      = array_except(blocking_signals, array_construct('key_pending_exact_validation')),
               dbt_model_config      = replace(
                 dbt_model_config,
@@ -118,7 +127,11 @@
               recommendation_status = case
                 when {{ new_score }} >= 60 then 'actionable_review'
                 when {{ new_score }} >= 30 then 'investigate'
-                else 'do_not_recommend'
+                else 'investigate'
+              end,
+              effort_category = case
+                when {{ new_score }} >= 60 then 'actionable_review'
+                else 'investigation'
               end,
               blocking_signals      = array_cat(
                 array_except(blocking_signals, array_construct('key_pending_exact_validation')),

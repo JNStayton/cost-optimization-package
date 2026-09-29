@@ -288,6 +288,21 @@ macros:
       available.
       Implemented for: snowflake, bigquery.
 
+  - name: next_warehouse_size
+    description: >
+      Returns a SQL CASE expression that maps a warehouse size column to the next
+      size up or down in the Snowflake size ladder (X-Small through 6X-Large).
+      Handles both SHOW WAREHOUSES format (title case) and WAREHOUSE_EVENTS_HISTORY
+      format (uppercase) by lowercasing before comparison. Returns null at ladder
+      boundaries so concatenated DDL safely nulls out rather than generating wrong SQL.
+      Used by warehouse config, performance, and all_recommendations models.
+      Implemented for: snowflake.
+    arguments:
+      - name: size_column
+        description: "SQL column or expression containing the warehouse size value"
+      - name: direction
+        description: "Direction to step: 'up' (default) or 'down'"
+
   - name: refresh_warehouse_config
     description: >
       Post-hook on int_snowflake__warehouse_config. Merges current warehouse

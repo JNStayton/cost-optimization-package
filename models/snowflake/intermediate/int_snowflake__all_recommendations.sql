@@ -186,14 +186,7 @@ all_recommendations as (
             * coalesce(wr.credits_per_second, 0.000278)
             * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
         'ALTER WAREHOUSE ' || sp_agg.warehouse_name || ' SET WAREHOUSE_SIZE = '''
-            || case sp_agg.warehouse_current_size
-                when 'X-Small' then 'SMALL'
-                when 'Small' then 'MEDIUM'
-                when 'Medium' then 'LARGE'
-                when 'Large' then 'XLARGE'
-                when 'X-Large' then '2X-LARGE'
-                else 'MEDIUM'
-            end || ''';' as snowflake_ddl,
+            || {{ next_warehouse_size('sp_agg.warehouse_current_size', 'up') }} || ''';' as snowflake_ddl,
         current_date() as snapshot_date,
         'actionable' as backlog_status,
         null as dbt_model_config,

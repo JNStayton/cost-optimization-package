@@ -189,7 +189,7 @@ scored as (
             when ts.total_gb_spilled_remote > 0.1
                 then 'remote_spill'
             when ts.total_gb_spilled_local > 50
-                 and lower(coalesce(wc_size.current_size, '')) in ('x-large', 'xlarge', '2x-large', '2xlarge', '3x-large', '3xlarge', '4x-large', '4xlarge')
+                 and lower(coalesce(wc_size.current_size, '')) in ('x-large', 'xlarge', '2x-large', 'xxlarge', '3x-large', 'xxxlarge', '4x-large', 'x4large', '5x-large', 'x5large', '6x-large', 'x6large')
                 then 'local_heavy_large_wh'
             when ts.total_gb_spilled_local > 50
                 then 'local_heavy_small_wh'
@@ -280,14 +280,7 @@ select
     case
         when recommendation_key in ('remote_spill', 'local_heavy_small_wh')
             then 'ALTER WAREHOUSE ' || warehouse_name || ' SET WAREHOUSE_SIZE = '''
-                || case warehouse_current_size
-                    when 'X-Small' then 'SMALL'
-                    when 'Small' then 'MEDIUM'
-                    when 'Medium' then 'LARGE'
-                    when 'Large' then 'XLARGE'
-                    when 'X-Large' then '2X-LARGE'
-                    else 'MEDIUM'
-                end || ''';'
+                || {{ next_warehouse_size('warehouse_current_size', 'up') }} || ''';'
         else null
     end as snowflake_ddl,
     'spillage_overflow' as symptom

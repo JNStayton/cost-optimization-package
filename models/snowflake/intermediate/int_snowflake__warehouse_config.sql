@@ -25,6 +25,7 @@ with latest_consistent as (
         resource_constraint,
         event_timestamp
     from {{ ref('stg_snowflake__warehouse_events_history') }}
+    where event_name = 'WAREHOUSE_CONSISTENT'
     qualify row_number() over (partition by warehouse_name order by event_timestamp desc) = 1
 ),
 
@@ -52,6 +53,8 @@ select
     coalesce(lc.warehouse_type, '') = 'SNOWPARK-OPTIMIZED' as is_snowpark_optimized,
     -- Sizing guard: true if warehouse is already at smallest possible size
     lower(coalesce(lc.warehouse_size, '')) in ('x-small', 'xsmall') as is_smallest_size,
+    -- Sizing guard: true if warehouse is already at largest possible size
+    lower(coalesce(lc.warehouse_size, '')) in ('6x-large', 'x6large') as is_largest_size,
     -- Category for grouping/reporting
     case
         when coalesce(lc.warehouse_type, '') = 'ADAPTIVE' then 'adaptive'

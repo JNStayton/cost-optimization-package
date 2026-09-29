@@ -254,6 +254,7 @@ scored as (
                  and bs.median_rebuild_redundancy_rate >= 0.70
                 then 'high'
             when coalesce(bs.avg_build_time_ms, 0) / 1000.0 >= {{ roi_medium_build_time_sec }}
+                 and coalesce(bs.qualified_build_pairs, 0) >= {{ min_qualified_build_days }} - 1
                  and bs.median_rebuild_redundancy_rate >= 0.70
                 then 'medium'
             else 'low'

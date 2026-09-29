@@ -35,6 +35,9 @@
       using (
           select
               "name" as warehouse_name,
+              "size" as current_size,
+              lower("size") in ('x-small', 'xsmall') as is_smallest_size,
+              lower("size") in ('6x-large', 'x6large') as is_largest_size,
               "auto_suspend"::int as auto_suspend_seconds,
               "auto_resume"::boolean as auto_resume,
               {% if is_enterprise %}
@@ -50,15 +53,18 @@
       ) as source
       on target.warehouse_name = source.warehouse_name
       when matched then update set
+          current_size         = source.current_size,
+          is_smallest_size     = source.is_smallest_size,
+          is_largest_size      = source.is_largest_size,
           auto_suspend_seconds = source.auto_suspend_seconds,
           auto_resume          = source.auto_resume,
           scaling_policy       = source.scaling_policy,
           min_cluster_count    = source.min_cluster_count,
           max_cluster_count    = source.max_cluster_count
       when not matched then insert
-          (warehouse_name, auto_suspend_seconds, auto_resume, scaling_policy, min_cluster_count, max_cluster_count)
+          (warehouse_name, current_size, is_smallest_size, is_largest_size, auto_suspend_seconds, auto_resume, scaling_policy, min_cluster_count, max_cluster_count)
       values
-          (source.warehouse_name, source.auto_suspend_seconds, source.auto_resume, source.scaling_policy, source.min_cluster_count, source.max_cluster_count)
+          (source.warehouse_name, source.current_size, source.is_smallest_size, source.is_largest_size, source.auto_suspend_seconds, source.auto_resume, source.scaling_policy, source.min_cluster_count, source.max_cluster_count)
     {% endset %}
 
     {% do run_query(merge_sql) %}
