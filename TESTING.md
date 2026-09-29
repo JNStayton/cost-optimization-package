@@ -11,8 +11,8 @@ How this package is tested, how to run the tests, and what the results should lo
 | Test type | Count | What it proves | Needs real account data? | Where it lives |
 |---|---|---|---|---|
 | **Data tests** | 54 on Snowflake marts, plus 3 on shared models | The **real output** has no null keys, and category columns only contain expected values | **Yes.** Run after building the models in a real project. | `data_tests:` blocks in `models/snowflake/marts/**/_*.yml` and `models/shared/_shared.yml` |
-| **Unit tests** | 20 | The **transformation logic** is correct: for given input rows, a model returns exactly the expected output rows | **No.** Inputs are supplied in the test. A warehouse connection is still required. | `models/snowflake/marts/gold/_gold__unit_tests.yml`, `models/snowflake/marts/warehouse/_warehouse__unit_tests.yml` |
-| **Macro tests** | 3 | Macros that return values (scores, arrays, generated config text) return exactly what's expected | **No.** A warehouse connection is still required. | `tests/snowflake/macros/` |
+| **Unit tests** | 20 | The **transformation logic** is correct: for given input rows, a model returns exactly the expected output rows | **No.** Inputs are supplied in the test. A warehouse connection is still required. Off by default; see §3. | `models/snowflake/marts/gold/_gold__unit_tests.yml`, `models/snowflake/marts/warehouse/_warehouse__unit_tests.yml` |
+| **Macro tests** | 3 | Macros that return values (scores, arrays, generated config text) return exactly what's expected | **No.** A warehouse connection is still required. Off by default; see §3. | `tests/snowflake/macros/` |
 
 What the unit tests cover:
 
@@ -100,11 +100,15 @@ dbt run --select +tag:gold \
 Then run the tests:
 
 ```bash
-dbt test --select test_type:unit --vars '{dbt_cost_optimization_enabled: true}'
-dbt test --select tag:macro_tests --vars '{dbt_cost_optimization_enabled: true}'
+dbt test --select test_type:unit \
+  --vars '{dbt_cost_optimization_enabled: true, dbt_cost_optimization_run_package_tests: true}'
+dbt test --select tag:macro_tests \
+  --vars '{dbt_cost_optimization_enabled: true, dbt_cost_optimization_run_package_tests: true}'
 ```
 
 Macro tests don't read any tables, so they don't need the setup step.
+
+> **Why the extra var:** unit and macro tests check the package itself, so they're off by default. Otherwise they'd run in every `dbt build` of a project that installs the package. `dbt_cost_optimization_run_package_tests: true` turns them on.
 
 ---
 

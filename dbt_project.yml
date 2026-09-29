@@ -109,11 +109,19 @@ models:
           +tags: ['gold']
 
 # Package tests (singular tests in tests/). Enabled per platform, like the models.
+# Unit tests and macro tests check the package itself, so they're off by default:
+# otherwise they'd run in every `dbt build` of a project that installs the package.
+# Package developers turn them on with `dbt_cost_optimization_run_package_tests: true`
+# (see TESTING.md). Data tests stay on: they check the installing project's real output.
+unit_tests:
+  dbt_cost_optimization_package:
+    +enabled: "{{ var('dbt_cost_optimization_enabled', false) and var('dbt_cost_optimization_run_package_tests', false) }}"
+
 data_tests:
   dbt_cost_optimization_package:
     snowflake:
       macros:
-        +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) }}"
+        +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('dbt_cost_optimization_run_package_tests', false) }}"
         +tags: ['dbt_cost_optimization', 'macro_tests']
 
 # Package variables — override in a vars.yml file in your project root, or with --vars on the command line.
@@ -126,6 +134,7 @@ vars:
 
   # --- Package enablement (opt-in) ---
   dbt_cost_optimization_enabled: false  # Set to true in consuming project to activate
+  dbt_cost_optimization_run_package_tests: false  # Package developers only: runs the unit and macro tests
 
   # --- Scope & monitoring (snowflake) ---
   dbt_monitored_projects: []  # Default: [project_name]. List projects to monitor, or ['*'] for all dbt projects in the account.
