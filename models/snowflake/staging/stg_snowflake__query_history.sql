@@ -29,12 +29,17 @@ select
     session_id,
     execution_status,
     rows_inserted,
-    -- dbt platform context parsed from query comment
-    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_run_id::string as dbt_cloud_run_id,
-    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_job_id::string as dbt_cloud_job_id,
-    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as dbt_node_id,
-    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):target_name::string as dbt_target_name,
-    parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_environment_id::string as dbt_cloud_environment_id
+    -- dbt platform context parsed from query comment. try_parse_json, not
+    -- parse_json: the regex below matches any /* {...} */ comment, not just
+    -- dbt's own, so it can capture non-JSON content from non-dbt query
+    -- traffic (BI tools, ad-hoc worksheets, third-party integrations) -
+    -- parse_json hard-errors the whole model on the first invalid match;
+    -- try_parse_json returns NULL instead.
+    try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_run_id::string as dbt_cloud_run_id,
+    try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_job_id::string as dbt_cloud_job_id,
+    try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as dbt_node_id,
+    try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):target_name::string as dbt_target_name,
+    try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):dbt_cloud_environment_id::string as dbt_cloud_environment_id
 from {{ source('snowflake_usage', 'query_history') }}
 where execution_status = 'SUCCESS'
 {% if is_incremental() %}
