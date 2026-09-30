@@ -11,6 +11,12 @@
     - demo_quiet_view: 15 SELECTs at 1 s each (>= 10 queries, below thresholds) → "Monitor"
     - demo_rare_view:   3 SELECTs (below the 10-query minimum) → not listed
   Scans are 1 MB so the large-scan rule never applies.
+  demo_slow_view also feeds a table, demo_slow_view_rollup (see the rows at the end):
+    - 10 dbt CTAS builds of the rollup in the last 14 days, each re-running the view.
+    - 1 non-dbt CTAS of a same-named table in another schema (must not count).
+    - 4 dbt CREATE VIEW runs of demo_slow_view (after materializing, 4 table builds).
+    So its cost covers 60 reads + 10 downstream builds = 70 runs of the view, and its
+    savings 70 - 4 = 66.
   Demo views are named as plain text, not with ref(): a ref() would make this fixture
   depend on them, and the package would then (correctly) see each view as feeding a table.
 -#}
@@ -155,5 +161,35 @@ select
     {{ w.session_id }}, 'SUCCESS', 0
 {%- endfor %}
 {%- endfor %}
+{%- endfor %}
+{%- set rollup_fqn = target.database ~ '.' ~ target.schema ~ '.demo_slow_view_rollup' %}
+{%- set slow_view_fqn = target.database ~ '.' ~ target.schema ~ '.demo_slow_view' %}
+{% for n in range(10) %}
+union all
+select
+    'rollup_build_{{ n }}', dateadd(hour, -(6 + {{ n }} * 24), current_timestamp()),
+    'hash_rollup_build', 'phash_rollup_build',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 60000, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', 60000, 1, 1, 0, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.demo_slow_view_rollup"} */ '
+        || 'create or replace transient table {{ rollup_fqn }} as (select * from {{ slow_view_fqn }})',
+    110, 'SUCCESS', 60
+{%- endfor %}
+union all
+select
+    'rollup_decoy', dateadd(hour, -7, current_timestamp()), 'hash_rollup_decoy', 'phash_rollup_decoy',
+    'FIXTURE_ANALYST', 'FIXTURE_REPORTER', 'FIXTURE_WH', 'X-Small', 60000, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', 60000, 1, 1, 0, 0,
+    'create table OTHER_DB.OTHER_SCHEMA.DEMO_SLOW_VIEW_ROLLUP as (select 1 as id)', 1, 'SUCCESS', 1
+{% for n in range(4) %}
+union all
+select
+    'slow_view_create_{{ n }}', dateadd(hour, -(5 + {{ n }} * 72), current_timestamp()),
+    'hash_slow_view_create', 'phash_slow_view_create',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 500, 0, 100, 0, 0,
+    'CREATE_VIEW', 500, 0, 0, 0, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.demo_slow_view"} */ '
+        || 'create or replace view {{ slow_view_fqn }} as (select 1 as id)',
+    110, 'SUCCESS', 0
 {%- endfor %}
 

@@ -13,6 +13,9 @@
       rate (e.g. demo_orders: 400 s x 0.23 builds/day x 365 x 4/hour (Medium) / 3600 x $2
       x 0.9952 redundancy = $74.26), X-Small (1/hour) when unknown, and materialization and
       clustering counts annualized by 365 / their lookback window (14 and 7 days).
+      demo_slow_view: (60 reads + 10 rollup builds - 4 view builds) x 45 s / 3600 x 365/14
+      x $2 = $43.02. DEMO_EVENTS: its filter share is 10 of 10 analyzed queries, not 10 of
+      20 reads.
   Entities are compared by their last name part (table or warehouse name, or query hash).
   Returns rows only on mismatch.
 -#}
@@ -28,7 +31,7 @@ expected as (
     union all select 'materialization', 'apply_incremental_merge',    'demo_infrequent_builds',  'actionable',  13.72
     union all select 'materialization', 'apply_incremental_append',   'demo_logs',               'actionable',  37.13
     union all select 'materialization', 'apply_incremental_merge',    'demo_sessions',           'monitor',     18.57
-    union all select 'materialization', 'materialize_as_table',       'demo_slow_view',          'actionable',  38.46
+    union all select 'materialization', 'materialize_as_table',       'demo_slow_view',          'actionable',  43.02
     union all select 'warehouse',       'overload_scale_up_standard', 'fixture_wh_busy',         'actionable', 144.00
     union all select 'warehouse',       'expensive_query_actionable', 'hash_fixture_wh_busy',    'actionable', 277.40
     union all select 'warehouse',       'expensive_query_monitor',    'hash_fixture_wh_healthy', 'monitor',     27.74

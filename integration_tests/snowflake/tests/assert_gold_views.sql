@@ -1,6 +1,8 @@
 {#-
   End to end: each Snowflake gold view, built on the fixture-driven backlog, shows what the
   earlier slices put in. One row per check; returns only failed checks.
+    - all_recommendations: no recommendation appears twice (the integration project keeps a
+      stale clustering snapshot beside the current one; only the latest may be read).
     - optimization_backlog: the 8 non-stable recommendations (the demoted clustering one
       is left out).
     - cost_savings_summary: actionable counts per domain (warehouse 2, materialization 4).
@@ -11,16 +13,21 @@
     - dbt_model_optimizations: demo_orders, demo_logs, demo_infrequent_builds, demo_slow_view.
     - top_expensive_queries: demo_orders' query, with its incremental fix co-occurring.
     - top_queried_models: demo_events, 20 SELECTs.
-    - user_level_cost_attribution: FIXTURE_BUILDER builds (68 CTAS), FIXTURE_ANALYST reads
-      (98 SELECTs of project tables). Credits: the builder's are all elapsed x list rate
-      (68 x 400 s at the X-Small fallback = 7.5556, credits_from_attribution false); the
+    - user_level_cost_attribution: FIXTURE_BUILDER builds (78 CTAS: 68 of the incremental
+      slice's tables + 10 of demo_slow_view_rollup), FIXTURE_ANALYST reads (98 SELECTs of
+      project tables). Credits: the builder's are all elapsed x list rate at the X-Small
+      fallback (68 x 400 s + 10 x 60 s = 7.7222, credits_from_attribution false); the
       analyst's 60 demo_slow_view reads use QUERY_ATTRIBUTION_HISTORY (60 x 0.001) and the
       other 38 reads the list rate (38 s / 3600), 0.0706 in total, attribution true.
     - cross_domain_insights: demo_orders and demo_logs (expensive query + incremental).
     - top_spillage_models and ai_optimizations: empty (Standard edition path; no AI usage).
 -#}
 with checks as (
-    select 'optimization_backlog rows' as check_name,
+    select 'all_recommendations has no duplicate recommendations' as check_name,
+           (select count(*) - count(distinct domain || '|' || signal_id || '|' || entity_name)
+            from {{ ref('int_snowflake__all_recommendations') }})::varchar as produced, '0' as expected
+    union all
+    select 'optimization_backlog rows',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }})::varchar as produced, '8' as expected
     union all
     select 'optimization_backlog excludes demoted DEMO_EVENTS',
@@ -58,13 +65,13 @@ with checks as (
            (select listagg(user_name || ':' || user_category || ':' || build_query_count || '/' || consumption_query_count, ',')
                    within group (order by user_name)
             from {{ ref('vw_snowflake__user_level_cost_attribution') }}),
-           'FIXTURE_ANALYST:consumer:0/98,FIXTURE_BUILDER:builder:68/0'
+           'FIXTURE_ANALYST:consumer:0/98,FIXTURE_BUILDER:builder:78/0'
     union all
     select 'user_level_cost_attribution credits',
            (select listagg(user_name || ':' || (build_credits_30d + consumption_credits_30d)::number(10, 4)
                            || ':' || credits_from_attribution, ',') within group (order by user_name)
             from {{ ref('vw_snowflake__user_level_cost_attribution') }}),
-           'FIXTURE_ANALYST:0.0706:true,FIXTURE_BUILDER:7.5556:false'
+           'FIXTURE_ANALYST:0.0706:true,FIXTURE_BUILDER:7.7222:false'
     union all
     select 'cross_domain_insights',
            (select listagg(model_name || ':' || signal_count, ',') within group (order by model_name)

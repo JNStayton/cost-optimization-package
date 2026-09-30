@@ -12,3 +12,7 @@ vars:
 
   # Clustering slice: the demo table is small, so drop the size floor.
   clustering_candidates_min_size_gb: 0
+
+  # Clustering slice: analyze 10 of DEMO_EVENTS' 20 reads, so the clustering savings'
+  # filter share must use the analyzed count (10), not all reads (20).
+  clustering_key_operator_queries_per_table: 10

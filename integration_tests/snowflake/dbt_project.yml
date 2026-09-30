@@ -21,6 +21,20 @@ models:
   # would change the types they see.
   dbt_cost_optimization_package:
     +schema: integration
+    snowflake:
+      marts:
+        clustering:
+          fct_snowflake__table_clustering_candidates:
+            # Keep a stale snapshot (dated a week ago, with 10x the reads) next to today's,
+            # as the table accumulates in real projects. The backlog must read only the
+            # latest snapshot (assert_gold_all_recommendations, assert_gold_views).
+            +post-hook:
+              - "delete from {{ this }} where snapshot_date = dateadd(day, -7, current_date())"
+              - "insert into {{ this }} select * replace (
+                     md5(clustering_candidates_snapshot_key || '|stale') as clustering_candidates_snapshot_key,
+                     dateadd(day, -7, snapshot_date) as snapshot_date,
+                     select_count * 10 as select_count)
+                 from {{ this }} where snapshot_date = current_date()"
 
   cost_optimization_integration_tests:
     # Deliberately shaped models for the package to analyze. They only need to exist;
