@@ -18,5 +18,5 @@ from {{ source('snowflake_usage', 'cortex_rest_api_usage_history') }}
 {% if is_incremental() %}
   where start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(start_time)) from {{ this }})
 {% else %}
-  where start_time >= dateadd(day, -30, current_timestamp())
+  where start_time >= dateadd(day, -{{ var('incremental_overlap_days', 31) }}, current_timestamp())
 {% endif %}

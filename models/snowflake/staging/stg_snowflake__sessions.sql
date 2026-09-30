@@ -19,5 +19,5 @@ where try_parse_json(client_environment):APPLICATION::string = 'dbt'
 {% if is_incremental() %}
   and created_on >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(created_on)) from {{ this }})
 {% else %}
-  and created_on >= dateadd(day, -30, current_timestamp())
+  and created_on >= dateadd(day, -{{ var('incremental_overlap_days', 31) }}, current_timestamp())
 {% endif %}

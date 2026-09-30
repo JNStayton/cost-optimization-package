@@ -14,5 +14,5 @@ from {{ source('snowflake_usage', 'access_history') }}
 {% if is_incremental() %}
   where query_start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(query_start_time)) from {{ this }})
 {% else %}
-  where query_start_time >= dateadd(day, -14, current_timestamp())
+  where query_start_time >= dateadd(day, -{{ var('incremental_overlap_days', 31) }}, current_timestamp())
 {% endif %}

@@ -197,7 +197,7 @@ vars:
 
   # --- Materialization ---
   suppress_staging_materialization_recs: false  # Set true to hide staging-layer (stg_/stage_) view-to-table recommendations
-  incremental_overlap_days: 31  # Re-scan window on incremental runs. Set to your longest gap between builds.
+  incremental_overlap_days: 31  # Snowflake staging: history loaded on a first run or full refresh, and re-scanned on incremental runs. Set to at least your longest lookback and your longest gap between builds.
   incremental_candidates_roi_high_build_time_sec: 300
   incremental_candidates_roi_medium_build_time_sec: 120
 
