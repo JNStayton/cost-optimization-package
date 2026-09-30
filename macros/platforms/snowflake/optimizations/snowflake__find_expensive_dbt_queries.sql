@@ -49,8 +49,11 @@
               qh.query_hash,
               any_value(qh.query_id) as sample_query_id,
               substring(any_value(qh.query_text), 1, 200) as query_text_preview,
-              {#- extract dbt node_id from the JSON comment dbt prepends to compiled queries -#}
-              parse_json(
+              {#- extract dbt node_id from the JSON comment dbt prepends to compiled queries.
+                  try_parse_json, not parse_json: the regex matches any /* {...} */ comment,
+                  not just dbt's own, so it can capture non-JSON content from non-dbt query
+                  traffic. -#}
+              try_parse_json(
                   regexp_substr(any_value(qh.query_text), '/\\*\\s+(\\{.*?\\})\\s+\\*/', 1, 1, 'e', 1)
               ):node_id::string as dbt_node_id,
               any_value(qh.warehouse_name) as warehouse_name,

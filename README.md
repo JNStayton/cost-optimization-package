@@ -162,6 +162,13 @@ Graph-dependent recommendations require the dbt project graph. Warehouse and exp
 
 On Databricks, BigQuery, and Redshift, recommendations are scoped to your project's dbt models by default. See each platform's docs for the scope settings.
 
+## Visualize your results
+
+For Snowflake, once you've built the gold-layer models, see
+[integrations/dbt_charts/README.md](integrations/dbt_charts/README.md) to
+launch a [dbt-charts](https://github.com/dbt-labs/dbt-charts) dashboard
+over them.
+
 ## Repository structure
 
 ```

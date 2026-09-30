@@ -1,0 +1,322 @@
+# Reads exclusively from this package's gold-layer views via ref(). Build
+# them first: see README.md in this folder for the full setup and launch
+# sequence.
+#
+# Source models:
+#   vw_snowflake__cost_savings_summary
+#   vw_snowflake__cross_domain_insights
+#   vw_snowflake__dbt_model_optimizations
+#   vw_snowflake__optimization_backlog
+#   vw_snowflake__top_recommendations
+#   vw_snowflake__warehouse_optimizations
+
+title: "Cost optimization recommendations in dbt"
+notes: "Recommendations from this package's gold-layer views."
+source: cost_optimization
+
+# The default theme title-cases every heading, KPI label, and table column
+# header regardless of authored casing; each slot below overrides that to
+# sentence case.
+style:
+  font:
+    case: sentence
+  title:
+    font:
+      case: sentence
+  charts:
+    kpi:
+      label:
+        font:
+          case: sentence
+    table:
+      header:
+        font:
+          case: sentence
+
+text: |
+  Built from this package's gold-layer views:
+  `vw_snowflake__cost_savings_summary`, `vw_snowflake__cross_domain_insights`,
+  `vw_snowflake__dbt_model_optimizations`, `vw_snowflake__optimization_backlog`,
+  `vw_snowflake__top_recommendations`, and `vw_snowflake__warehouse_optimizations`.
+
+queries:
+  # ---- KPI row -------------------------------------------------------
+  headline_totals: |
+    SELECT
+      SUM(ESTIMATED_ANNUAL_SAVINGS_USD) AS total_savings,
+      SUM(TOTAL_RECOMMENDATIONS) AS total_recommendations,
+      SUM(QUICK_WIN_COUNT) AS quick_wins
+    FROM {{ ref('vw_snowflake__cost_savings_summary') }}
+
+  # Written as an aggregate (MAX_BY/MAX), not `ORDER BY ... LIMIT 1` on a
+  # bare row-select: a fresh or sparse install can have zero actionable
+  # rows here, and an aggregate over zero rows returns one row of NULLs
+  # (rendering as a blank KPI value) rather than zero rows, which a KPI
+  # chart cannot render at all. Sources from top_recommendations (all
+  # domains), not one domain, so this is genuinely the single biggest
+  # recommendation account-wide, not just the biggest warehouse one.
+  top_recommendation: |
+    SELECT
+      MAX_BY(RECOMMENDATION, ESTIMATED_ANNUAL_SAVINGS_USD) AS recommendation,
+      MAX(ESTIMATED_ANNUAL_SAVINGS_USD) AS savings
+    FROM {{ ref('vw_snowflake__top_recommendations') }}
+
+  # ---- Savings by domain (cost vs. savings) ---------------------------
+  # dct lowercases all result column names regardless of SQL casing, so
+  # every column below is aliased in lowercase to match what the chart
+  # field mappings actually see.
+  domain_cost_vs_savings: |
+    SELECT DOMAIN AS domain, 'Estimated cost' AS metric, ESTIMATED_ANNUAL_COST_USD AS value
+    FROM {{ ref('vw_snowflake__cost_savings_summary') }}
+    UNION ALL
+    SELECT DOMAIN AS domain, 'Estimated savings' AS metric, ESTIMATED_ANNUAL_SAVINGS_USD AS value
+    FROM {{ ref('vw_snowflake__cost_savings_summary') }}
+    ORDER BY domain, metric
+
+  # ---- Savings by effort category --------------------------------------
+  effort_savings: |
+    SELECT
+      EFFORT_CATEGORY AS effort_category,
+      SUM(ESTIMATED_ANNUAL_SAVINGS_USD) AS savings,
+      COUNT(*) AS recommendation_count
+    FROM {{ ref('vw_snowflake__optimization_backlog') }}
+    GROUP BY 1
+    ORDER BY savings DESC NULLS LAST
+
+  # ---- Top backlog items, ranked, tail folded -------------------------
+  # Grain is (entity, domain, signal_id): the same entity/domain pair can
+  # carry more than one signal (e.g. a warehouse with both an idle-reduction
+  # config signal and a spillage signal), so entity+domain alone is not a
+  # unique bar key. entity falls back to 'Unattributed' since MODEL_NAME and
+  # WAREHOUSE_NAME can both be null for some signal types. NULLS LAST on
+  # every descending savings sort matches this view's own convention and
+  # avoids null-savings rows displacing real top savers into "Remaining".
+  backlog_ranked: |
+    WITH backlog AS (
+      SELECT
+        COALESCE(MODEL_NAME, WAREHOUSE_NAME, 'Unattributed') AS entity,
+        DOMAIN AS domain,
+        SIGNAL_ID AS signal_id,
+        ESTIMATED_ANNUAL_SAVINGS_USD AS savings
+      FROM {{ ref('vw_snowflake__optimization_backlog') }}
+    ),
+    ranked AS (
+      SELECT entity, domain, signal_id, savings,
+             ROW_NUMBER() OVER (ORDER BY savings DESC NULLS LAST) AS rn
+      FROM backlog
+    )
+    SELECT entity || ' - ' || domain || ' - ' || signal_id AS item, domain, savings FROM ranked WHERE rn <= 8
+    UNION ALL
+    SELECT
+      'Remaining ' || COUNT(*) || ' items' AS item,
+      'various' AS domain,
+      SUM(savings) AS savings
+    FROM ranked WHERE rn > 8
+    HAVING COUNT(*) > 0
+    ORDER BY savings DESC NULLS LAST
+
+  # ---- Per-model recommendation detail ---------------------------------
+  scoped_models: |
+    SELECT
+      MODEL_NAME AS model_name,
+      DOMAIN AS domain,
+      RECOMMENDATION AS recommendation,
+      ESTIMATED_ANNUAL_SAVINGS_USD AS savings,
+      SUGGESTED_CLUSTERING_KEY AS suggested_clustering_key,
+      INCREMENTAL_RECOMMENDATION_STATUS AS incremental_recommendation_status
+    FROM {{ ref('vw_snowflake__dbt_model_optimizations') }}
+    ORDER BY savings DESC NULLS LAST
+
+  # ---- Warehouse + cross-domain detail tables --------------------------
+  # RECOMMENDATION can contain a literal em-dash in the source text -
+  # swapped for a hyphen since it renders as-is in the table.
+  warehouse_detail: |
+    SELECT
+      WAREHOUSE_NAME AS warehouse_name,
+      REPLACE(RECOMMENDATION, CHR(8212), '-') AS recommendation,
+      RECOMMENDATION_REASON AS recommendation_reason,
+      ESTIMATED_ANNUAL_SAVINGS_USD AS savings,
+      BACKLOG_STATUS AS backlog_status
+    FROM {{ ref('vw_snowflake__warehouse_optimizations') }}
+    ORDER BY savings DESC NULLS LAST
+
+  cross_domain_detail: |
+    SELECT
+      MODEL_NAME AS model_name,
+      SIGNAL_COUNT AS signal_count,
+      PRIMARY_RECOMMENDATION AS primary_recommendation,
+      ROOT_CAUSE AS root_cause
+    FROM {{ ref('vw_snowflake__cross_domain_insights') }}
+    ORDER BY signal_count DESC
+
+charts:
+  savings_kpi:
+    label: "Estimated annual savings"
+    query: headline_totals
+    type: kpi
+    value: total_savings
+    style:
+      value:
+        format: currency
+
+  recs_kpi:
+    label: "Recommendations"
+    query: headline_totals
+    type: kpi
+    value: total_recommendations
+    style:
+      value:
+        format: integer
+
+  quick_wins_kpi:
+    label: "Quick wins"
+    query: headline_totals
+    type: kpi
+    value: quick_wins
+    style:
+      value:
+        format: integer
+
+  top_recommendation_kpi:
+    label: "Top single recommendation"
+    query: top_recommendation
+    type: kpi
+    value: savings
+    style:
+      value:
+        format: currency
+    support:
+      value: recommendation
+
+  domain_bar:
+    title: "Cost vs. savings by domain"
+    type: bar
+    query: domain_cost_vs_savings
+    x: domain
+    y: value
+    color: metric
+    style:
+      stack: none
+      number_format: currency
+
+  effort_bar:
+    title: "Savings by effort category"
+    type: bar
+    query: effort_savings
+    x: effort_category
+    y: savings
+    style:
+      number_format: currency
+      endpoint_labels:
+        visible: true
+
+  backlog_bar:
+    title: "Top backlog items by estimated annual savings"
+    type: bar
+    query: backlog_ranked
+    x: item
+    y: savings
+    color: domain
+    sort:
+      by: savings
+      order: desc
+    style:
+      orientation: horizontal
+      number_format: currency
+      endpoint_labels:
+        visible: true
+
+  scoped_models_table:
+    title: "Per-model recommendations"
+    type: table
+    query: scoped_models
+    style:
+      pagination:
+        enabled: false
+      columns:
+        model_name:
+          label: Model
+        domain:
+          label: Domain
+        recommendation:
+          label: Recommendation
+        savings:
+          label: Est. annual savings
+          format: currency
+          scale:
+            background:
+              palette: dbt-seq-blue
+        suggested_clustering_key:
+          label: Suggested clustering key
+        incremental_recommendation_status:
+          label: Incremental status
+
+  warehouse_table:
+    title: "Warehouse optimizations"
+    type: table
+    query: warehouse_detail
+    style:
+      pagination:
+        enabled: false
+      columns:
+        warehouse_name:
+          label: Warehouse
+        recommendation:
+          label: Recommendation
+        recommendation_reason:
+          label: Why
+        savings:
+          label: Est. annual savings
+          format: currency
+          scale:
+            background:
+              palette: dbt-seq-blue
+        backlog_status:
+          label: Status
+
+  cross_domain_table:
+    title: "Cross-domain insights"
+    type: table
+    query: cross_domain_detail
+    style:
+      pagination:
+        enabled: false
+      columns:
+        model_name:
+          label: Model
+        signal_count:
+          label: Signals
+        primary_recommendation:
+          label: Primary recommendation
+        root_cause:
+          label: Root cause
+
+rows:
+  - title: "Headline"
+    grid:
+      columns: 24
+      items:
+        - item: savings_kpi
+          col_span: 6
+        - item: recs_kpi
+          col_span: 6
+        - item: quick_wins_kpi
+          col_span: 6
+        - item: top_recommendation_kpi
+          col_span: 6
+
+  - cols:
+      - domain_bar
+      - effort_bar
+
+  - cols:
+      - backlog_bar
+
+  - cols:
+      - scoped_models_table
+
+  - cols:
+      - warehouse_table
+
+  - cols:
+      - cross_domain_table
