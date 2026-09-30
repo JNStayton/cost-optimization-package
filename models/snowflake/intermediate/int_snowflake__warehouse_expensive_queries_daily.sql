@@ -37,7 +37,11 @@ with dbt_queries as (
         qh.warehouse_size,
         qh.total_elapsed_time_ms,
         date_trunc('hour', qh.query_start_time)                     as warehouse_hour,
-        parse_json(
+        -- try_parse_json, not parse_json: the regex matches any /* {...} */ comment,
+        -- not just dbt's own, so it can capture non-JSON content from non-dbt query
+        -- traffic - parse_json hard-errors the whole model on the first invalid match;
+        -- try_parse_json returns NULL instead.
+        try_parse_json(
             regexp_substr(qh.query_text, '/\\*\\s+(\\{.*?\\})\\s+\\*/', 1, 1, 'e', 1)
         ):node_id::string                                           as dbt_node_id
     from {{ ref('int_snowflake__query_history') }} as qh
