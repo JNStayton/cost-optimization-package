@@ -25,11 +25,14 @@ checks as (
     union all
     select 'evidence: queries with a Filter on REGION',
            (select count(distinct query_id) from evidence where operator_type = 'Filter' and column_name = 'REGION'), 10
-{%- for col, n in [('EVENT_DATE', 30), ('REGION', 5), ('IS_TEST', 2)] %}
+{#- On Enterprise edition the hook profiles only columns ACCESS_HISTORY shows were queried
+    (REGION, EVENT_DATE, AMOUNT), so IS_TEST, never queried, must not be profiled. -#}
+{%- set is_enterprise = var('snowflake_enterprise_edition', true) %}
+{%- for col, n in [('EVENT_DATE', 30), ('REGION', 5), ('IS_TEST', none if is_enterprise else 2)] %}
     union all
     select 'cardinality: {{ col }}',
            (select max(distinct_values) from {{ ref('int_snowflake__column_cardinality') }}
-            where table_fqn = '{{ events_fqn }}' and upper(column_name) = '{{ col }}'), {{ n }}
+            where table_fqn = '{{ events_fqn }}' and upper(column_name) = '{{ col }}'), {{ 'null' if n is none else n }}
 {%- endfor %}
 )
 

@@ -1,5 +1,5 @@
 {#-
-  fct_snowflake__warehouse_config_recommendations (Standard edition path) gives each fixture
+  fct_snowflake__warehouse_config_recommendations gives each fixture
   warehouse the recommendation its metrics call for (macros/demo_warehouse_catalog.sql):
     - IDLE (50% idle credits, auto_suspend 300s)    → reduce auto-suspend to 60s
     - BUSY (Medium, 40% of elapsed time queued)     → scale up to Large
@@ -13,6 +13,8 @@
     - BUILD (the incremental slice's dbt builds; no metering or events) → stable, no DDL
     - SUSPENDED (X-Small, oversized metrics; latest event is an auto-suspend, which
       carries no size)                              → already at minimum, no DDL
+  On Enterprise edition, the four queuing single-cluster warehouses (BUSY, BUSY_XS,
+  BUSY_2XL, BUSY_6XL) get "enable multi-cluster" instead; the rest are the same.
   Returns rows only on mismatch.
 -#}
 with produced as (
@@ -24,10 +26,19 @@ with produced as (
 expected as (
     select 'FIXTURE_WH_IDLE' as warehouse_name, 'idle_reduce_auto_suspend' as recommendation_key,
            'ALTER WAREHOUSE FIXTURE_WH_IDLE SET AUTO_SUSPEND = 60;' as snowflake_ddl
+{%- if var('snowflake_enterprise_edition', true) %}
+    {#- Enterprise: a single-cluster warehouse with queuing gets multi-cluster first (2.1),
+        whatever its size. #}
+    {%- for wh in ['FIXTURE_WH_BUSY', 'FIXTURE_WH_BUSY_XS', 'FIXTURE_WH_BUSY_2XL', 'FIXTURE_WH_BUSY_6XL'] %}
+    union all select '{{ wh }}', 'overload_enable_mcw',
+        'ALTER WAREHOUSE {{ wh }} SET MAX_CLUSTER_COUNT = 2, MIN_CLUSTER_COUNT = 1, SCALING_POLICY = ''STANDARD'';'
+    {%- endfor %}
+{%- else %}
     union all select 'FIXTURE_WH_BUSY',      'overload_scale_up_standard', 'ALTER WAREHOUSE FIXTURE_WH_BUSY SET WAREHOUSE_SIZE = ''LARGE'';'
     union all select 'FIXTURE_WH_BUSY_XS',   'overload_scale_up_standard', 'ALTER WAREHOUSE FIXTURE_WH_BUSY_XS SET WAREHOUSE_SIZE = ''SMALL'';'
     union all select 'FIXTURE_WH_BUSY_2XL',  'overload_scale_up_standard', 'ALTER WAREHOUSE FIXTURE_WH_BUSY_2XL SET WAREHOUSE_SIZE = ''3X-LARGE'';'
     union all select 'FIXTURE_WH_BUSY_6XL',  'overload_at_max_standard',   null
+{%- endif %}
     union all select 'FIXTURE_WH_COLD',      'provisioning_gen2',          'ALTER WAREHOUSE FIXTURE_WH_COLD SET RESOURCE_CONSTRAINT = ''STANDARD_GEN_2'';'
     union all select 'FIXTURE_WH_OVERSIZED', 'oversized_scale_down',       'ALTER WAREHOUSE FIXTURE_WH_OVERSIZED SET WAREHOUSE_SIZE = ''MEDIUM'';'
     union all select 'FIXTURE_WH_HEALTHY',   'stable',                     null

@@ -19,6 +19,8 @@
   Entities are compared by their last name part (table or warehouse name, or query hash).
   Returns rows only on mismatch.
 -#}
+{#- FIXTURE_WH_BUSY's config signal depends on the edition (multi-cluster is Enterprise). -#}
+{%- set busy_signal = 'overload_enable_mcw' if var('snowflake_enterprise_edition', true) else 'overload_scale_up_standard' %}
 with produced as (
     select domain, signal_id, lower(split_part(entity_name, '.', -1)) as entity, backlog_status,
            round(estimated_annual_savings_usd, 2) as savings
@@ -32,7 +34,7 @@ expected as (
     union all select 'materialization', 'apply_incremental_append',   'demo_logs',               'actionable',  37.13
     union all select 'materialization', 'apply_incremental_merge',    'demo_sessions',           'monitor',     18.57
     union all select 'materialization', 'materialize_as_table',       'demo_slow_view',          'actionable',  43.02
-    union all select 'warehouse',       'overload_scale_up_standard', 'fixture_wh_busy',         'actionable', 144.00
+    union all select 'warehouse',       '{{ busy_signal }}', 'fixture_wh_busy',         'actionable', 144.00
     union all select 'warehouse',       'expensive_query_actionable', 'hash_fixture_wh_busy',    'actionable', 277.40
     union all select 'warehouse',       'expensive_query_monitor',    'hash_fixture_wh_healthy', 'monitor',     27.74
 )

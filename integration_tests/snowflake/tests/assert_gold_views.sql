@@ -22,6 +22,8 @@
     - cross_domain_insights: demo_orders and demo_logs (expensive query + incremental).
     - top_spillage_models and ai_optimizations: empty (Standard edition path; no AI usage).
 -#}
+{#- FIXTURE_WH_BUSY's config signal depends on the edition (multi-cluster is Enterprise). -#}
+{%- set busy_signal = 'overload_enable_mcw' if var('snowflake_enterprise_edition', true) else 'overload_scale_up_standard' %}
 with checks as (
     select 'all_recommendations has no duplicate recommendations' as check_name,
            (select count(*) - count(distinct domain || '|' || signal_id || '|' || entity_name)
@@ -40,12 +42,12 @@ with checks as (
     union all
     select 'top_recommendations rank 1',
            (select listagg(signal_id || '@' || warehouse_name, ',') from {{ ref('vw_snowflake__top_recommendations') }}
-            where priority_rank = 1), 'overload_scale_up_standard@FIXTURE_WH_BUSY'
+            where priority_rank = 1), '{{ busy_signal }}@FIXTURE_WH_BUSY'
     union all
     select 'warehouse_optimizations',
            (select listagg(warehouse_name || ':' || signal_id, ',') within group (order by warehouse_name, signal_id)
             from {{ ref('vw_snowflake__warehouse_optimizations') }}),
-           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:overload_scale_up_standard,FIXTURE_WH_HEALTHY:expensive_query'
+           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},FIXTURE_WH_HEALTHY:expensive_query'
     union all
     select 'dbt_model_optimizations models',
            (select listagg(model_name, ',') within group (order by model_name)
