@@ -12,7 +12,10 @@
     - top_expensive_queries: demo_orders' query, with its incremental fix co-occurring.
     - top_queried_models: demo_events, 20 SELECTs.
     - user_level_cost_attribution: FIXTURE_BUILDER builds (68 CTAS), FIXTURE_ANALYST reads
-      (98 SELECTs of project tables).
+      (98 SELECTs of project tables). Credits: the builder's are all elapsed x list rate
+      (68 x 400 s at the X-Small fallback = 7.5556, credits_from_attribution false); the
+      analyst's 60 demo_slow_view reads use QUERY_ATTRIBUTION_HISTORY (60 x 0.001) and the
+      other 38 reads the list rate (38 s / 3600), 0.0706 in total, attribution true.
     - cross_domain_insights: demo_orders and demo_logs (expensive query + incremental).
     - top_spillage_models and ai_optimizations: empty (Standard edition path; no AI usage).
 -#}
@@ -56,6 +59,12 @@ with checks as (
                    within group (order by user_name)
             from {{ ref('vw_snowflake__user_level_cost_attribution') }}),
            'FIXTURE_ANALYST:consumer:0/98,FIXTURE_BUILDER:builder:68/0'
+    union all
+    select 'user_level_cost_attribution credits',
+           (select listagg(user_name || ':' || (build_credits_30d + consumption_credits_30d)::number(10, 4)
+                           || ':' || credits_from_attribution, ',') within group (order by user_name)
+            from {{ ref('vw_snowflake__user_level_cost_attribution') }}),
+           'FIXTURE_ANALYST:0.0706:true,FIXTURE_BUILDER:7.5556:false'
     union all
     select 'cross_domain_insights',
            (select listagg(model_name || ':' || signal_count, ',') within group (order by model_name)

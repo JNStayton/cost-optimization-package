@@ -22,6 +22,8 @@
       to GET_QUERY_OPERATOR_STATS, which rejects IDs that don't exist, so these must be real.
       Result caching is turned off first, since a cached result has no table scan to report.
     - 2 INSERTs (fake IDs are fine: the hook only analyzes SELECTs) give a read/write ratio > 1.
+    - The SELECTs take 1 s each, so the clustering recommendation's savings stay under the
+      $1 min_annual_savings_usd floor (about $0.50/yr): the gold slice's "pennies demoted" case.
 -#}
 -- depends_on: {{ ref('demo_events') }}
 {%- set clustering_qids = [] -%}
@@ -114,7 +116,7 @@ from table(generator(rowcount => {{ c.queries }}))
 union all
 select
     '{{ qid }}', dateadd(minute, -{{ loop.index }}, current_timestamp()), 'hash_events_{{ loop.index }}', 'phash_events_{{ loop.index }}',
-    'FIXTURE_ANALYST', 'FIXTURE_REPORTER', 'FIXTURE_WH', 'X-Small', 5000, 52428800, 100, 0, 0, 'SELECT', 5000, 90, 100, 0, 0,
+    'FIXTURE_ANALYST', 'FIXTURE_REPORTER', 'FIXTURE_WH', 'X-Small', 1000, 52428800, 100, 0, 0, 'SELECT', 1000, 90, 100, 0, 0,
     'select count(*), sum(amount) from {{ events_fqn }} where region = ''EU'' and event_date >= current_date() - {{ loop.index }}',
     1, 'SUCCESS', 0
 {%- endfor %}
