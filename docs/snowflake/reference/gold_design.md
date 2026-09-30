@@ -218,6 +218,7 @@ Signal categories: spillage, clustering, incremental, materialization, expensive
 | `consumption_query_count` | int | Number of SELECT queries against project models in last 30 days |
 | `ai_query_count` | int | Number of AI/Cortex queries in last 30 days |
 | `recommendation` | string | Action/awareness text |
+| `credits_from_attribution` | boolean | True when any credits came from `QUERY_ATTRIBUTION_HISTORY` (precise). False = all estimated from elapsed x list rate |
 
 ---
 
@@ -227,7 +228,7 @@ Signal categories: spillage, clustering, incremental, materialization, expensive
 
 The package uses two different credit rates depending on the purpose:
 
-**Forward-looking savings/cost estimates** (in `int_snowflake__all_recommendations` and all gold views) use Snowflake's **published list rate** — the fixed credits-per-hour for a warehouse's size. This is the marginal cost of compute time and correctly estimates what users would save by optimizing. The `warehouse_credits_per_hour` macro maps a size column to the list rate:
+**Forward-looking savings/cost estimates** (in `int_snowflake__all_recommendations` and all gold views) use Snowflake's **published list rate** — the fixed credits-per-hour for a warehouse's size, looked up from the warehouse that actually builds each model (via the `model_warehouses` CTE). This is the marginal cost of compute time and correctly estimates what users would save by optimizing. The `warehouse_credits_per_hour` macro maps a size column to the list rate:
 
 | Size | Credits/Hour |
 |------|-------------|
@@ -242,17 +243,25 @@ The package uses two different credit rates depending on the purpose:
 | 5X-Large | 256 |
 | 6X-Large | 512 |
 
-The rate is sourced from `int_snowflake__warehouse_config.current_size` (populated by the `refresh_warehouse_config` post-hook from SHOW WAREHOUSES). For warehouses without a known size, the fallback is 1 credit/hour (X-Small) — conservative, underestimates rather than overestimates.
+The rate is sourced from `int_snowflake__warehouse_config.current_size` (populated by the `refresh_warehouse_config` post-hook from SHOW WAREHOUSES). For warehouses without a known size, the fallback is 1 credit/hour (X-Small) — conservative, underestimates rather than overestimates. The fallback applies when:
+- **A model has no build warehouse:** no query in the last 30 days carries its `node_id` in a dbt query comment (for example, a model that hasn't run recently, or one whose queries were issued without dbt's query comment).
+- **The warehouse has no known size:** it's missing from `int_snowflake__warehouse_config`, because it has no `WAREHOUSE_CONSISTENT` event in `WAREHOUSE_EVENTS_HISTORY` and isn't visible to `SHOW WAREHOUSES` for the package's role (for example, a warehouse that has since been dropped).
+- **The size value isn't recognized:** it isn't one of the sizes in the table above.
 
-**Backwards-looking cost attribution** (in `vw_snowflake__user_level_cost_attribution`) uses an **amortized rate** — the warehouse's average daily credits spread over 86,400 seconds:
+**Backwards-looking cost attribution** (in `vw_snowflake__user_level_cost_attribution`) uses **QUERY_ATTRIBUTION_HISTORY** as the primary source, with elapsed x list rate as the fallback:
 
-```sql
-credits_per_second = avg(total_credits) / 86400.0
-```
+- **Primary:** `credits_attributed_compute` from `QUERY_ATTRIBUTION_HISTORY` — exact per-query credits that correctly handle multi-cluster, Snowpark-optimized, Gen2, and concurrency splitting. Available on all editions (data from Aug 2024 onward).
+- **Fallback:** When QAH has no row (short queries <= ~100ms, or queries before Aug 2024), credits are estimated as `elapsed_time × credits_per_hour / 3600` using the warehouse's list rate. This matches the savings rate exactly.
+- The `credits_from_attribution` column flags whether any of a user's credits came from QAH data.
 
-This distributes the actual bill proportionally across users and queries, so attributed costs sum to real spend. The amortized rate naturally handles multi-cluster warehouses (which consume more than the base rate) and reflects actual utilization patterns.
+Note: For view materialization recommendations, the build warehouse is used as a proxy for the readers' warehouse. This is accurate for dbt-to-dbt lineage but may understate costs when BI tools read the view from a different warehouse.
 
-**Why the split?** An amortized rate understates per-query costs for any warehouse that doesn't run 24/7. For example, a Medium warehouse (4 credits/hr) running 2.5 hours/day consumes 10 credits/day, which amortized gives 0.42 credits/hr — 10x less than the actual running cost. This is fine for attribution (it correctly reflects the share of the bill) but misleading for savings estimates (it makes optimization opportunities look 10x smaller than they are).
+**Why the split?** Savings estimates need the list rate because it reflects the actual cost of compute time — a query running for 30 seconds on a Medium warehouse genuinely costs 4/3600 x 30 credits. Using an amortized rate (daily credits / 86,400) would understate savings for any warehouse that doesn't run 24/7. Attribution uses QAH because it correctly handles concurrency (splitting credits across concurrent queries) and warehouse-type pricing (Gen2, Snowpark-optimized, MCW). Where QAH isn't available, the list rate fallback prices each query as though it had the warehouse to itself — an upper bound that ensures completeness.
+
+**Known limitations of the list rate:**
+- **Gen2 and Snowpark-optimized warehouses** cost more per hour than the standard list rate. QAH handles these correctly; the list rate fallback does not.
+- **Multi-cluster warehouses** cost a multiple of the list rate per cluster. QAH splits this correctly; the list rate prices at one cluster.
+- **Concurrency:** Pricing a query's elapsed time at the full list rate assumes it had the warehouse to itself, so it's an upper bound when queries run concurrently. QAH splits correctly.
 
 ### Dollar conversion
 
@@ -300,10 +309,12 @@ The `autosuspend_cycles_30d` and `mcw_spindown_cycles_30d` come from `int_snowfl
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × 12 × credit_rate_usd` |
-| Savings (direct) | `(select_count - 1) × avg_duration × credits_per_hour / 3600 × 12 × credit_rate_usd` |
-| Savings (downstream) | `downstream_build_time_s × downstream_table_count × credits_per_hour / 3600 × 12 × credit_rate_usd` |
+| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
+| Savings (direct) | `(select_count - 1) × avg_duration × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
+| Savings (downstream) | `downstream_build_time_s × downstream_table_count × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
 | Total savings | Sum of direct + downstream |
+
+`lookback_days` is `table_materialization_lookback_days` (default 14), the window `select_count` covers, so `365 / lookback_days` annualizes it.
 
 Logic: A view recomputes on every SELECT (direct cost) and on every downstream model build (downstream cost). A table computes once and is read cheaply. The savings is the eliminated recomputation cost from both sources.
 
@@ -311,17 +322,21 @@ Logic: A view recomputes on every SELECT (direct cost) and on every downstream m
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | Attributed from the query's total credit cost (already in expensive_queries) |
-| Savings | Estimated time overhead from spilling: `total_gb_spilled × 0.5 seconds_per_gb_spilled × credits_per_hour / 3600 × 365 × credit_rate_usd` |
+| Current annual cost | Estimated time overhead from spilling: `(local_gb_spilled × 0.5 + remote_gb_spilled × 5.0) × credits_per_hour / 3600 × 12 × credit_rate_usd` (spilled GB cover the 30-day `spillage_lookback_days` window, so × 12 annualizes) |
+| Savings | `current_cost × 0.7` |
 
-The `0.5 seconds per GB spilled` is a conservative estimate. Local spillage adds ~0.5-2 seconds per GB; remote spillage adds ~2-10 seconds per GB.
+The aggregate (per-warehouse) spillage recommendation uses local spillage only: `total_gb_spilled × 0.5 × credits_per_hour / 3600 × 12 × credit_rate_usd`, with the same 0.7 savings factor.
+
+The `0.5 seconds per GB` (local) and `5.0 seconds per GB` (remote) are conservative estimates. Local spillage adds ~0.5-2 seconds per GB; remote spillage adds ~2-10 seconds per GB.
 
 #### Clustering
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × 12 × credit_rate_usd` |
+| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
 | Savings | `current_cost × (filter_query_count / select_count) × (scan_ratio - 1/distinct_values)` |
+
+`lookback_days` is `clustering_candidates_lookback_days` (default 7), the window `select_count` covers.
 
 The savings are weighted by two data-driven factors:
 1. **Filter proportion**: `filter_query_count / select_count` — only queries that filter on the recommended clustering key benefit from partition pruning

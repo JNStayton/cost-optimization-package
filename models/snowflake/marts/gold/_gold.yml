@@ -219,6 +219,11 @@ models:
           - accepted_values:
               arguments:
                 values: ['ai_user', 'builder', 'consumer', 'mixed', 'unknown']
+      - name: credits_from_attribution
+        description: >
+          True when any of the user's build or consumption credits came from
+          QUERY_ATTRIBUTION_HISTORY (precise per-query credits). False means all
+          credits are estimated from elapsed time x warehouse list rate.
 
   - name: vw_snowflake__top_spillage_models
     columns:

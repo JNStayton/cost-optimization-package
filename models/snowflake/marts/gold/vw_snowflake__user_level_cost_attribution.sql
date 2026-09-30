@@ -22,13 +22,12 @@
 {% endif %}
 {% set monitor_all = (monitored_projects | length == 1 and monitored_projects[0] == '*') %}
 
-with warehouse_rates as (
+with warehouse_list_rates as (
+    -- Snowflake list rate per warehouse size, for fallback when QAH has no row.
     select
         warehouse_name,
-        avg(total_credits) / 86400.0 as credits_per_second
-    from {{ ref('int_snowflake__warehouse_daily') }}
-    where total_credits > 0
-    group by warehouse_name
+        {{ warehouse_credits_per_hour('current_size') }} as credits_per_hour
+    from {{ ref('int_snowflake__warehouse_config') }}
 ),
 
 build_queries as (
@@ -37,13 +36,20 @@ build_queries as (
         qh.role_name,
         qh.query_id,
         qh.warehouse_name,
-        qh.total_elapsed_time_ms / 1000.0
-            * coalesce(wr.credits_per_second, 0.000278) as query_credits
+        -- Primary: exact attribution from QAH. Fallback: elapsed × list rate.
+        coalesce(
+            qah.credits_attributed_compute,
+            qh.total_elapsed_time_ms / 1000.0
+                * coalesce(wlr.credits_per_hour, 1) / 3600.0
+        ) as query_credits,
+        qah.credits_attributed_compute is not null as credits_from_attribution
     from {{ ref('int_snowflake__query_history') }} as qh
     inner join {{ ref('int_snowflake__dbt_sessions') }} as s
         on qh.session_id = s.session_id
-    left join warehouse_rates as wr
-        on wr.warehouse_name = qh.warehouse_name
+    left join {{ source('snowflake_usage', 'query_attribution_history') }} as qah
+        on qh.query_id = qah.query_id
+    left join warehouse_list_rates as wlr
+        on wlr.warehouse_name = qh.warehouse_name
     where qh.query_start_time >= dateadd(day, -30, current_timestamp())
       and qh.query_type in ('INSERT', 'MERGE', 'CREATE_TABLE_AS_SELECT')
     {% if not monitor_all %}
@@ -62,7 +68,8 @@ build_users as (
         max(role_name) as role_name,
         round(sum(query_credits), 4) as build_credits_30d,
         count(distinct query_id) as build_query_count,
-        max(warehouse_name) as primary_warehouse
+        max(warehouse_name) as primary_warehouse,
+        boolor_agg(credits_from_attribution) as build_credits_from_attribution
     from build_queries
     group by user_name
 ),
@@ -72,13 +79,19 @@ consumption_queries as (
         qh.user_name,
         qh.role_name,
         qh.query_id,
-        qh.total_elapsed_time_ms / 1000.0
-            * coalesce(wr.credits_per_second, 0.000278) as query_credits
+        coalesce(
+            qah.credits_attributed_compute,
+            qh.total_elapsed_time_ms / 1000.0
+                * coalesce(wlr.credits_per_hour, 1) / 3600.0
+        ) as query_credits,
+        qah.credits_attributed_compute is not null as credits_from_attribution
     from {{ ref('int_snowflake__query_history') }} as qh
     inner join {{ ref('int_dbt__relations') }} as dr
         on qh.query_text ilike '%' || dr.database_name || '.' || dr.schema_name || '.' || dr.table_name || '%'
-    left join warehouse_rates as wr
-        on wr.warehouse_name = qh.warehouse_name
+    left join {{ source('snowflake_usage', 'query_attribution_history') }} as qah
+        on qh.query_id = qah.query_id
+    left join warehouse_list_rates as wlr
+        on wlr.warehouse_name = qh.warehouse_name
     where qh.query_start_time >= dateadd(day, -30, current_timestamp())
       and qh.query_type = 'SELECT'
     {% if not monitor_all %}
@@ -95,7 +108,8 @@ consumption_users as (
         user_name,
         max(role_name) as role_name,
         round(sum(query_credits), 4) as consumption_credits_30d,
-        count(distinct query_id) as consumption_query_count
+        count(distinct query_id) as consumption_query_count,
+        boolor_agg(credits_from_attribution) as consumption_credits_from_attribution
     from consumption_queries
     group by user_name
 ),
@@ -146,7 +160,9 @@ select
              + coalesce(au.ai_credits_30d, 0) > 2
             then 'Moderate cost user — monitor trends'
         else 'Low cost user'
-    end as recommendation
+    end as recommendation,
+    coalesce(bu.build_credits_from_attribution, false)
+        or coalesce(cu.consumption_credits_from_attribution, false) as credits_from_attribution
 from build_users as bu
 full outer join consumption_users as cu
     on cu.user_name = bu.user_name

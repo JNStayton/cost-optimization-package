@@ -25,6 +25,10 @@
 
 {% set credit_rate_usd = var('credit_rate_usd', 2) %}
 {% set min_savings = var('min_annual_savings_usd', 1) %}
+{#- Materialization and clustering counts cover their marts' lookback windows (same vars
+    and defaults as those marts), so annualize by 365 / window, not x12 (a 30-day window). -#}
+{% set annualize_materialization = 365.0 / var('table_materialization_lookback_days', 14) %}
+{% set annualize_clustering = 365.0 / var('clustering_candidates_lookback_days', 7) %}
 {% set monitored_projects = var('dbt_monitored_projects', []) %}
 {% if monitored_projects | length == 0 %}
   {% set monitored_projects = [project_name] %}
@@ -37,6 +41,20 @@ with warehouse_list_rates as (
         warehouse_name,
         {{ warehouse_credits_per_hour('current_size') }} as credits_per_hour
     from {{ ref('int_snowflake__warehouse_config') }}
+),
+
+model_warehouses as (
+    -- Most common warehouse per dbt model (node_id), from query comment parsing.
+    -- Used to price table-level recommendations at the model's actual build warehouse
+    -- and to resolve warehouse_name in enriched for model-level recs.
+    select
+        try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
+        mode(warehouse_name) as build_warehouse_name
+    from {{ ref('int_snowflake__query_history') }}
+    where query_text like '%node_id%'
+        and query_start_time >= dateadd(day, -30, current_timestamp())
+        and warehouse_name is not null
+    group by 1
 ),
 
 all_recommendations as (
@@ -259,12 +277,12 @@ all_recommendations as (
         tm.materialization_score as score,
         tm.select_count * tm.avg_query_duration_s
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+            * {{ annualize_materialization }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         (
             greatest(tm.select_count - 1, 0) * tm.avg_query_duration_s
             + coalesce(tm.downstream_build_time_s, 0) * coalesce(tm.downstream_table_count, 0)
         ) * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
+            * {{ annualize_materialization }} * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tm.snapshot_date,
         case
@@ -275,9 +293,8 @@ all_recommendations as (
         null as identified_unique_key,
         'materialize_as_table' as signal_id
     from {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
-    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
-        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
-    )
+    left join model_warehouses as mw on mw.node_id = tm.dbt_model
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = mw.build_warehouse_name
     where tm.recommendation != 'Monitor'
       {% if var('suppress_staging_materialization_recs', false) %}
       and not (
@@ -333,9 +350,8 @@ all_recommendations as (
         icr_lookup.identified_unique_key,
         'convert_to_incremental' as signal_id
     from {{ ref('fct_snowflake__incremental_materialization_candidates') }} as ic
-    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
-        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
-    )
+    left join model_warehouses as mw on mw.node_id = ic.dbt_model
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = mw.build_warehouse_name
     left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr_lookup
         on icr_lookup.table_fqn = ic.table_fqn
     where ic.recommendation not like '%Insufficient%'
@@ -378,9 +394,8 @@ all_recommendations as (
         icr.identified_unique_key,
         'apply_incremental_' || icr.incremental_strategy as signal_id
     from {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
-    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
-        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
-    )
+    left join model_warehouses as mw on mw.node_id = icr.dbt_model
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = mw.build_warehouse_name
     where icr.recommendation_status != 'do_not_recommend'
       and icr.incremental_strategy is not null
 
@@ -406,7 +421,7 @@ all_recommendations as (
         tc.score,
         tc.select_count * tc.avg_query_duration_s
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+            * {{ annualize_clustering }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         tc.select_count * tc.avg_query_duration_s
             * (coalesce(ck_top.filter_query_count, 0)::float / nullif(tc.select_count, 0))
             * greatest(
@@ -415,7 +430,7 @@ all_recommendations as (
                 0
             )
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
+            * {{ annualize_clustering }} * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tc.snapshot_date,
         case when ck_top.table_fqn is not null then 'actionable' else 'monitor' end as backlog_status,
@@ -431,9 +446,8 @@ all_recommendations as (
             else 'add_clustering_key_evaluate'
         end as signal_id
     from {{ ref('fct_snowflake__table_clustering_candidates') }} as tc
-    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
-        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
-    )
+    left join model_warehouses as mw on mw.node_id = tc.dbt_model
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = mw.build_warehouse_name
     left join (
         select
             ck.table_fqn,
@@ -629,19 +643,8 @@ enriched as (
     ) as rh_fallback
         on rh_fallback.node_id = ar.dbt_model
         and rh.dbt_cloud_environment_id is null
-    -- Warehouse fallback: most common warehouse that built this model (from query_history comments)
-    left join (
-        select
-            -- try_parse_json, not parse_json: query_text LIKE '%node_id%' does not
-            -- guarantee valid JSON in the comment, only that the substring appears.
-            try_parse_json(regexp_substr(query_text, '/\\*\\s*(\\{.+\\})\\s*\\*/', 1, 1, 'e')):node_id::string as node_id,
-            mode(warehouse_name) as build_warehouse_name
-        from {{ ref('int_snowflake__query_history') }}
-        where query_text like '%node_id%'
-            and query_start_time >= dateadd(day, -30, current_timestamp())
-            and warehouse_name is not null
-        group by 1
-    ) as build_wh
+    -- Warehouse fallback: reuse model_warehouses CTE for the model's most common build warehouse
+    left join model_warehouses as build_wh
         on build_wh.node_id = ar.dbt_model
         and ar.warehouse_name is null
     -- Warehouse-to-project mapping: for warehouse-level recs that have no model association

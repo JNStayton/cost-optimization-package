@@ -32,6 +32,7 @@ First public release: one package with a shared design across Snowflake, Databri
 - Scope filtering with `dbt_monitored_projects`, and dbt platform run and job traceability in the spillage and expensive query views.
 - Quick-use `dbt run-operation` commands: `find_table_clustering_candidates`, `suggest_clustering_keys`, `find_table_materialization_candidates`, `find_incremental_materialization_candidates`, `find_warehouse_sizing_recommendations`, `find_spillage_candidates`, and `find_expensive_dbt_queries`.
 - Support for Enterprise and Standard editions (`snowflake_enterprise_edition`).
+- Cost and savings estimates at Snowflake's published credits-per-hour rate for each model's own warehouse (X-Small when unknown), annualized over each domain's lookback window. User cost attribution uses `ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY` credits where available, with elapsed time × list rate as the fallback, and flags which (`credits_from_attribution`).
 - A [dbt-charts](https://github.com/dbt-labs/dbt-charts) dashboard over the gold views, in `integrations/dbt_charts/`.
 - Tolerates non-dbt query traffic: query comments and session metadata that aren't valid JSON are treated as non-dbt activity instead of failing the build.
 - Clustering operator evidence skips queries on warehouses the package's role can't monitor, instead of failing the build, and logs a per-table coverage summary. Grant `MONITOR` on those warehouses for full coverage (see the Snowflake permissions docs).
