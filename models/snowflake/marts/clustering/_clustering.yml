@@ -341,6 +341,12 @@ models:
           Number of distinct queries where this column appeared in a Filter operator
           condition, derived from GET_QUERY_OPERATOR_STATS. Direct evidence of WHERE
           clause usage that benefits from clustering.
+      - name: total_queries_analyzed
+        description: >
+          Number of distinct consumption queries on this table that the
+          extract_operator_evidence hook analyzed (a confirmed TableScan) in the lookback
+          window. The denominator for this column's filter share: the >= 33% gate here,
+          and the clustering savings estimate in int_snowflake__all_recommendations.
 
       - name: join_query_count
         description: >

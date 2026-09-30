@@ -442,7 +442,24 @@ models:
         description: Chain-aware priority score used for ranking views that amplify downstream recomputation.
 
       - name: downstream_build_time_s
-        description: Average build time in seconds of downstream TABLE materializations reachable from this view.
+        description: >
+          Average build time in seconds of downstream TABLE materializations reachable from
+          this view. Used for ranking (composite_chain_score), not for cost estimates.
+
+      - name: downstream_build_count
+        description: >
+          Builds, in the lookback window, of the tables this view feeds directly (no view in
+          between): CTAS and MERGE statements tagged with the downstream model's node_id.
+          Each one re-runs this view's query. Views further up a chain get no credit here,
+          since materializing the view nearest the table also removes their recompute.
+          Known edges: an incremental model merged through a temporary table counts twice
+          per run; one appended through a temporary view counts zero.
+
+      - name: view_build_runs
+        description: >
+          How many times dbt (re)created this view in the lookback window (CREATE_VIEW
+          statements tagged with its node_id), minimum 1. After materializing, each run
+          becomes a table build, so these are subtracted from the savings.
 
       - name: attribution_method
         description: Highest-confidence query-text match pattern observed for this view.

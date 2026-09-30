@@ -309,14 +309,16 @@ The `autosuspend_cycles_30d` and `mcw_spindown_cycles_30d` come from `int_snowfl
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
-| Savings (direct) | `(select_count - 1) × avg_duration × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
-| Savings (downstream) | `downstream_build_time_s × downstream_table_count × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
-| Total savings | Sum of direct + downstream |
+| Current annual cost | `(select_count + downstream_build_count) × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
+| Savings | `max(select_count + downstream_build_count - view_build_runs, 0) × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
 
-`lookback_days` is `table_materialization_lookback_days` (default 14), the window `select_count` covers, so `365 / lookback_days` annualizes it.
+`lookback_days` is `table_materialization_lookback_days` (default 14), the window all three counts cover, so `365 / lookback_days` annualizes them.
 
-Logic: A view recomputes on every SELECT (direct cost) and on every downstream model build (downstream cost). A table computes once and is read cheaply. The savings is the eliminated recomputation cost from both sources.
+Logic: a view's query runs on every read (`select_count`) and on every build of a table it feeds (`downstream_build_count`). Materialized, it runs once per dbt run instead (`view_build_runs`, the number of times dbt created the view in the window). Savings are the runs that go away, so they can't exceed the cost.
+
+- **`downstream_build_count`** counts builds of the tables the view feeds *directly* (no view in between): CTAS and MERGE statements tagged with the downstream model's `node_id` in dbt's query comment. A view further up a chain gets no credit for those builds, because materializing the view nearest the table removes the upstream views' recompute too. Known edges: an incremental model merged through a temporary table counts twice per run; one appended through a temporary view counts zero.
+- **`view_build_runs`** counts CREATE_VIEW statements tagged with the view's `node_id`, minimum 1.
+- Each downstream build is charged at the view's average query time, not the downstream model's whole build time: materializing removes the view's share of the build, not the build.
 
 #### Spillage
 
@@ -334,12 +336,12 @@ The `0.5 seconds per GB` (local) and `5.0 seconds per GB` (remote) are conservat
 | Metric | Formula |
 |--------|---------|
 | Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
-| Savings | `current_cost × (filter_query_count / select_count) × (scan_ratio - 1/distinct_values)` |
+| Savings | `current_cost × (filter_query_count / total_queries_analyzed) × (scan_ratio - 1/distinct_values)` |
 
 `lookback_days` is `clustering_candidates_lookback_days` (default 7), the window `select_count` covers.
 
 The savings are weighted by two data-driven factors:
-1. **Filter proportion**: `filter_query_count / select_count` — only queries that filter on the recommended clustering key benefit from partition pruning
+1. **Filter proportion**: `filter_query_count / total_queries_analyzed` — only queries that filter on the recommended clustering key benefit from partition pruning. Both counts come from the queries the `extract_operator_evidence` hook analyzed (a sample of up to `clustering_key_operator_queries_per_table` per run), so the share is measured within that sample, not against all reads
 2. **Cardinality-based scan reduction**: `scan_ratio - 1/K` where K = distinct values for the clustering key — theoretical post-clustering scan ratio based on actual key cardinality
 
 This replaces the prior fixed-floor assumption (0.2) with values derived from actual query operator evidence and column cardinality profiling.

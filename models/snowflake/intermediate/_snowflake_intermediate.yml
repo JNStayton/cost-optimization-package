@@ -303,7 +303,7 @@ models:
     description: >
       Recursive CTE that walks the dbt DAG from each view/ephemeral model through
       its children until reaching a materialized table. Provides downstream_table_count,
-      min_hops_to_table, and downstream_table_fqns for view chain impact scoring.
+      min_hops_to_table, downstream_table_fqns, and direct_downstream_table_fqns (tables fed with no view in between) for view chain impact scoring and downstream-build savings.
 
   # ===========================================================================
   # int_snowflake__direct_object_access

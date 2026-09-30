@@ -26,6 +26,7 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='clustering_key_candidate_snapshot_key',
+    on_schema_change='append_new_columns',
   )
 }}
 
@@ -225,7 +226,8 @@ final as (
         cardinality_calculated_at,
         filter_query_count,
         join_query_count,
-        usage_count
+        usage_count,
+        total_queries_analyzed
     from column_scored
 )
 
@@ -248,7 +250,8 @@ select
     cardinality_calculated_at,
     filter_query_count,
     join_query_count,
-    usage_count
+    usage_count,
+    total_queries_analyzed
 from final
 where recommended_key_position <= 3
     -- Diminishing returns gate: 2nd/3rd keys must be >= 50% as impactful as the top key

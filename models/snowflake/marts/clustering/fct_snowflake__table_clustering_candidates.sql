@@ -100,6 +100,44 @@ table_query_stats as (
     group by lt.database_name, lt.schema_name, lt.table_name
 ),
 
+partitions_per_query as (
+    -- Table size in micropartitions. TABLE_QUERY_PRUNING_HISTORY reports partitions scanned
+    -- and pruned as totals across NUM_QUERIES queries, so first get each query shape's
+    -- partitions per query, then take the query-weighted median. A plain average is pulled
+    -- up by queries that scan the table more than once (self-joins, repeated CTEs).
+    select
+        database_name,
+        schema_name,
+        table_name,
+        min(touches_per_query) as micropartitions_per_query
+    from (
+        select
+            *,
+            sum(queries) over (
+                partition by database_name, schema_name, table_name
+                order by touches_per_query, query_hash
+                rows between unbounded preceding and current row
+            ) as cumulative_queries,
+            sum(queries) over (partition by database_name, schema_name, table_name) as total_queries
+        from (
+            select
+                database_name,
+                schema_name,
+                table_name,
+                query_hash,
+                sum(num_queries) as queries,
+                (sum(partitions_scanned) + sum(partitions_pruned)) / nullif(sum(num_queries), 0)
+                    as touches_per_query
+            from {{ ref('stg_snowflake__table_query_pruning_history') }}
+            where interval_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+              and num_queries > 0
+            group by database_name, schema_name, table_name, query_hash
+        )
+    )
+    where cumulative_queries >= total_queries / 2.0
+    group by database_name, schema_name, table_name
+),
+
 scored as (
     select
         lt.database_name,
@@ -125,12 +163,12 @@ scored as (
         lt.size_gb,
         coalesce(lt.row_count, 0) as row_count,
         coalesce(
-            nullif(coalesce(tqs.pruning_partitions_scanned, 0) + coalesce(tqs.pruning_partitions_pruned, 0), 0),
+            nullif(round(ppq.micropartitions_per_query), 0),
             nullif(coalesce(tqs.avg_partitions_total, 0), 0),
             lt.approx_micropartitions
         ) as estimated_micropartitions,
         case
-            when (coalesce(tqs.pruning_partitions_scanned, 0) + coalesce(tqs.pruning_partitions_pruned, 0)) > 0
+            when coalesce(ppq.micropartitions_per_query, 0) > 0
                 then 'pruning_history'
             when coalesce(tqs.avg_partitions_total, 0) > 0
                 then 'query_history'
@@ -141,6 +179,10 @@ scored as (
         on lt.database_name = tqs.database_name
         and lt.schema_name = tqs.schema_name
         and lt.table_name = tqs.table_name
+    left join partitions_per_query as ppq
+        on upper(lt.database_name) = upper(ppq.database_name)
+        and upper(lt.schema_name) = upper(ppq.schema_name)
+        and upper(lt.table_name) = upper(ppq.table_name)
     left join {{ ref('int_dbt__relations') }} as dm
         on lt.database_name = dm.database_name
         and lt.schema_name = dm.schema_name

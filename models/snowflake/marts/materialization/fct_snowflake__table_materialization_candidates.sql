@@ -182,6 +182,39 @@ downstream_build_stats as (
     group by vc.model_fqn
 ),
 
+downstream_builds as (
+    -- Builds, in the lookback window, of the tables this view feeds directly. Each one
+    -- re-runs the view's query. Counted by the downstream model's node_id in dbt's query
+    -- comment: CTAS and MERGE statements, the ones that evaluate the model's SQL (dbt's
+    -- INSERT normally reads from a __dbt_tmp relation). Views further up a chain get no
+    -- credit: materializing the view nearest the table also removes their recompute.
+    select
+        vc.model_fqn,
+        count(distinct qh.query_id) as downstream_build_count
+    from {{ ref('int_snowflake__view_chains') }} as vc,
+        lateral flatten(input => vc.direct_downstream_table_fqns) as ds
+    inner join {{ ref('int_dbt__relations') }} as dr
+        on upper(dr.table_fqn) = upper(ds.value::string)
+    inner join {{ ref('int_snowflake__query_history') }} as qh
+        on qh.dbt_node_id = dr.dbt_model
+       and qh.query_type in ('CREATE_TABLE_AS_SELECT', 'MERGE')
+       and qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    group by vc.model_fqn
+),
+
+view_builds as (
+    -- How often dbt (re)created each view in the lookback window. After materializing,
+    -- each of these runs becomes a table build.
+    select
+        dbt_node_id,
+        count(distinct query_id) as view_build_runs
+    from {{ ref('int_snowflake__query_history') }}
+    where query_type = 'CREATE_VIEW'
+      and dbt_node_id is not null
+      and query_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    group by dbt_node_id
+),
+
 composite_scored as (
     select
         cc.*,
@@ -222,6 +255,8 @@ final as (
         cs.downstream_table_count,
         round(cs.composite_chain_score, 4)                           as composite_chain_score,
         round(coalesce(cs.downstream_build_time_s, 0), 2)            as downstream_build_time_s,
+        coalesce(db.downstream_build_count, 0)                       as downstream_build_count,
+        greatest(coalesce(vb.view_build_runs, 0), 1)                 as view_build_runs,
         cs.attribution_method,
         cs.attribution_confidence,
         coalesce(cs.high_confidence_query_count, 0)                  as high_confidence_query_count,
@@ -269,6 +304,10 @@ final as (
             else 'Query volume or execution time below recommendation thresholds — continue monitoring'
         end                                                          as recommendation_reason
     from composite_scored as cs
+    left join downstream_builds as db
+        on db.model_fqn = cs.table_fqn
+    left join view_builds as vb
+        on vb.dbt_node_id = cs.dbt_model
     where coalesce(cs.select_count, 0) >= {{ min_query_count }}
        or coalesce(cs.is_in_view_chain, false)
 )

@@ -62,7 +62,11 @@ downstream_agg as (
     select
         model_fqn,
         count(distinct table_fqn)       as downstream_table_count,
-        array_agg(distinct table_fqn)   as downstream_table_fqns
+        array_agg(distinct table_fqn)   as downstream_table_fqns,
+        -- Tables this view feeds with no view in between. Downstream-build savings are
+        -- credited only for these, so views further up a chain aren't double-counted.
+        array_agg(distinct case when min_path_length = 1 then table_fqn end)
+                                        as direct_downstream_table_fqns
     from reachable_tables
     group by model_fqn
 )
@@ -71,6 +75,7 @@ select
     da.model_fqn,
     da.downstream_table_count,
     da.downstream_table_fqns,
+    da.direct_downstream_table_fqns,
     md.min_hops_to_table
 from downstream_agg as da
 join min_depth      as md on md.model_fqn = da.model_fqn

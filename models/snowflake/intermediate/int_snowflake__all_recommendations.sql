@@ -275,13 +275,14 @@ all_recommendations as (
         tm.recommendation_reason,
         'config_change' as effort_category,
         tm.materialization_score as score,
-        tm.select_count * tm.avg_query_duration_s
+        -- The view's query runs on every read and on every build of a table it feeds
+        -- directly. Materialized, it runs once per dbt run (view_build_runs) instead.
+        (tm.select_count + tm.downstream_build_count) * tm.avg_query_duration_s
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ annualize_materialization }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        (
-            greatest(tm.select_count - 1, 0) * tm.avg_query_duration_s
-            + coalesce(tm.downstream_build_time_s, 0) * coalesce(tm.downstream_table_count, 0)
-        ) * coalesce(wlr.credits_per_hour, 1) / 3600.0
+        greatest(tm.select_count + tm.downstream_build_count - tm.view_build_runs, 0)
+            * tm.avg_query_duration_s
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ annualize_materialization }} * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tm.snapshot_date,
@@ -423,7 +424,9 @@ all_recommendations as (
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ annualize_clustering }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         tc.select_count * tc.avg_query_duration_s
-            * (coalesce(ck_top.filter_query_count, 0)::float / nullif(tc.select_count, 0))
+            -- Filter share among the queries the operator-evidence hook analyzed (a sample of
+            -- at most clustering_key_operator_queries_per_table per run), not among all reads.
+            * (coalesce(ck_top.filter_query_count, 0)::float / nullif(ck_top.total_queries_analyzed, 0))
             * greatest(
                 tc.scan_ratio_pct / 100.0
                 - (1.0 / nullif(coalesce(ck_top.top_key_distinct_values, 1), 0)),
@@ -452,6 +455,7 @@ all_recommendations as (
         select
             ck.table_fqn,
             ck.filter_query_count,
+            ck.total_queries_analyzed,
             cc.distinct_values as top_key_distinct_values
         from {{ ref('fct_snowflake__clustering_key_candidates') }} as ck
         left join {{ ref('int_snowflake__column_cardinality') }} as cc
@@ -461,6 +465,8 @@ all_recommendations as (
     ) as ck_top on ck_top.table_fqn = tc.table_fqn
     where tc.is_candidate = true
         and tc.recommendation_status in ('evaluate_clustering', 'evaluate_key_alignment', 'insufficient_evidence')
+        -- The fact table keeps one snapshot per run; only the latest is current.
+        and tc.snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__table_clustering_candidates') }})
 
     union all
 

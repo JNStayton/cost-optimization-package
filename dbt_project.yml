@@ -123,6 +123,11 @@ data_tests:
       macros:
         +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('dbt_cost_optimization_run_package_tests', false) }}"
         +tags: ['dbt_cost_optimization', 'macro_tests']
+      # Checks on the package's real output. On by default, as warnings.
+      recommendations:
+        +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) }}"
+        +severity: warn
+        +tags: ['dbt_cost_optimization']
 
 # Package variables — override in a vars.yml file in your project root, or with --vars on the command line.
 # (Overriding package vars in your own dbt_project.yml vars: section is not supported.)
