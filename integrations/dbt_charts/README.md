@@ -6,8 +6,7 @@ category, the ranked optimization backlog, per-model recommendations,
 warehouse optimizations, and cross-domain insights.
 
 Snowflake only for now. Other platforms have differently-shaped gold
-layers (Databricks' single gold view has no dollar-estimate columns at
-all), so this board does not generalize to them as-is.
+layers, so this board does not generalize to them as-is.
 
 ## Setup
 
