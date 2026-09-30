@@ -223,28 +223,36 @@ Signal categories: spillage, clustering, incremental, materialization, expensive
 
 ## 3. Cost Estimation Methodology
 
-### Credits-per-second derivation
+### Credit rate approach: list rate vs. amortized
 
-Snowflake bills warehouse compute by the hour at fixed rates per size:
+The package uses two different credit rates depending on the purpose:
 
-| Size | Credits/Hour | Credits/Second |
-|------|-------------|----------------|
-| X-Small | 1 | 0.000278 |
-| Small | 2 | 0.000556 |
-| Medium | 4 | 0.001111 |
-| Large | 8 | 0.002222 |
-| X-Large | 16 | 0.004444 |
-| 2X-Large | 32 | 0.008889 |
-| 3X-Large | 64 | 0.017778 |
-| 4X-Large | 128 | 0.035556 |
+**Forward-looking savings/cost estimates** (in `int_snowflake__all_recommendations` and all gold views) use Snowflake's **published list rate** — the fixed credits-per-hour for a warehouse's size. This is the marginal cost of compute time and correctly estimates what users would save by optimizing. The `warehouse_credits_per_hour` macro maps a size column to the list rate:
 
-Rather than hardcoding these rates, we derive the actual rate per warehouse from `int_snowflake__warehouse_daily` (daily grain — divide by 86400 seconds/day, not 3600):
+| Size | Credits/Hour |
+|------|-------------|
+| X-Small | 1 |
+| Small | 2 |
+| Medium | 4 |
+| Large | 8 |
+| X-Large | 16 |
+| 2X-Large | 32 |
+| 3X-Large | 64 |
+| 4X-Large | 128 |
+| 5X-Large | 256 |
+| 6X-Large | 512 |
+
+The rate is sourced from `int_snowflake__warehouse_config.current_size` (populated by the `refresh_warehouse_config` post-hook from SHOW WAREHOUSES). For warehouses without a known size, the fallback is 1 credit/hour (X-Small) — conservative, underestimates rather than overestimates.
+
+**Backwards-looking cost attribution** (in `vw_snowflake__user_level_cost_attribution`) uses an **amortized rate** — the warehouse's average daily credits spread over 86,400 seconds:
 
 ```sql
 credits_per_second = avg(total_credits) / 86400.0
 ```
 
-This handles multi-cluster warehouses (which can consume more than the base rate) and warehouses that aren't active for the full hour.
+This distributes the actual bill proportionally across users and queries, so attributed costs sum to real spend. The amortized rate naturally handles multi-cluster warehouses (which consume more than the base rate) and reflects actual utilization patterns.
+
+**Why the split?** An amortized rate understates per-query costs for any warehouse that doesn't run 24/7. For example, a Medium warehouse (4 credits/hr) running 2.5 hours/day consumes 10 credits/day, which amortized gives 0.42 credits/hr — 10x less than the actual running cost. This is fine for attribution (it correctly reflects the share of the bill) but misleading for savings estimates (it makes optimization opportunities look 10x smaller than they are).
 
 ### Dollar conversion
 
@@ -292,9 +300,9 @@ The `autosuspend_cycles_30d` and `mcw_spindown_cycles_30d` come from `int_snowfl
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_second × 12 × credit_rate_usd` |
-| Savings (direct) | `(select_count - 1) × avg_duration × credits_per_sec × 12 × credit_rate_usd` |
-| Savings (downstream) | `downstream_build_time_s × downstream_table_count × credits_per_sec × 12 × credit_rate_usd` |
+| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × 12 × credit_rate_usd` |
+| Savings (direct) | `(select_count - 1) × avg_duration × credits_per_hour / 3600 × 12 × credit_rate_usd` |
+| Savings (downstream) | `downstream_build_time_s × downstream_table_count × credits_per_hour / 3600 × 12 × credit_rate_usd` |
 | Total savings | Sum of direct + downstream |
 
 Logic: A view recomputes on every SELECT (direct cost) and on every downstream model build (downstream cost). A table computes once and is read cheaply. The savings is the eliminated recomputation cost from both sources.
@@ -304,7 +312,7 @@ Logic: A view recomputes on every SELECT (direct cost) and on every downstream m
 | Metric | Formula |
 |--------|---------|
 | Current annual cost | Attributed from the query's total credit cost (already in expensive_queries) |
-| Savings | Estimated time overhead from spilling: `total_gb_spilled × 0.5 seconds_per_gb_spilled × credits_per_second × 365 × credit_rate_usd` |
+| Savings | Estimated time overhead from spilling: `total_gb_spilled × 0.5 seconds_per_gb_spilled × credits_per_hour / 3600 × 365 × credit_rate_usd` |
 
 The `0.5 seconds per GB spilled` is a conservative estimate. Local spillage adds ~0.5-2 seconds per GB; remote spillage adds ~2-10 seconds per GB.
 
@@ -312,7 +320,7 @@ The `0.5 seconds per GB spilled` is a conservative estimate. Local spillage adds
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `select_count × avg_query_duration_s × credits_per_second × 12 × credit_rate_usd` |
+| Current annual cost | `select_count × avg_query_duration_s × credits_per_hour / 3600 × 12 × credit_rate_usd` |
 | Savings | `current_cost × (filter_query_count / select_count) × (scan_ratio - 1/distinct_values)` |
 
 The savings are weighted by two data-driven factors:

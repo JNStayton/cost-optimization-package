@@ -30,15 +30,13 @@
   {% set monitored_projects = [project_name] %}
 {% endif %}
 
-with warehouse_rates as (
-    -- Derive credits-per-second per warehouse from actual metering data
-    -- Note: int_snowflake__warehouse_daily is daily grain, so divide by 86400 (seconds/day)
+with warehouse_list_rates as (
+    -- Map warehouse size to Snowflake's published credits-per-hour rate.
+    -- Used for forward-looking cost and savings estimates (not attribution).
     select
         warehouse_name,
-        avg(total_credits) / 86400.0 as credits_per_second
-    from {{ ref('int_snowflake__warehouse_daily') }}
-    where total_credits > 0
-    group by warehouse_name
+        {{ warehouse_credits_per_hour('current_size') }} as credits_per_hour
+    from {{ ref('int_snowflake__warehouse_config') }}
 ),
 
 all_recommendations as (
@@ -63,24 +61,24 @@ all_recommendations as (
             when ws.recommendation_key = 'idle_reduce_auto_suspend'
                 then coalesce(sc.autosuspend_cycles_30d, 0)
                      * greatest(ws.auto_suspend_seconds - 60, 0) / 3600.0
-                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * coalesce(wlr.credits_per_hour, 1)
                      * 12 * {{ credit_rate_usd }}
             -- 1.2: ECONOMY→STANDARD — eliminate ~150s idle per MCW spindown cycle
             when ws.recommendation_key = 'idle_switch_scaling_policy'
                 then coalesce(sc.mcw_spindown_cycles_30d, 0)
                      * 150.0 / 3600.0
-                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * coalesce(wlr.credits_per_hour, 1)
                      * 12 * {{ credit_rate_usd }}
             -- 1.3: Reduce max clusters — fewer spindown idle periods
             when ws.recommendation_key = 'idle_reduce_max_clusters'
                 then coalesce(sc.mcw_spindown_cycles_30d, 0)
                      * 150.0 / 3600.0
-                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * coalesce(wlr.credits_per_hour, 1)
                      * 12 * {{ credit_rate_usd }}
             -- 1.4: Reduce min clusters — eliminate forced-idle cluster time
             when ws.recommendation_key = 'idle_reduce_min_clusters'
                 then (ws.min_cluster_count - 1)
-                     * coalesce(wr.credits_per_second * 3600, 1)
+                     * coalesce(wlr.credits_per_hour, 1)
                      * ws.avg_idle_credit_pct_30d * 720.0
                      * 12 * {{ credit_rate_usd }}
             -- 1.7: Consolidate underloaded — warehouse retires entirely
@@ -110,7 +108,7 @@ all_recommendations as (
     from {{ ref('fct_snowflake__warehouse_config_recommendations') }} as ws
     left join {{ ref('int_snowflake__warehouse_suspend_cycles') }} as sc
         on sc.warehouse_name = ws.warehouse_name
-    left join warehouse_rates as wr on wr.warehouse_name = ws.warehouse_name
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = ws.warehouse_name
     where ws.recommendation not like 'Stable%'
 
     union all
@@ -134,10 +132,10 @@ all_recommendations as (
         end as effort_category,
         sp.total_gb_spilled_local + sp.total_gb_spilled_remote as score,
         (sp.total_gb_spilled_local * 0.5 + sp.total_gb_spilled_remote * 5.0)
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         (sp.total_gb_spilled_local * 0.5 + sp.total_gb_spilled_remote * 5.0)
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
         sp.snowflake_ddl,
         sp.snapshot_date,
@@ -154,7 +152,7 @@ all_recommendations as (
             else 'spillage_scale_up'
         end as signal_id
     from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
-    left join warehouse_rates as wr on wr.warehouse_name = sp.warehouse_name
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = sp.warehouse_name
     where sp.recommendation not like 'Not available%'
 
     union all
@@ -180,10 +178,10 @@ all_recommendations as (
         'config_change' as effort_category,
         sp_agg.total_gb_spilled as score,
         sp_agg.total_gb_spilled * 0.5
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         sp_agg.total_gb_spilled * 0.5
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
         'ALTER WAREHOUSE ' || sp_agg.warehouse_name || ' SET WAREHOUSE_SIZE = '''
             || {{ next_warehouse_size('sp_agg.warehouse_current_size', 'up') }} || ''';' as snowflake_ddl,
@@ -207,7 +205,7 @@ all_recommendations as (
         having sum(sp.total_gb_spilled_local + sp.total_gb_spilled_remote) >= {{ var('spillage_aggregate_threshold_gb', 100) }}
             and max(case when sp.total_gb_spilled_local > 50 then 1 else 0 end) = 0
     ) as sp_agg
-    left join warehouse_rates as wr on wr.warehouse_name = sp_agg.warehouse_name
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = sp_agg.warehouse_name
 
     union all
 
@@ -260,12 +258,12 @@ all_recommendations as (
         'config_change' as effort_category,
         tm.materialization_score as score,
         tm.select_count * tm.avg_query_duration_s
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         (
             greatest(tm.select_count - 1, 0) * tm.avg_query_duration_s
             + coalesce(tm.downstream_build_time_s, 0) * coalesce(tm.downstream_table_count, 0)
-        ) * coalesce(wr.credits_per_second, 0.000278)
+        ) * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tm.snapshot_date,
@@ -277,8 +275,8 @@ all_recommendations as (
         null as identified_unique_key,
         'materialize_as_table' as signal_id
     from {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
-    left join warehouse_rates as wr on wr.warehouse_name = (
-        select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
+        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
     )
     where tm.recommendation != 'Monitor'
       {% if var('suppress_staging_materialization_recs', false) %}
@@ -315,11 +313,11 @@ all_recommendations as (
         end as effort_category,
         ic.rebuild_pressure_score as score,
         ic.avg_build_time_sec * ic.builds_per_day * 365
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         ic.avg_build_time_sec * ic.builds_per_day * 365
             * coalesce(ic.rebuild_redundancy_rate, 0.5)
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         ic.snapshot_date,
@@ -335,8 +333,8 @@ all_recommendations as (
         icr_lookup.identified_unique_key,
         'convert_to_incremental' as signal_id
     from {{ ref('fct_snowflake__incremental_materialization_candidates') }} as ic
-    left join warehouse_rates as wr on wr.warehouse_name = (
-        select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
+        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
     )
     left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr_lookup
         on icr_lookup.table_fqn = ic.table_fqn
@@ -363,11 +361,11 @@ all_recommendations as (
         icr.effort_category,
         icr.table_size_gb as score,
         icr.avg_build_time_sec * coalesce(icr.builds_per_day, 1) * 365
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         icr.avg_build_time_sec * coalesce(icr.builds_per_day, 1) * 365
             * coalesce(icr.rebuild_redundancy_rate, 0.5)
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         icr.snapshot_date,
@@ -380,8 +378,8 @@ all_recommendations as (
         icr.identified_unique_key,
         'apply_incremental_' || icr.incremental_strategy as signal_id
     from {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
-    left join warehouse_rates as wr on wr.warehouse_name = (
-        select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
+        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
     )
     where icr.recommendation_status != 'do_not_recommend'
       and icr.incremental_strategy is not null
@@ -407,7 +405,7 @@ all_recommendations as (
         'config_change' as effort_category,
         tc.score,
         tc.select_count * tc.avg_query_duration_s
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         tc.select_count * tc.avg_query_duration_s
             * (coalesce(ck_top.filter_query_count, 0)::float / nullif(tc.select_count, 0))
@@ -416,7 +414,7 @@ all_recommendations as (
                 - (1.0 / nullif(coalesce(ck_top.top_key_distinct_values, 1), 0)),
                 0
             )
-            * coalesce(wr.credits_per_second, 0.000278)
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * 12 * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tc.snapshot_date,
@@ -433,8 +431,8 @@ all_recommendations as (
             else 'add_clustering_key_evaluate'
         end as signal_id
     from {{ ref('fct_snowflake__table_clustering_candidates') }} as tc
-    left join warehouse_rates as wr on wr.warehouse_name = (
-        select warehouse_name from warehouse_rates order by credits_per_second desc limit 1
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = (
+        select warehouse_name from warehouse_list_rates order by credits_per_hour desc limit 1
     )
     left join (
         select

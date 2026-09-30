@@ -159,4 +159,6 @@ Snowflake uses two size formats depending on the source:
 
 The `next_warehouse_size` macro (in `macros/platforms/snowflake/utils/`) handles both formats by lowercasing before comparison. It returns null at ladder boundaries (top for up, bottom for down) so concatenated DDL safely nulls out rather than generating incorrect SQL.
 
+The `warehouse_credits_per_hour` macro (same directory) maps a size column to the Credits/hr rate in this table. Used by `int_snowflake__all_recommendations` for forward-looking cost and savings estimates. Returns null for unknown sizes; callers coalesce to 1 (X-Small fallback).
+
 Next-size-up/down logic should clamp at boundaries and account for credit doubling when calculating cost impact in the recommendation reason.

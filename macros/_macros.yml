@@ -303,6 +303,19 @@ macros:
       - name: direction
         description: "Direction to step: 'up' (default) or 'down'"
 
+  - name: warehouse_credits_per_hour
+    description: >
+      Returns a SQL CASE expression that maps a warehouse size column to Snowflake's
+      published credits-per-hour rate (X-Small=1 through 6X-Large=512). Handles both
+      SHOW WAREHOUSES format and WAREHOUSE_EVENTS_HISTORY format by lowercasing before
+      comparison. Returns null for unknown sizes; callers should coalesce to a fallback
+      (typically 1 for X-Small). Used by int_snowflake__all_recommendations for
+      forward-looking cost and savings estimates.
+      Implemented for: snowflake.
+    arguments:
+      - name: size_column
+        description: "SQL column or expression containing the warehouse size value"
+
   - name: refresh_warehouse_config
     description: >
       Post-hook on int_snowflake__warehouse_config. Merges current warehouse
