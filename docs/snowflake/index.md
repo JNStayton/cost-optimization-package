@@ -62,6 +62,21 @@ GRANT SELECT ON FUTURE TABLES IN DATABASE <database> TO ROLE <your_dbt_role>;
 
 -- Option C: Grant on specific tables only
 GRANT SELECT ON TABLE <database>.<schema>.<table> TO ROLE <your_dbt_role>;
+
+-- =============================================================================
+-- STEP 5 (optional): Grant MONITOR on warehouses whose queries you want analyzed
+-- Required for: full operator evidence in the extract_operator_evidence post-hook
+-- (clustering candidates and clustering keys).
+--
+-- The hook calls GET_QUERY_OPERATOR_STATS on recent queries against your
+-- clustering candidates. Snowflake requires OPERATE or MONITOR on the warehouse
+-- each query ran on; MONITOR is the read-only choice. Without it, queries on
+-- that warehouse are skipped: clustering keys are based on fewer queries, and
+-- the build log shows "extract_operator_evidence: skipped query ..." lines,
+-- plus a per-table "analyzed N of M queries (K skipped)" summary.
+-- =============================================================================
+
+GRANT MONITOR ON WAREHOUSE <warehouse> TO ROLE <your_dbt_role>;
 ```
 
 ### Complete Script (copy-paste ready)
@@ -99,24 +114,30 @@ GRANT CREATE SCHEMA ON DATABASE <DATABASE> TO ROLE <DBT_ROLE>;
 -- 4. Table analysis (optional — for clustering key + unique key probing)
 GRANT SELECT ON ALL TABLES IN DATABASE <PROJECT_DB> TO ROLE <DBT_ROLE>;
 GRANT SELECT ON FUTURE TABLES IN DATABASE <PROJECT_DB> TO ROLE <DBT_ROLE>;
+
+-- 5. Operator evidence (optional — full clustering evidence). Repeat for each
+--    warehouse where your candidate tables are queried.
+GRANT MONITOR ON WAREHOUSE <WAREHOUSE> TO ROLE <DBT_ROLE>;
 ```
 
 ### Permission Matrix by Feature
 
-| Feature | `IMPORTED PRIVILEGES` | Warehouse | Output Schema | SELECT on tables |
-|---------|:---------------------:|:---------:|:-------------:|:----------------:|
-| **Warehouse sizing recommendations** | Required | Required | Required | — |
-| **Warehouse spillage recommendations** | Required | Required | Required | — |
-| **Expensive query recommendations** | Required | Required | Required | — |
-| **Table clustering candidates** | Required | Required | Required | — |
-| **Clustering key candidates** | Required | Required | Required | Required |
-| **Materialization candidates** | Required | Required | Required | — |
-| **Incremental config recommendations** | Required | Required | Required | Required |
-| **AI/Cortex spend overview** | Required | Required | Required | — |
-| **AI model cost recommendations** | Required | Required | Required | — |
-| **AI user spend recommendations** | Required | Required | Required | — |
-| **AI token efficiency recommendations** | Required | Required | Required | — |
-| **All `dbt run-operation` macros** | Required | Required | — | Some |
+| Feature | `IMPORTED PRIVILEGES` | Warehouse | Output Schema | SELECT on tables | `MONITOR` on queried warehouses |
+|---------|:---------------------:|:---------:|:-------------:|:----------------:|:-------------------------------:|
+| **Warehouse sizing recommendations** | Required | Required | Required | — | — |
+| **Warehouse spillage recommendations** | Required | Required | Required | — | — |
+| **Expensive query recommendations** | Required | Required | Required | — | — |
+| **Table clustering candidates** | Required | Required | Required | — | Recommended |
+| **Clustering key candidates** | Required | Required | Required | Required | Recommended |
+| **Materialization candidates** | Required | Required | Required | — | — |
+| **Incremental config recommendations** | Required | Required | Required | Required | — |
+| **AI/Cortex spend overview** | Required | Required | Required | — | — |
+| **AI model cost recommendations** | Required | Required | Required | — | — |
+| **AI user spend recommendations** | Required | Required | Required | — | — |
+| **AI token efficiency recommendations** | Required | Required | Required | — | — |
+| **All `dbt run-operation` macros** | Required | Required | — | Some | — |
+
+"Recommended" means the feature works without it, with less evidence: see step 5.
 
 ### Edition-Specific Features
 

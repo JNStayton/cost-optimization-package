@@ -2,8 +2,13 @@
   Historical snapshot of clustering candidates based on Snowflake metadata and query history.
   This model ports the logic from the find_table_clustering_candidates macro into SQL.
 --#}
+{#- The clustering post-hooks read these two models by name, not ref(), so declare the
+    dependency here. Both are Enterprise-only (disabled when snowflake_enterprise_edition
+    is false), and a ref() to a disabled model fails to parse, hence the edition check. -#}
+{% if var('snowflake_enterprise_edition', true) %}
 -- depends_on: {{ ref('int_snowflake__column_query_access') }}
 -- depends_on: {{ ref('int_snowflake__column_query_stats') }}
+{% endif %}
 {{
   config(
     materialized='incremental',

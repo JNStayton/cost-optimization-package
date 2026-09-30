@@ -25,6 +25,6 @@
       snowflake.account_usage.sessions
   where
       created_on >= dateadd(day, -{{ lookback_days }}, current_timestamp())
-      and parse_json(client_environment):APPLICATION::string = 'dbt'
+      and try_parse_json(client_environment):APPLICATION::string = 'dbt'
 
 {% endmacro %}

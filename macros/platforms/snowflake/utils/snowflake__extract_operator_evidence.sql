@@ -139,6 +139,7 @@
           {{ log("extract_operator_evidence: processing " ~ (queries_result.rows | length) ~ " queries for " ~ table_fqn, info=true) }}
 
           {# Step 3: For each query, extract ALL operator evidence in one MERGE #}
+          {% set coverage = namespace(skipped=0) %}
           {% for q_row in queries_result %}
 
             {% set qid = q_row['QUERY_ID'] %}
@@ -228,11 +229,15 @@
             {% set merge_result = run_query(merge_sql) %}
             {% if merge_result and merge_result.rows | length > 0 and merge_result.rows[0][0] is not none %}
               {{ log(merge_result.rows[0][0], info=true) }}
+              {% set coverage.skipped = coverage.skipped + 1 %}
             {% endif %}
 
           {% endfor %}
 
-          {{ log("extract_operator_evidence: completed " ~ table_fqn ~ " (" ~ (queries_result.rows | length) ~ " queries)", info=true) }}
+          {% set total_queries = queries_result.rows | length %}
+          {{ log("extract_operator_evidence: completed " ~ table_fqn ~ ": analyzed "
+                 ~ (total_queries - coverage.skipped) ~ " of " ~ total_queries ~ " queries ("
+                 ~ coverage.skipped ~ " skipped)", info=true) }}
 
         {% else %}
           {{ log("extract_operator_evidence: no recent queries for " ~ table_fqn ~ ", skipping.", info=true) }}
