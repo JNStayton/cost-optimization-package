@@ -15,6 +15,13 @@ test-paths: ["tests"]
 clean-targets: ["target", "dbt_packages"]
 
 models:
+  # Build the package's models into their own schema, <target schema>_integration, not
+  # the <target schema>_dbt_cost_optimization schema the package's unit tests use. Unit
+  # tests read their parents' column types from that schema, so fixture data built there
+  # would change the types they see.
+  dbt_cost_optimization_package:
+    +schema: integration
+
   cost_optimization_integration_tests:
     # Deliberately shaped models for the package to analyze. They only need to exist;
     # their behavior comes from the fixture query history that references them.

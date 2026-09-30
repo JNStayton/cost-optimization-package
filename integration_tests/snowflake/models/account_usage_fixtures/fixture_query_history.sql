@@ -68,6 +68,18 @@
     {'view': 'demo_rare_view',  'queries': 3,  'elapsed_ms': 1000},
 ] -%}
 
+-- Typed first branch: every column takes the real view's type, and the build fails fast if
+-- Snowflake renames one. Without it, columns would take narrow types from the literals
+-- below (NUMBER(1,0) for a column that's always 0), and unit tests that read these types
+-- would reject realistic values.
+select
+    query_id, start_time, query_hash, query_parameterized_hash, user_name, role_name,
+    warehouse_name, warehouse_size, total_elapsed_time, bytes_scanned, query_load_percent,
+    queued_overload_time, queued_provisioning_time, query_type, execution_time,
+    partitions_scanned, partitions_total, bytes_spilled_to_local_storage,
+    bytes_spilled_to_remote_storage, query_text, session_id, execution_status, rows_inserted
+from snowflake.account_usage.query_history where false
+union all
 {% for c in cases %}
 select
     '{{ c.view }}_q' || seq4()                                   as query_id,
