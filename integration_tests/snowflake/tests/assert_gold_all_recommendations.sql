@@ -44,6 +44,17 @@ expected as (
     union all select 'warehouse',       'idle_reduce_auto_suspend',   'fixture_wh_idle',         'actionable',  96.00
     union all select 'warehouse',       'provisioning_gen2',          'fixture_wh_cold',         'actionable',  14.40
     union all select 'warehouse',       '{{ busy_2xl_signal }}',      'fixture_wh_busy_2xl',     'actionable',  14.40
+{%- if var('snowflake_enterprise_edition', true) %}
+    {#- Spillage (Enterprise edition): signal and status from the tier key. Scale-ups'
+        GB-based savings are pennies, so the $1 floor demotes them to stable. #}
+    union all select 'warehouse', 'spillage_sql_refactor',       'demo_spill_heavy_large', 'actionable', 4.48
+    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_heavy_small', 'stable',     0.28
+    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_remote',      'stable',     0.32
+    union all select 'warehouse', 'spillage_scale_up',           'fixture_wh_idle',        'stable',     0.49
+    union all select 'warehouse', 'spillage_moderate_worsening', 'demo_spill_worsening',   'monitor',    0.23
+    union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_steady',      'monitor',    0.02
+    union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_minor',       'stable',     0.00
+{%- endif %}
 )
 
 select
