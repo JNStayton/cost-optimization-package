@@ -40,8 +40,19 @@
 -- depends_on: {{ ref('daily_demo_events') }}
 {%- set clustering_qids = [] -%}
 {%- set child_qids = [] -%}
+{%- set spill_qids = {} -%}
 {%- if execute -%}
   {%- do run_query("alter session set use_cached_result = false") -%}
+  {#- Spillage evidence (phase S2b): a query that really spills on an X-Small warehouse
+      (a window over 40M rows sorted by a 64-character key, about 2.4 GB of local spill),
+      and a control that doesn't spill but spends most of its time on disk I/O (a scan of
+      SNOWFLAKE_SAMPLE_DATA, which Snowflake accounts have by default), so blocked time
+      must come only from spilling operators. GET_QUERY_OPERATOR_STATS reads their real
+      operators. -#}
+  {%- do run_query("select max(rn), count(*) from (select row_number() over (order by md5(seq4()) || md5(seq4() + 1)) as rn, md5(seq4()) || md5(seq4() + 2) as pad from table(generator(rowcount => 40000000)))") -%}
+  {%- do spill_qids.update({'spilling': run_query("select last_query_id()").columns[0].values()[0]}) -%}
+  {%- do run_query("select count(*), sum(l_extendedprice), max(l_comment) from snowflake_sample_data.tpch_sf10.lineitem") -%}
+  {%- do spill_qids.update({'control': run_query("select last_query_id()").columns[0].values()[0]}) -%}
   {%- for i in range(20) -%}
     {%- do run_query("select count(*), sum(amount) from " ~ ref('demo_events') ~ " where region = 'EU' and event_id <> 12345 and event_date >= dateadd(day, -" ~ (i + 1) ~ ", current_date())") -%}
     {%- do clustering_qids.append(run_query("select last_query_id()").columns[0].values()[0]) -%}
@@ -278,7 +289,7 @@ select
     ('demo_spill_worsening',   'FIXTURE_WH_IDLE',     3,  49,  0, 90),
     ('demo_spill_steady',      'FIXTURE_WH_IDLE',     20, 2,   0, 30),
     ('demo_spill_steady',      'FIXTURE_WH_IDLE',     5,  2,   0, 36),
-    ('demo_spill_heavy_small', 'FIXTURE_WH_COLD',     2,  60,  0, 240),
+    ('demo_spill_heavy_small', 'FIXTURE_WH_BUSY',     2,  60,  0, 240),
     ('demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 2,  60,  0, 600),
     ('demo_spill_minor',       'FIXTURE_WH_HEALTHY',  2,  0.5, 0, 15),
     ('demo_chain_table',       'FIXTURE_WH_HEALTHY',  20, 3,   0, 45),
@@ -293,6 +304,33 @@ select
     '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ tbl }}"} */ '
         || 'create or replace transient table {{ target.database }}.{{ target.schema }}.{{ tbl }} as (select 1 as id)',
     1, 'SUCCESS', 1000
+{%- endfor %}
+{#-
+  Spillage evidence (phase S2b): the real queries run above, recorded as recent spilling
+  builds so the extract_spill_evidence hook samples them (the newest of a new query
+  shape). Fixed runtimes keep the costs exact; the operators' blocked-on-disk share is
+  measured.
+    - demo_spill_heavy_large: the really spilling query, 60 s. Its other build (600 s, a
+      fake query ID) is skipped by the hook, so the sample's blocked time is scaled by
+      660 / 60 to all its spilling queries.
+    - demo_spill_heavy_small: the control, 10 s; no operator spills, so blocked time 0
+      despite its scan's disk I/O.
+      It runs on COLD (keeping COLD's warehouse recommendations in the project's scope),
+      but the table spilled most on BUSY, so BUSY is its warehouse.
+-#}
+{% for tbl, wh, role, exec_s in [('demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 'spilling', 60),
+                                  ('demo_spill_heavy_small', 'FIXTURE_WH_COLD', 'control', 10)] %}
+{%- if spill_qids.get(role) %}
+union all
+select
+    '{{ spill_qids[role] }}', dateadd(hour, -2, current_timestamp()),
+    'hash_spill_{{ role }}', 'phash_spill_{{ role }}',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', '{{ wh }}', 'Small', {{ exec_s * 1000 }}, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', {{ exec_s * 1000 }}, 1, 1, {{ gb }}, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ tbl }}"} */ '
+        || 'create or replace transient table {{ target.database }}.{{ target.schema }}.{{ tbl }} as (select 1 as id)',
+    1, 'SUCCESS', 1000
+{%- endif %}
 {%- endfor %}
 {#-
   Relation history: a second deployment of demo_orders, in <schema>_deploy under target

@@ -34,8 +34,8 @@
 {#- Enterprise edition adds spillage (per-table performance recommendations): 7 more
     non-stable backlog rows (SQL refactor and the three scale-ups actionable, since their
     savings are null and the floor doesn't demote them; worsening, steady and the chain
-    table monitor), four more actionable warehouse rows, spillage groups on BUSY_2XL,
-    COLD, IDLE and HEALTHY, 7 spilling models, and demo_chain_table in cross-domain
+    table monitor), four more actionable warehouse rows, spillage groups on BUSY,
+    BUSY_2XL, IDLE and HEALTHY, 7 spilling models, and demo_chain_table in cross-domain
     insights (spillage + view_chain). -#}
 with checks as (
     select 'all_recommendations has no duplicate recommendations' as check_name,
@@ -61,9 +61,11 @@ with checks as (
     select 'warehouse_optimizations',
            (select listagg(warehouse_name || ':' || signal_id, ',') within group (order by warehouse_name, signal_id)
             from {{ ref('vw_snowflake__warehouse_optimizations') }}),
-           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},FIXTURE_WH_BUSY_2XL:{{ busy_signal }},'
+           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},'
+           || '{{ "FIXTURE_WH_BUSY:spillage," if is_enterprise else "" }}'
+           || 'FIXTURE_WH_BUSY_2XL:{{ busy_signal }},'
            || '{{ "FIXTURE_WH_BUSY_2XL:spillage," if is_enterprise else "" }}'
-           || 'FIXTURE_WH_COLD:provisioning_gen2,{{ "FIXTURE_WH_COLD:spillage," if is_enterprise else "" }}FIXTURE_WH_HEALTHY:expensive_query,'
+           || 'FIXTURE_WH_COLD:provisioning_gen2,FIXTURE_WH_HEALTHY:expensive_query,'
            || '{{ "FIXTURE_WH_HEALTHY:spillage," if is_enterprise else "" }}'
            || 'FIXTURE_WH_IDLE:idle_reduce_auto_suspend'
            || '{{ ",FIXTURE_WH_IDLE:spillage" if is_enterprise else "" }}'

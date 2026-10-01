@@ -36,10 +36,12 @@ with produced as (
            ar.backlog_status,
            case
                when tm.chain_role is not null then null
-               -- Spillage: savings are null; compare the measured cost instead (-1 flags a
-               -- non-null savings)
+               -- Spillage: compare the measured cost. Savings must be null (-1 flags one),
+               -- except a SQL refactor's, measured from real operator stats
+               -- (assert_spill_evidence checks it).
                when ar.signal_id like 'spillage%'
-                   then iff(ar.estimated_annual_savings_usd is null, round(ar.estimated_annual_cost_usd, 2), -1)
+                   then iff(ar.estimated_annual_savings_usd is null or ar.signal_id = 'spillage_sql_refactor',
+                            round(ar.estimated_annual_cost_usd, 2), -1)
                else round(ar.estimated_annual_savings_usd, 2)
            end as savings
     from {{ ref('int_snowflake__all_recommendations') }} as ar
@@ -65,13 +67,13 @@ expected as (
     union all select 'warehouse',       'provisioning_gen2',          'fixture_wh_cold',         'actionable',  14.40
     union all select 'warehouse',       '{{ busy_2xl_signal }}',      'fixture_wh_busy_2xl',     'actionable',  14.40
 {%- if var('snowflake_enterprise_edition', true) %}
-    {#- Spillage (Enterprise edition): signal and status from the tier key. Savings are
-        null (so the $1 floor doesn't demote the scale-ups); the column holds the cost:
+    {#- Spillage (Enterprise edition): signal and status from the tier key. Scale-up savings
+        are null (so the $1 floor doesn't demote them); the column holds the cost:
         the spilling queries' runtime x the warehouse's list rate / 3600 x 365/30 x $2.
-        e.g. heavy_large 600 s on 2X-Large (32/hour) = $129.78; the IDLE aggregate is all
+        e.g. heavy_large 600 + 60 s on 2X-Large (32/hour) = $142.76; the IDLE aggregate is all
         of IDLE's spilling queries, 120 + 90 + 30 + 36 s on Small (2/hour) = $3.73. #}
-    union all select 'warehouse', 'spillage_sql_refactor',       'demo_spill_heavy_large', 'actionable', 129.78
-    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_heavy_small', 'actionable',   3.24
+    union all select 'warehouse', 'spillage_sql_refactor',       'demo_spill_heavy_large', 'actionable', 142.76
+    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_heavy_small', 'actionable',   6.76
     union all select 'warehouse', 'spillage_scale_up',           'demo_spill_remote',      'actionable',   1.62
     union all select 'warehouse', 'spillage_scale_up',           'fixture_wh_idle',        'actionable',   3.73
     union all select 'warehouse', 'spillage_moderate_worsening', 'demo_spill_worsening',   'monitor',      1.22

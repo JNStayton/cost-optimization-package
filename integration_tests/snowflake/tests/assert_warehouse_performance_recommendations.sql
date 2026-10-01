@@ -3,9 +3,10 @@
   It needs table-level attribution (ACCESS_HISTORY), so on Standard edition it must
   return no rows. On Enterprise edition, the seven spilling demo tables (fixture query
   history) get one tier each, and spilling_execution_s, the runtime of their spilling
-  queries (ACCESS_HISTORY attribution; DEMO_SPILL_STEADY's two builds, 30 + 36 s):
+  queries (ACCESS_HISTORY attribution; DEMO_SPILL_STEADY's two builds, 30 + 36 s; the
+  heavy tables' real spill-evidence queries add 60 s and 10 s):
     - DEMO_SPILL_REMOTE      (IDLE, Small):     2 GB remote spill      → scale up to Medium
-    - DEMO_SPILL_HEAVY_SMALL (COLD, Small):     60 GB local            → scale up to Medium
+    - DEMO_SPILL_HEAVY_SMALL (BUSY, Medium):    60 GB local            → scale up to Large
     - DEMO_SPILL_HEAVY_LARGE (BUSY_2XL):        60 GB local on 2X-Large → optimize SQL, no DDL
     - DEMO_SPILL_WORSENING   (IDLE):            49 GB local, recent    → monitor, trending worse
     - DEMO_SPILL_STEADY      (IDLE):            2 GB 20 days ago + 2 GB 5 days ago → monitor, stable
@@ -26,9 +27,9 @@ expected as (
            'Scale up warehouse (remote spillage detected)' as recommendation,
            'ALTER WAREHOUSE FIXTURE_WH_IDLE SET WAREHOUSE_SIZE = ''MEDIUM'';' as snowflake_ddl,
            120 as spilling_execution_s
-    union all select 'demo_spill_heavy_small', 'FIXTURE_WH_COLD', 'local_heavy_small_wh', 'Scale up warehouse (heavy local spillage on SMALL)',
-           'ALTER WAREHOUSE FIXTURE_WH_COLD SET WAREHOUSE_SIZE = ''MEDIUM'';', 240
-    union all select 'demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 'local_heavy_large_wh', 'Optimize SQL (heavy spillage on large warehouse)', null, 600
+    union all select 'demo_spill_heavy_small', 'FIXTURE_WH_BUSY', 'local_heavy_small_wh', 'Scale up warehouse (heavy local spillage on MEDIUM)',
+           'ALTER WAREHOUSE FIXTURE_WH_BUSY SET WAREHOUSE_SIZE = ''LARGE'';', 250
+    union all select 'demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 'local_heavy_large_wh', 'Optimize SQL (heavy spillage on large warehouse)', null, 660
     union all select 'demo_spill_worsening',   'FIXTURE_WH_IDLE',     'local_moderate_worsening', 'Monitor — moderate spillage trending worse', null, 90
     union all select 'demo_spill_steady',      'FIXTURE_WH_IDLE',     'local_moderate_stable', 'Monitor — moderate spillage (stable)', null, 66
     union all select 'demo_spill_minor',       'FIXTURE_WH_HEALTHY',  'local_minor', 'Stable — minor spillage', null, 15
