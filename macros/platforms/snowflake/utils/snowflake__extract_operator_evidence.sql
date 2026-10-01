@@ -208,7 +208,10 @@
                       from {{ table_columns_ref }}
                       where table_fqn = '{{ table_fqn }}'
                   ) as cols
-                  where ops.condition_text ilike '%' || cols.column_name || '%'
+                  -- Whole column names only: ID must not match ORDER_ID, DATE not ORDERED_DATE
+                  -- (regexp_instr searches within the text; regexp_like would need a full match)
+                  where regexp_instr(ops.condition_text,
+                                     '(^|[^A-Z0-9_$])' || cols.column_name || '([^A-Z0-9_$]|$)', 1, 1, 0, 'is') > 0
               ) as source
               on target.operator_evidence_key = source.operator_evidence_key
               when not matched then insert

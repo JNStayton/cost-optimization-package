@@ -93,8 +93,22 @@ table_columns as (
         and cc.distinct_values < cc.total_rows * 0.5
 ),
 
+scanned_queries as (
+    -- Queries that scan the candidate table itself (a TableScan of it in the evidence).
+    -- Filter/Join evidence only counts from these, the same queries as
+    -- total_queries_analyzed below, so a column's filter share can't exceed 1.
+    -- The hook also analyzes queries on the candidate's child models: a child view is
+    -- expanded into a TableScan of the candidate (its filters push down) and counts; a
+    -- child table is never scanned through, so its filters can't benefit from clustering
+    -- the candidate and don't count.
+    select distinct table_fqn, query_id
+    from {{ ref('int_snowflake__query_operator_evidence') }}
+    where operator_type = 'TableScan'
+      and access_date >= dateadd(day, -{{ lookback_days }}, current_date())
+),
+
 column_usage as (
-    -- Filter/Join evidence from consumption queries only
+    -- Filter/Join evidence from consumption queries that scan the candidate
     select
         oe.table_fqn,
         oe.column_name,
@@ -103,6 +117,9 @@ column_usage as (
     from {{ ref('int_snowflake__query_operator_evidence') }} as oe
     inner join {{ ref('int_snowflake__query_workload_class') }} as wc
         on oe.query_id = wc.query_id
+    inner join scanned_queries as sq
+        on sq.table_fqn = oe.table_fqn
+        and sq.query_id = oe.query_id
     where wc.workload_class = 'consumption'
       and oe.operator_type in ('Filter', 'Join')
       and oe.access_date >= dateadd(day, -{{ lookback_days }}, current_date())
@@ -119,6 +136,9 @@ column_usage as (
     from {{ ref('int_snowflake__query_operator_evidence') }} as oe
     inner join {{ ref('int_snowflake__query_workload_class') }} as wc
         on oe.query_id = wc.query_id
+    inner join scanned_queries as sq
+        on sq.table_fqn = oe.table_fqn
+        and sq.query_id = oe.query_id
     inner join {{ ref('int_snowflake__table_columns') }} as tc
         on oe.table_fqn = tc.table_fqn
         and oe.column_name = tc.column_name

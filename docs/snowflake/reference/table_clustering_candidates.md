@@ -78,7 +78,7 @@ fct_snowflake__table_clustering_candidates (identifies WHICH tables)
         └─ applies: 33% proportion gate (column must appear in >= 33% of consumption queries)
 ```
 
-**Downstream children expansion:** The extract macro doesn't only look at queries that directly accessed the candidate table — it also finds queries against the candidate's direct child models (from `int_dbt__relations.parent_models`). This captures filter evidence from analyst queries hitting downstream marts that read from the candidate.
+**Downstream children expansion:** The extract macro doesn't only look at queries that directly accessed the candidate table — it also finds queries against the candidate's direct child models (from `int_dbt__relations.parent_models`). Their filter evidence counts only when the query actually scans the candidate: a child **view** is expanded into a TableScan of the candidate (its filters push down to the candidate's scan), so it counts; a child **table** is never scanned through, so filtering it can't benefit from clustering the candidate, and it doesn't count. Filter and join conditions are matched to the candidate's columns by whole name, so `ID` doesn't match `ORDER_ID`.
 
 **Proportion gating:** A column is only recommended as a clustering key if it appears in Filter operators in >= 33% of the analyzed consumption queries. Join-only columns are excluded entirely - filter usage is the admission ticket, join usage is the scoring bonus.
 
