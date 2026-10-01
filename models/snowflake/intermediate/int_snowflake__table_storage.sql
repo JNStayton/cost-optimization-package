@@ -7,6 +7,7 @@ select
     failsafe_bytes,
     coalesce(deleted, false) as is_deleted
 from {{ ref('stg_snowflake__table_storage_metrics') }}
+where coalesce(deleted, false) = false
 qualify row_number() over (
     partition by table_catalog, table_schema, table_name
     order by id desc
