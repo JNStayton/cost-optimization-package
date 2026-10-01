@@ -67,6 +67,7 @@ expected as (
     union all select 'warehouse', 'spillage_moderate_worsening', 'demo_spill_worsening',   'monitor',    0.23
     union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_steady',      'monitor',    0.02
     union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_minor',       'stable',     0.00
+    union all select 'warehouse', 'spillage_moderate_stable',    'demo_chain_table',       'monitor',    0.01
 {%- endif %}
 )
 

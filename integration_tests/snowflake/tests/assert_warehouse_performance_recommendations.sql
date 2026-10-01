@@ -1,7 +1,7 @@
 {#-
   fct_snowflake__warehouse_performance_recommendations: per-table spillage tiers.
   It needs table-level attribution (ACCESS_HISTORY), so on Standard edition it must
-  return no rows. On Enterprise edition, the six spilling demo tables (fixture query
+  return no rows. On Enterprise edition, the seven spilling demo tables (fixture query
   history) get one tier each:
     - DEMO_SPILL_REMOTE      (IDLE, Small):     2 GB remote spill      → scale up to Medium
     - DEMO_SPILL_HEAVY_SMALL (COLD, Small):     60 GB local            → scale up to Medium
@@ -9,6 +9,7 @@
     - DEMO_SPILL_WORSENING   (IDLE):            49 GB local, recent    → monitor, trending worse
     - DEMO_SPILL_STEADY      (IDLE):            2 GB 20 days ago + 2 GB 5 days ago → monitor, stable
     - DEMO_SPILL_MINOR       (HEALTHY):         0.5 GB                 → stable, minor
+    - DEMO_CHAIN_TABLE       (HEALTHY):         3 GB 20 days ago       → monitor, stable (view chain slice)
   Returns rows only on mismatch.
 -#}
 with produced as (
@@ -28,6 +29,7 @@ expected as (
     union all select 'demo_spill_worsening',   'FIXTURE_WH_IDLE',     'local_moderate_worsening', 'Monitor — moderate spillage trending worse', null
     union all select 'demo_spill_steady',      'FIXTURE_WH_IDLE',     'local_moderate_stable', 'Monitor — moderate spillage (stable)', null
     union all select 'demo_spill_minor',       'FIXTURE_WH_HEALTHY',  'local_minor', 'Stable — minor spillage', null
+    union all select 'demo_chain_table',       'FIXTURE_WH_HEALTHY',  'local_moderate_stable', 'Monitor — moderate spillage (stable)', null
 {%- else %}
     select null::varchar as table_name, null::varchar as warehouse_name, null::varchar as recommendation_key,
            null::varchar as recommendation,

@@ -35,5 +35,7 @@
      'columns': [('ID', 'NUMBER')]},
     {'name': 'DEMO_SPILL_MINOR', 'id': 900013, 'size_gb': 1, 'row_count': 1000,
      'columns': [('ID', 'NUMBER')]},
+    {'name': 'DEMO_CHAIN_TABLE', 'id': 900014, 'size_gb': 1, 'row_count': 100000,
+     'columns': [('BUCKET', 'NUMBER'), ('AMOUNT', 'NUMBER'), ('EVENTS', 'NUMBER')]},
   ]) }}
 {% endmacro %}

@@ -267,6 +267,9 @@ select
   edition): dbt builds of six demo tables that spill, 60 s each, tagged with the model's
   node_id but run from a non-dbt session so they don't change the warehouse, expensive
   query or user attribution results. Spill is in GB (local, remote), days ago.
+  demo_chain_table (the view chain slice's table) spills moderately 20 days ago: outside
+  the materialization lookback (14 days), so the chain views' build counts don't change,
+  and its view chain shows in the spillage views and cross-domain insights.
 -#}
 {%- set gb = 1073741824 %}
 {%- set spill_builds = [
@@ -277,6 +280,7 @@ select
     ('demo_spill_heavy_small', 'FIXTURE_WH_COLD',     2,  60,  0),
     ('demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 2,  60,  0),
     ('demo_spill_minor',       'FIXTURE_WH_HEALTHY',  2,  0.5, 0),
+    ('demo_chain_table',       'FIXTURE_WH_HEALTHY',  20, 3,   0),
 ] %}
 {% for tbl, wh, days_ago, local_gb, remote_gb in spill_builds %}
 union all

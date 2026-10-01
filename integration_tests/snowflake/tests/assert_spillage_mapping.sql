@@ -25,6 +25,7 @@ expected as (
     union all select 'demo_spill_worsening',   'spillage_moderate_worsening', 'investigation'
     union all select 'demo_spill_steady',      'spillage_moderate_stable',    'investigation'
     union all select 'demo_spill_minor',       'spillage_moderate_stable',    'config_change'
+    union all select 'demo_chain_table',       'spillage_moderate_stable',    'investigation'
 {%- else %}
     select null::varchar as table_name, null::varchar as signal_id, null::varchar as effort_category
     where false

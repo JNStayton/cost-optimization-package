@@ -22,7 +22,7 @@ expected as (
            100 as estimated_micropartitions
 {%- for t in ['demo_orders', 'demo_sessions', 'demo_logs', 'demo_fast_growth', 'demo_new_table', 'demo_infrequent_builds',
               'demo_spill_remote', 'demo_spill_worsening', 'demo_spill_steady', 'demo_spill_heavy_small',
-              'demo_spill_heavy_large', 'demo_spill_minor'] %}
+              'demo_spill_heavy_large', 'demo_spill_minor', 'demo_chain_table'] %}
     union all select '{{ t }}', false, 'No read activity', 'insufficient_evidence', 0, 0, null, null
 {%- endfor %}
 )
