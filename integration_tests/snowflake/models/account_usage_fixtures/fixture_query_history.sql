@@ -137,13 +137,18 @@ select
 {%- set fqn = target.database ~ '.' ~ target.schema ~ '.' ~ b.table %}
 {%- for n in range(b.days) %}
 {%- set rows = (1000 * 3 ** n) if b.growth == 'triple' else (1000000 + 5000 * n) %}
+{#- Target names in the dbt comment, for relation history: demo_orders is built under
+    both 'default' and 'dev' into the same schema (one deployment, two targets, as a dbt
+    platform Studio session records); demo_logs only under 'dev'. -#}
+{%- set target_json = ', "target_name": "' ~ ('dev' if n % 2 == 1 else 'default') ~ '"' if b.table == 'demo_orders'
+                      else (', "target_name": "dev"' if b.table == 'demo_logs' else '') %}
 union all
 select
     'build_{{ b.table }}_{{ n }}', dateadd(hour, -1, dateadd(day, -{{ b.days - n }}, current_timestamp())),
     'hash_build_{{ b.table }}', 'phash_build_{{ b.table }}',
     'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 400000, 1073741824, 100, 0, 0,
     'CREATE_TABLE_AS_SELECT', 400000, 100, 100, 0, 0,
-    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ b.table }}"} */ '
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ b.table }}"{{ target_json }}} */ '
         || 'create or replace transient table {{ fqn }} as (select * from upstream)', 110, 'SUCCESS', {{ rows }}
 {%- endfor %}
 {%- endfor %}
@@ -218,5 +223,22 @@ select
     '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ tbl }}"} */ '
         || 'create or replace transient table {{ target.database }}.{{ target.schema }}.{{ tbl }} as (select 1 as id)',
     1, 'SUCCESS', 1000
+{%- endfor %}
+{#-
+  Relation history: a second deployment of demo_orders, in <schema>_deploy under target
+  'prod' with a dbt platform environment id. Run from a non-dbt session so it only
+  feeds relation history (not the warehouse, expensive query or user attribution
+  results).
+-#}
+{% for n in range(3) %}
+union all
+select
+    'deploy_demo_orders_{{ n }}', dateadd(hour, -(8 + {{ n }} * 24), current_timestamp()),
+    'hash_deploy_orders', 'phash_deploy_orders',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 400000, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', 400000, 1, 1, 0, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.demo_orders", "target_name": "prod", "dbt_cloud_environment_id": "12345"} */ '
+        || 'create or replace transient table {{ target.database }}.{{ target.schema }}_deploy.demo_orders as (select * from upstream)',
+    1, 'SUCCESS', 1000000
 {%- endfor %}
 
