@@ -4,6 +4,9 @@
   one, and omits the rarely queried one. demo_slow_view feeds demo_slow_view_rollup: 10 of
   its dbt builds count (the same-named non-dbt table elsewhere doesn't), and dbt created
   the view 4 times. The quiet view feeds nothing and has no builds (minimum 1).
+  View chain slice: both chain views get demo_chain_table's 10 builds (every table
+  downstream counts, not only the one each feeds directly), and dbt created each twice.
+  The ephemeral demo_chain_step is never a candidate.
   Returns rows only on mismatch.
 -#}
 with produced as (
@@ -16,6 +19,8 @@ expected as (
     select 'demo_slow_view' as model_name, 'Materialize as TABLE' as recommendation, 60 as select_count,
            10 as downstream_build_count, 4 as view_build_runs
     union all select 'demo_quiet_view', 'Monitor', 15, 0, 1
+    union all select 'demo_chain_base_view', 'Materialize as TABLE', 200, 10, 2
+    union all select 'demo_chain_mid_view',  'Materialize as TABLE', 150, 10, 2
 )
 
 select

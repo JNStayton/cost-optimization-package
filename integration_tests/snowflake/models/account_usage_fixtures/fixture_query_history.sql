@@ -218,6 +218,51 @@ select
     110, 'SUCCESS', 0
 {%- endfor %}
 {#-
+  View chain cases (phase F2): demo_chain_base_view → demo_chain_mid_view →
+  demo_chain_step (ephemeral) → demo_chain_table.
+    - 200 reads of the base view and 150 of the mid view (fake, 1 s each; the view probe
+      measures their real recompute time).
+    - 10 dbt CTAS builds of demo_chain_table, each recomputing both views.
+    - 2 dbt CREATE VIEW runs of each view.
+  Builds run from a non-dbt session, so they don't change the user attribution results.
+  Both views get the table's 10 builds. They're alternatives: one is recommended, the
+  other is a monitor-status alternative naming it. The ephemeral is never a candidate.
+-#}
+{%- set chain_table_fqn = target.database ~ '.' ~ target.schema ~ '.demo_chain_table' %}
+{%- set chain_reads = [('demo_chain_base_view', 200), ('demo_chain_mid_view', 150)] %}
+{% for v, n_reads in chain_reads %}
+union all
+select
+    '{{ v }}_q' || seq4(), dateadd(minute, -(seq4() + 30), current_timestamp()),
+    'hash_{{ v }}', 'phash_{{ v }}',
+    'FIXTURE_ANALYST', 'FIXTURE_REPORTER', 'FIXTURE_WH', 'X-Small', 1000, 1048576, 100, 0, 0,
+    'SELECT', 1000, 10, 10, 0, 0,
+    'select * from {{ target.database }}.{{ target.schema }}.{{ v }}', 1, 'SUCCESS', 0
+from table(generator(rowcount => {{ n_reads }}))
+{% for n in range(2) %}
+union all
+select
+    '{{ v }}_create_{{ n }}', dateadd(hour, -(4 + {{ n }} * 48), current_timestamp()),
+    'hash_{{ v }}_create', 'phash_{{ v }}_create',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 500, 0, 100, 0, 0,
+    'CREATE_VIEW', 500, 0, 0, 0, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ v }}"} */ '
+        || 'create or replace view {{ target.database }}.{{ target.schema }}.{{ v }} as (select 1 as id)',
+    1, 'SUCCESS', 0
+{%- endfor %}
+{%- endfor %}
+{% for n in range(10) %}
+union all
+select
+    'chain_table_build_{{ n }}', dateadd(hour, -(9 + {{ n }} * 24), current_timestamp()),
+    'hash_chain_table_build', 'phash_chain_table_build',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BUILD', 'X-Small', 30000, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', 30000, 1, 1, 0, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.demo_chain_table"} */ '
+        || 'create or replace transient table {{ chain_table_fqn }} as (select * from upstream)',
+    1, 'SUCCESS', 100000
+{%- endfor %}
+{#-
   Spillage cases (fct_snowflake__warehouse_performance_recommendations, Enterprise
   edition): dbt builds of six demo tables that spill, 60 s each, tagged with the model's
   node_id but run from a non-dbt session so they don't change the warehouse, expensive

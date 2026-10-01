@@ -19,6 +19,10 @@
       demo_slow_view: (60 reads + 10 rollup builds - 4 view builds) x 45 s / 3600 x 365/14
       x $2 = $43.02. DEMO_EVENTS: its filter share is 10 of 10 analyzed queries, not 10 of
       20 reads.
+    - View chain: demo_chain_base_view and demo_chain_mid_view are alternatives; the one
+      recommended is actionable, the other monitor (assert_view_chain_selection checks
+      which). Their savings come from real probe times, so only their status is compared
+      here, by role.
   Entities are compared by their last name part (table or warehouse name, or query hash).
   Returns rows only on mismatch.
 -#}
@@ -26,9 +30,16 @@
 {%- set busy_signal = 'overload_enable_mcw' if var('snowflake_enterprise_edition', true) else 'overload_scale_up_standard' %}
 {%- set busy_2xl_signal = busy_signal %}
 with produced as (
-    select domain, signal_id, lower(split_part(entity_name, '.', -1)) as entity, backlog_status,
-           round(estimated_annual_savings_usd, 2) as savings
-    from {{ ref('int_snowflake__all_recommendations') }}
+    select ar.domain, ar.signal_id,
+           -- Chain views by role (the probe decides which view wins)
+           coalesce('chain_' || tm.chain_role, lower(split_part(ar.entity_name, '.', -1))) as entity,
+           ar.backlog_status,
+           iff(tm.chain_role is not null, null, round(ar.estimated_annual_savings_usd, 2)) as savings
+    from {{ ref('int_snowflake__all_recommendations') }} as ar
+    left join {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
+        on tm.table_fqn = ar.table_fqn
+       and ar.signal_id = 'materialize_as_table'
+       and startswith(lower(tm.model_name), 'demo_chain_')
 ),
 
 expected as (
@@ -38,6 +49,8 @@ expected as (
     union all select 'materialization', 'apply_incremental_append',   'demo_logs',               'actionable',  37.13
     union all select 'materialization', 'apply_incremental_merge',    'demo_sessions',           'monitor',     18.57
     union all select 'materialization', 'materialize_as_table',       'demo_slow_view',          'actionable',  43.02
+    union all select 'materialization', 'materialize_as_table',       'chain_recommended',       'actionable',  null
+    union all select 'materialization', 'materialize_as_table',       'chain_alternative',       'monitor',     null
     union all select 'warehouse',       '{{ busy_signal }}', 'fixture_wh_busy',         'actionable', 144.00
     union all select 'warehouse',       'expensive_query_actionable', 'hash_fixture_wh_busy',    'actionable', 277.40
     union all select 'warehouse',       'expensive_query_monitor',    'hash_fixture_wh_healthy', 'monitor',     27.74

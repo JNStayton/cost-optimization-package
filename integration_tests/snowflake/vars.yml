@@ -16,3 +16,9 @@ vars:
   # Clustering slice: analyze 10 of DEMO_EVENTS' 20 reads, so the clustering savings'
   # filter share must use the analyzed count (10), not all reads (20).
   clustering_key_operator_queries_per_table: 10
+
+  # View chain slice: probe only the two chain views (the deepest chain comes first), so
+  # demo_slow_view keeps its read-duration cost and fixed expectations. Re-probe every
+  # run, so the incremental run probes the same two views.
+  table_materialization_view_probe_limit: 2
+  table_materialization_view_probe_refresh_days: 0
