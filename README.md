@@ -160,6 +160,8 @@ Every package mart also has the `dbt_cost_optimization` tag.
 
 Graph-dependent recommendations require the dbt project graph. Warehouse and expensive query signals use Snowflake query_history, which provides account-wide visibility scoped to warehouses the project uses.
 
+To leave dev deployments out of the Snowflake recommendations, set `dbt_excluded_schemas` (schema patterns, e.g. `['DBT_%']`) or `dbt_excluded_targets` (e.g. `['dev']`) in your `vars.yml`. By default nothing is excluded.
+
 On Databricks, BigQuery, and Redshift, recommendations are scoped to your project's dbt models by default. See each platform's docs for the scope settings.
 
 ## Visualize your results

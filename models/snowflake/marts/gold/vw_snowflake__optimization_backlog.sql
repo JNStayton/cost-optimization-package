@@ -19,6 +19,7 @@ with env_counts as (
         array_agg(distinct dbt_cloud_environment_id) as environment_ids
     from {{ ref('int_snowflake__dbt_relation_history') }}
     where node_id is not null
+      and not coalesce(is_excluded, false)
     group by node_id
 ),
 

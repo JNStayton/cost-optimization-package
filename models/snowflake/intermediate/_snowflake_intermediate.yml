@@ -323,7 +323,11 @@ models:
       Cross-environment dbt model discovery. Parses the dbt query comment JSON from
       QUERY_HISTORY to map each logical dbt model (node_id) to every physical FQN
       where it has been materialized across environments (dev, staging, prod).
-      Grain: (node_id, table_fqn). Enables recommendation deduplication across environments.
+      Grain: one row per physical table (table_fqn). A table built under several
+      target names is one row: target_name is the latest build's, and target_names /
+      dbt_cloud_environment_ids list all of them. is_excluded applies the
+      dbt_excluded_schemas / dbt_excluded_targets vars. Rebuilt as a table each run
+      over dbt_relation_history_lookback_days.
 
   # ===========================================================================
   # int_snowflake__all_recommendations

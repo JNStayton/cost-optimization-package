@@ -674,6 +674,11 @@ enriched as (
     ) as wh_project
         on wh_project.warehouse_name = ar.warehouse_name
         and ar.dbt_model is null
+    -- Leave out deployments excluded by dbt_excluded_targets / dbt_excluded_schemas
+    -- (int_snowflake__dbt_relation_history.is_excluded), and tables in excluded schemas
+    -- that relation history doesn't know. Warehouse-level rows have no table and stay.
+    where not coalesce(rh.is_excluded, false)
+      and not {{ relation_is_excluded("split_part(ar.table_fqn, '.', 2)", 'null') }}
 ),
 
 -- =========================================================================

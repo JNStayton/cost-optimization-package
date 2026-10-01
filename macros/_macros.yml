@@ -288,6 +288,20 @@ macros:
       available.
       Implemented for: snowflake, bigquery.
 
+  - name: relation_is_excluded
+    description: >
+      Returns a SQL boolean expression: true when a relation is excluded from
+      recommendations by dbt_excluded_schemas (schema LIKE patterns) or
+      dbt_excluded_targets (excluded only when every target the relation was built
+      under is excluded). Both vars default to [], which excludes nothing. Used by
+      int_snowflake__dbt_relation_history and int_snowflake__all_recommendations.
+      Implemented for: snowflake.
+    arguments:
+      - name: schema_expr
+        description: "SQL expression for the relation's schema name"
+      - name: target_names_expr
+        description: "SQL expression for an array of target names, or 'null' to check schemas only"
+
   - name: next_warehouse_size
     description: >
       Returns a SQL CASE expression that maps a warehouse size column to the next

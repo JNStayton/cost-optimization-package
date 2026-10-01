@@ -144,6 +144,8 @@ vars:
   # --- Scope & monitoring (snowflake) ---
   dbt_monitored_projects: []  # Default: [project_name]. List projects to monitor, or ['*'] for all dbt projects in the account.
   include_full_platform_insights: false  # Show account-wide non-dbt signals (all warehouses, CoCo, Intelligence, untracked users)
+  dbt_excluded_targets: []  # Snowflake: target names to leave out of recommendations, e.g. ['dev']. A table is left out only when every target it was built under is excluded.
+  dbt_excluded_schemas: []  # Snowflake: schema name patterns (LIKE, case-insensitive) to leave out of recommendations, e.g. ['DBT_%'] for personal dev schemas.
 
   # --- Cross-environment model discovery (snowflake) ---
   dbt_relation_history_lookback_days: 90  # How far back to scan query_history for dbt builds

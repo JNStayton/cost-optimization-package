@@ -1,9 +1,6 @@
 {{
   config(
-    materialized='incremental',
-    incremental_strategy='merge',
-    unique_key=['node_id', 'table_fqn', 'target_name'],
-    on_schema_change='append_new_columns',
+    materialized='table',
   )
 }}
 
@@ -17,7 +14,19 @@
   materialized. Enables cross-environment recommendation deduplication and
   identification of models that exist in non-prod but haven't reached prod yet.
 
-  Grain: one row per (node_id, table_fqn, target_name)
+  Grain: one row per physical relation (table_fqn). A table built under several target
+  names (e.g. a dbt platform Studio session that appears as both 'default' and 'dev')
+  is one deployment, not several: target_name is the latest build's target, and
+  target_names / dbt_cloud_environment_ids list every one seen. Keeping one row per
+  table keeps every join on table_fqn one-to-one, so recommendations aren't multiplied.
+
+  Rebuilt as a table on every run from stg_snowflake__query_history (which keeps the
+  history), over dbt_relation_history_lookback_days. An incremental merge would
+  overwrite first_built_at, build_count and the lists with only the re-scanned window.
+
+  is_excluded: the dbt_excluded_schemas / dbt_excluded_targets vars (see
+  relation_is_excluded). Excluded deployments are left out of recommendations and
+  environment counts.
 --#}
 
 {% set lookback_days = var('dbt_relation_history_lookback_days', 90) %}
@@ -42,11 +51,7 @@ with dbt_build_queries as (
     from {{ ref('stg_snowflake__query_history') }}
     where dbt_node_id is not null
       and query_type in ('CREATE_TABLE_AS_SELECT', 'CREATE_VIEW', 'INSERT', 'MERGE')
-      {% if is_incremental() %}
-        and start_time >= (select dateadd(day, -{{ var('incremental_overlap_days', 31) }}, max(last_built_at)) from {{ this }})
-      {% else %}
-        and start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
-      {% endif %}
+      and start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
 ),
 
 parsed as (
@@ -77,23 +82,23 @@ parsed as (
 
 aggregated as (
     select
-        node_id,
         table_fqn,
-        project_name,
-        model_name,
-        target_name,
+        max_by(node_id, start_time) as node_id,
+        max_by(project_name, start_time) as project_name,
+        max_by(model_name, start_time) as model_name,
+        max_by(target_name, start_time) as target_name,
+        array_agg(distinct target_name) within group (order by target_name) as target_names,
         split_part(table_fqn, '.', 1) as database_name,
         split_part(table_fqn, '.', 2) as schema_name,
         split_part(table_fqn, '.', 3) as table_name,
         max(dbt_cloud_environment_id) as dbt_cloud_environment_id,
+        array_agg(distinct dbt_cloud_environment_id) within group (order by dbt_cloud_environment_id)
+            as dbt_cloud_environment_ids,
         min(start_time) as first_built_at,
         max(start_time) as last_built_at,
         count(*) as build_count
     from parsed
-    group by node_id, table_fqn, project_name, model_name, target_name,
-             split_part(table_fqn, '.', 1),
-             split_part(table_fqn, '.', 2),
-             split_part(table_fqn, '.', 3)
+    group by table_fqn
 )
 
 select
@@ -102,10 +107,12 @@ select
     a.project_name,
     a.model_name,
     a.target_name,
+    a.target_names,
     a.database_name,
     a.schema_name,
     a.table_name,
     a.dbt_cloud_environment_id,
+    a.dbt_cloud_environment_ids,
     a.first_built_at,
     a.last_built_at,
     a.build_count,
@@ -113,7 +120,8 @@ select
     case
         when dr.table_fqn is not null then true
         else false
-    end as is_current_target
+    end as is_current_target,
+    {{ relation_is_excluded('a.schema_name', 'a.target_names') }} as is_excluded
 from aggregated as a
 left join {{ ref('int_dbt__relations') }} as dr
     on a.table_fqn = dr.table_fqn

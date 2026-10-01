@@ -327,7 +327,9 @@ select
     rh.node_id,
     rh.target_name,
     rh.project_name as node_project_name,
-    (select count(*) from {{ ref('int_snowflake__dbt_relation_history') }} rh2 where rh2.node_id = rh.node_id) as environment_count
+    -- Deployments of the model: distinct physical tables, excluding excluded ones
+    (select count(distinct rh2.table_fqn) from {{ ref('int_snowflake__dbt_relation_history') }} rh2
+     where rh2.node_id = rh.node_id and not coalesce(rh2.is_excluded, false)) as environment_count
 from final as f
 left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
     on rh.table_fqn = f.table_fqn

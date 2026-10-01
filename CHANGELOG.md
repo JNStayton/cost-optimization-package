@@ -35,6 +35,8 @@ First public release: one package with a shared design across Snowflake, Databri
 - Cost and savings estimates at Snowflake's published credits-per-hour rate for each model's own warehouse (X-Small when unknown), annualized over each domain's lookback window. User cost attribution uses `ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY` credits where available, with elapsed time × list rate as the fallback, and flags which (`credits_from_attribution`).
 - A [dbt-charts](https://github.com/dbt-labs/dbt-charts) dashboard over the gold views, in `integrations/dbt_charts/`.
 - A data test that warns when any recommendation's estimated savings exceed its estimated cost, as a check on the cost formulas against your real data.
+- `dbt_excluded_schemas` and `dbt_excluded_targets` leave dev deployments out of recommendations. Nothing is excluded by default.
+- Environment counts are per deployment (physical table): a table built under several target names counts once, and recommendations aren't repeated for it.
 - Tolerates non-dbt query traffic: query comments and session metadata that aren't valid JSON are treated as non-dbt activity instead of failing the build.
 - Clustering operator evidence skips queries on warehouses the package's role can't monitor, instead of failing the build, and logs a per-table coverage summary. Grant `MONITOR` on those warehouses for full coverage (see the Snowflake permissions docs).
 
