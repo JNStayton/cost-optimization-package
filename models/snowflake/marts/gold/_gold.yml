@@ -113,6 +113,17 @@ models:
         description: Confidence in the incremental recommendation (0-100; NULL if no strategy proposed)
       - name: incremental_blocking_signals
         description: Array of factors reducing confidence (e.g., low_build_frequency, key_not_exact_or_nullable)
+      - name: chain_role
+        description: >
+          materialize_as_table only: 'recommended' (the view to materialize in its chain)
+          or 'standalone'. Alternatives in the same chain are monitor status, so they
+          don't appear in this view.
+      - name: chosen_view_for_chain
+        description: materialize_as_table only. The recommended view's FQN (this row's own for a recommended view).
+      - name: recompute_cost_s
+        description: materialize_as_table only. Seconds per run of the view's query, which its cost and savings are priced from.
+      - name: recompute_cost_source
+        description: materialize_as_table only. 'probe' (measured by the view probe) or 'reads' (average read duration).
       - name: environment_ids
         description: Array of dbt_cloud_environment_ids where this model exists
       - name: signal_id

@@ -448,10 +448,11 @@ models:
 
       - name: downstream_build_count
         description: >
-          Builds, in the lookback window, of the tables this view feeds directly (no view in
-          between): CTAS and MERGE statements tagged with the downstream model's node_id.
-          Each one re-runs this view's query. Views further up a chain get no credit here,
-          since materializing the view nearest the table also removes their recompute.
+          Builds, in the lookback window, of every table downstream of this view through
+          views and ephemerals only (int_snowflake__view_chain_pairs): CTAS and MERGE
+          statements tagged with the downstream model's node_id. Each one recomputes this
+          view's query inline. Every view in a chain gets the same builds; the views are
+          alternatives, and chain_role says which one is recommended.
           Known edges: an incremental model merged through a temporary table counts twice
           per run; one appended through a temporary view counts zero.
 
@@ -460,6 +461,43 @@ models:
           How many times dbt (re)created this view in the lookback window (CREATE_VIEW
           statements tagged with its node_id), minimum 1. After materializing, each run
           becomes a table build, so these are subtracted from the savings.
+
+      - name: recompute_cost_s
+        description: >
+          Seconds one run of this view's query takes: the view probe's measured execution
+          time (int_snowflake__view_probe) when there is one, else the average read
+          duration. Null when the view has neither. Cost and savings are priced from it.
+
+      - name: recompute_cost_source
+        description: >
+          Where recompute_cost_s comes from: 'probe' (measured by select hash_agg(*) from
+          the view) or 'reads' (average duration of SELECTs on the view). Null when
+          neither is available.
+
+      - name: net_recompute_s_saved
+        description: >
+          Seconds of recompute removed per lookback window by materializing:
+          (select_count + downstream_build_count - view_build_runs, minimum 0) x
+          recompute_cost_s. Ranks the views in a chain; int_snowflake__all_recommendations
+          prices it.
+
+      - name: chain_role
+        description: >
+          'recommended' when this view has the highest net_recompute_s_saved among the
+          candidate views feeding some table (ties go to the view nearest the table);
+          'alternative' when another view in its chain is recommended instead (its gold
+          status is monitor, so savings aren't counted twice); 'standalone' when it isn't
+          competing in a chain.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['recommended', 'alternative', 'standalone']
+
+      - name: chosen_view_for_chain
+        description: >
+          The recommended view's FQN: this view's own for 'recommended', the view chosen
+          instead for 'alternative' (for the table nearest this view), null for
+          'standalone'.
 
       - name: attribution_method
         description: Highest-confidence query-text match pattern observed for this view.

@@ -301,9 +301,38 @@ models:
   # ===========================================================================
   - name: int_snowflake__view_chains
     description: >
-      Recursive CTE that walks the dbt DAG from each view/ephemeral model through
-      its children until reaching a materialized table. Provides downstream_table_count,
-      min_hops_to_table, downstream_table_fqns, and direct_downstream_table_fqns (tables fed with no view in between) for view chain impact scoring and downstream-build savings.
+      One row per view or ephemeral that feeds at least one table through views and
+      ephemerals only, aggregated from int_snowflake__view_chain_pairs:
+      downstream_table_count, downstream_table_fqns, and min_hops_to_table, for view
+      chain impact scoring.
+
+  # ===========================================================================
+  # int_snowflake__view_chain_pairs
+  # ===========================================================================
+  - name: int_snowflake__view_chain_pairs
+    description: >
+      Recursive walk of the dbt DAG from each view or ephemeral through its view and
+      ephemeral children until reaching a table. Grain: one row per (upstream view or
+      ephemeral, downstream table) with no table in between. Every build of the table
+      recomputes the upstream model's SQL inline. path_length is the fewest hops
+      (1 = feeds the table directly). Credits downstream builds to every view in a
+      chain, and drives the view probe and the one-view-per-chain choice.
+
+  # ===========================================================================
+  # int_snowflake__view_probe
+  # ===========================================================================
+  - name: int_snowflake__view_probe
+    description: >
+      Measured recompute cost of views in view chains, one row per view (the latest
+      probe). Written by the probe_view_recompute post-hook on this model, which runs
+      select hash_agg(*) from the view with the result cache off: hash_agg(*) forces
+      every column to be computed. Up to table_materialization_view_probe_limit views
+      per run (default 10; 0 turns it off), deepest chains first, re-probed after
+      table_materialization_view_probe_refresh_days (default 7). Skips this package's
+      views, views outside dbt_monitored_projects, and schemas in
+      dbt_excluded_schemas. A probe that fails (dropped view, no SELECT privilege) is
+      recorded with probe_status 'failed' instead of failing the build. The time is
+      measured on the warehouse running the package (warehouse_name, warehouse_size).
 
   # ===========================================================================
   # int_snowflake__direct_object_access

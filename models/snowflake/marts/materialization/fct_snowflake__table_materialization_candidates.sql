@@ -40,7 +40,8 @@ with view_candidates as (
         package_name,
         materialized
     from {{ ref('int_dbt__relations') }}
-    where lower(materialized) in ('view', 'ephemeral')
+    -- Views only: an ephemeral has no relation to read, build, or materialize on its own.
+    where lower(materialized) = 'view'
 ),
 
 {% if var('snowflake_enterprise_edition', true) %}
@@ -55,17 +56,22 @@ matched_queries as (
         vc.model_name,
         vc.package_name,
         vc.materialized,
-        doa.query_id,
-        qh.execution_time_ms,
-        coalesce(qh.bytes_scanned, 0) as bytes_scanned,
-        'high' as attribution_confidence
+        reads.query_id,
+        reads.execution_time_ms,
+        coalesce(reads.bytes_scanned, 0) as bytes_scanned,
+        iff(reads.query_id is not null, 'high', null) as attribution_confidence
     from view_candidates as vc
-    inner join {{ ref('int_snowflake__direct_object_access') }} as doa
-        on doa.table_fqn = vc.table_fqn
-        and doa.query_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
-    inner join {{ ref('int_snowflake__query_history') }} as qh
-        on qh.query_id = doa.query_id
-        and qh.query_type = 'SELECT'
+    -- Left join: a view in a chain is a candidate even when nothing reads it directly,
+    -- since every downstream table build recomputes it (as on Standard edition).
+    left join (
+        select doa.table_fqn, doa.query_id, qh.execution_time_ms, qh.bytes_scanned
+        from {{ ref('int_snowflake__direct_object_access') }} as doa
+        inner join {{ ref('int_snowflake__query_history') }} as qh
+            on qh.query_id = doa.query_id
+            and qh.query_type = 'SELECT'
+        where doa.query_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    ) as reads
+        on reads.table_fqn = vc.table_fqn
 ),
 {% else %}
 -- Standard edition fallback: ILIKE text-matching against query_text
@@ -183,23 +189,21 @@ downstream_build_stats as (
 ),
 
 downstream_builds as (
-    -- Builds, in the lookback window, of the tables this view feeds directly. Each one
-    -- re-runs the view's query. Counted by the downstream model's node_id in dbt's query
-    -- comment: CTAS and MERGE statements, the ones that evaluate the model's SQL (dbt's
-    -- INSERT normally reads from a __dbt_tmp relation). Views further up a chain get no
-    -- credit: materializing the view nearest the table also removes their recompute.
+    -- Builds, in the lookback window, of every table downstream of this view through
+    -- views and ephemerals. Each one recomputes the view's query inline. Counted by the
+    -- downstream model's node_id in dbt's query comment: CTAS and MERGE statements, the
+    -- ones that evaluate the model's SQL (dbt's INSERT normally reads from a __dbt_tmp
+    -- relation). Every view in a chain is credited with the same builds; the views are
+    -- alternatives to each other, and chain_selection below recommends one of them.
     select
-        vc.model_fqn,
+        p.upstream_fqn              as model_fqn,
         count(distinct qh.query_id) as downstream_build_count
-    from {{ ref('int_snowflake__view_chains') }} as vc,
-        lateral flatten(input => vc.direct_downstream_table_fqns) as ds
-    inner join {{ ref('int_dbt__relations') }} as dr
-        on upper(dr.table_fqn) = upper(ds.value::string)
+    from {{ ref('int_snowflake__view_chain_pairs') }} as p
     inner join {{ ref('int_snowflake__query_history') }} as qh
-        on qh.dbt_node_id = dr.dbt_model
+        on qh.dbt_node_id = p.table_dbt_model
        and qh.query_type in ('CREATE_TABLE_AS_SELECT', 'MERGE')
        and qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_timestamp())
-    group by vc.model_fqn
+    group by p.upstream_fqn
 ),
 
 view_builds as (
@@ -310,6 +314,114 @@ final as (
         on vb.dbt_node_id = cs.dbt_model
     where coalesce(cs.select_count, 0) >= {{ min_query_count }}
        or coalesce(cs.is_in_view_chain, false)
+),
+
+costed as (
+    -- Recompute cost: the view probe's measured execution time when there is one
+    -- (int_snowflake__view_probe), else the average read duration.
+    select
+        f.*,
+        case
+            when pr.view_fqn is not null then round(pr.execution_time_ms / 1000.0, 3)
+            when f.select_count > 0 then f.avg_query_duration_s
+        end as recompute_cost_s,
+        case
+            when pr.view_fqn is not null then 'probe'
+            when f.select_count > 0 then 'reads'
+        end as recompute_cost_source
+    from final as f
+    left join {{ ref('int_snowflake__view_probe') }} as pr
+        on pr.view_fqn = f.table_fqn
+       and pr.probe_status = 'ok'
+),
+
+net_scored as (
+    -- Seconds of view recompute removed per lookback window by materializing: every read
+    -- and downstream build stops recomputing the view, and each dbt run builds it once.
+    select
+        c.*,
+        greatest(c.select_count + c.downstream_build_count - c.view_build_runs, 0)
+            * coalesce(c.recompute_cost_s, 0) as net_recompute_s_saved
+    from costed as c
+),
+
+chain_ranks as (
+    -- For each table at the end of a view chain, rank the candidate views feeding it:
+    -- highest net savings first, ties to the view nearest the table (it covers the most
+    -- upstream work).
+    select
+        p.table_fqn          as chain_table_fqn,
+        p.table_model_name   as chain_table_model_name,
+        p.upstream_fqn,
+        p.upstream_model_name,
+        p.path_length,
+        row_number() over (
+            partition by p.table_fqn
+            order by ns.net_recompute_s_saved desc, p.path_length, p.upstream_fqn
+        ) as chain_rank
+    from {{ ref('int_snowflake__view_chain_pairs') }} as p
+    inner join net_scored as ns
+        on ns.table_fqn = p.upstream_fqn
+       and ns.recommendation = 'Materialize as TABLE'
+),
+
+chain_alternatives as (
+    -- A view that wins for no table is an alternative to the winner of its nearest table.
+    select
+        cr.upstream_fqn,
+        w.upstream_fqn          as chosen_view_fqn,
+        w.upstream_model_name   as chosen_model_name,
+        cr.chain_table_model_name,
+        w.path_length < cr.path_length as chosen_is_nearer_table
+    from chain_ranks as cr
+    inner join chain_ranks as w
+        on w.chain_table_fqn = cr.chain_table_fqn
+       and w.chain_rank = 1
+    where cr.upstream_fqn not in (select upstream_fqn from chain_ranks where chain_rank = 1)
+    qualify row_number() over (partition by cr.upstream_fqn order by cr.path_length, cr.chain_table_fqn) = 1
+),
+
+chain_selection as (
+    select
+        ns.*,
+        case
+            when ns.table_fqn in (select upstream_fqn from chain_ranks where chain_rank = 1) then 'recommended'
+            when ca.upstream_fqn is not null then 'alternative'
+            else 'standalone'
+        end as chain_role,
+        case
+            when ns.table_fqn in (select upstream_fqn from chain_ranks where chain_rank = 1) then ns.table_fqn
+            else ca.chosen_view_fqn
+        end as chosen_view_for_chain,
+        ca.chosen_model_name,
+        ca.chain_table_model_name,
+        ca.chosen_is_nearer_table,
+        (select count(distinct alt.upstream_fqn) from chain_alternatives as alt
+         where alt.chosen_view_fqn = ns.table_fqn) as alternative_view_count
+    from net_scored as ns
+    left join chain_alternatives as ca
+        on ca.upstream_fqn = ns.table_fqn
+),
+
+chain_reasoned as (
+    select
+        cs.* exclude (recommendation_reason, chosen_model_name, chain_table_model_name,
+                      chosen_is_nearer_table, alternative_view_count),
+        case
+            when cs.chain_role = 'alternative' and cs.chosen_is_nearer_table
+                then 'Alternative to materializing ' || cs.chosen_model_name
+                    || ', which also removes this view''s recompute in '
+                    || cs.chain_table_model_name || ' builds.'
+            when cs.chain_role = 'alternative'
+                then 'Alternative to materializing ' || cs.chosen_model_name
+                    || ', which saves more on ' || cs.chain_table_model_name
+                    || ' builds. Their savings overlap, so they aren''t added together.'
+            when cs.chain_role = 'recommended' and cs.alternative_view_count > 0
+                then cs.recommendation_reason || '. Chosen over ' || cs.alternative_view_count
+                    || ' other view(s) in the same chain, which are listed as alternatives.'
+            else cs.recommendation_reason
+        end as recommendation_reason
+    from chain_selection as cs
 )
 
 select
@@ -330,7 +442,7 @@ select
     -- Deployments of the model: distinct physical tables, excluding excluded ones
     (select count(distinct rh2.table_fqn) from {{ ref('int_snowflake__dbt_relation_history') }} rh2
      where rh2.node_id = rh.node_id and not coalesce(rh2.is_excluded, false)) as environment_count
-from final as f
+from chain_reasoned as f
 left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
     on rh.table_fqn = f.table_fqn
 order by

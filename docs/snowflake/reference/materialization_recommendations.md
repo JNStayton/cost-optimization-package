@@ -43,7 +43,7 @@ int_snowflake__table_columns ────────────┘
 
 ### Purpose
 
-Identifies dbt models materialized as `view` or `ephemeral` that are candidates for conversion to `table` materialization, based on query volume, data scan cost, and view chain analysis.
+Identifies dbt models materialized as `view` that are candidates for conversion to `table` materialization, based on query volume, data scan cost, and view chain analysis. Ephemerals are never candidates (there's no relation to read, build, or probe), but they're part of the chains: a view above an ephemeral is credited with the builds of the table below it.
 
 ### Scoring
 
@@ -74,6 +74,16 @@ The chain score accounts for cascading recomputation: a view that is 3 hops from
 | Not in chain AND `avg_query_duration_s > 10` AND `select_count > 50` | Materialize as TABLE | Slow average query time on a frequently queried view |
 | Otherwise | Monitor | Query volume or execution time below recommendation thresholds |
 
+### One view per chain
+
+The views in a chain are alternatives: materializing any one of them removes the recompute that every build of the downstream table pays. So for each table at the end of a chain, the view with the highest `net_recompute_s_saved` is recommended (ties go to the view nearest the table, which covers the most upstream work), and the others are alternatives with status `monitor`.
+
+```
+net_recompute_s_saved = max(select_count + downstream_build_count - view_build_runs, 0) × recompute_cost_s
+```
+
+`recompute_cost_s` comes from the view probe when there is one: a post-hook on `int_snowflake__view_probe` runs `select hash_agg(*) from <view>` with the result cache off (`hash_agg(*)` forces every column to be computed; `count(*)` would let Snowflake skip the column work). Without a probe it falls back to the view's average read duration.
+
 ### Key Columns
 
 | Column | Description |
@@ -83,6 +93,11 @@ The chain score accounts for cascading recomputation: a view that is 3 hops from
 | `is_in_view_chain` | Whether this view feeds into other views before reaching a table |
 | `min_hops_to_table` | Shortest path (in ref hops) from this view to a materialized table |
 | `downstream_table_count` | Number of downstream tables that recompute this view |
+| `downstream_build_count` | Builds of every downstream table in the lookback window, each recomputing this view |
+| `recompute_cost_s` / `recompute_cost_source` | Seconds per run of the view's query, and whether it was measured by the probe (`probe`) or taken from reads (`reads`) |
+| `net_recompute_s_saved` | Seconds of recompute removed per lookback window by materializing |
+| `chain_role` | `recommended`, `alternative`, or `standalone` |
+| `chosen_view_for_chain` | The recommended view in this view's chain |
 | `recommendation_reason` | Natural language explanation of the recommendation |
 
 ### Variables
@@ -91,6 +106,10 @@ The chain score accounts for cascading recomputation: a view that is 3 hops from
 |----------|---------|-------------|
 | `table_materialization_lookback_days` | `14` | Lookback window for query history |
 | `table_materialization_min_query_count` | `10` | Minimum queries to appear in results |
+| `table_materialization_view_probe_limit` | `10` | Most views probed per run (deepest chains first); `0` turns the probe off |
+| `table_materialization_view_probe_refresh_days` | `7` | Re-probe a view after this many days |
+
+The probe skips this package's own views, views outside `dbt_monitored_projects`, and schemas in `dbt_excluded_schemas`. A probe that fails (a dropped view, or no SELECT privilege) is recorded as failed instead of failing the build, and that view falls back to its read duration. The probe time is measured on the warehouse running the package.
 
 ---
 

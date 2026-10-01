@@ -165,6 +165,8 @@ vars:
   # --- Table materialization (snowflake, databricks, redshift) ---
   table_materialization_lookback_days: 14
   table_materialization_min_query_count: 10
+  table_materialization_view_probe_limit: 10                     # snowflake; most views probed per run, 0 = off
+  table_materialization_view_probe_refresh_days: 7               # snowflake; re-probe a view after this many days
 
   # --- Incremental materialization (snowflake, databricks, redshift) ---
   incremental_candidates_lookback_days: 60

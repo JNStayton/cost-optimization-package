@@ -361,7 +361,8 @@ unit_tests:
         - DB.S.T3 (convert_to_incremental): seen in two environments → the higher-savings
           row (300); incremental confidence 85 attached; environment_count 2.
         - DB.S.T4 (materialize_as_table): incremental context stays null even though an
-          incremental config row exists for that table.
+          incremental config row exists for that table; its view-chain columns come from
+          the materialization fact. T3's fact row doesn't attach to its incremental signal.
         - excluded: a 'monitor' clustering signal and a warehouse-domain signal.
     model: vw_snowflake__dbt_model_optimizations
     given:
@@ -384,15 +385,19 @@ unit_tests:
         rows:
           - {table_fqn: DB.S.T3, confidence_score: 85, recommendation_status: actionable_review}
           - {table_fqn: DB.S.T4, confidence_score: 60, recommendation_status: investigate}
+      - input: ref('fct_snowflake__table_materialization_candidates')
+        rows:
+          - {table_fqn: DB.S.T4, chain_role: recommended, chosen_view_for_chain: DB.S.T4, recompute_cost_s: 12.5, recompute_cost_source: probe}
+          - {table_fqn: DB.S.T3, chain_role: alternative, chosen_view_for_chain: DB.S.T4, recompute_cost_s: 1, recompute_cost_source: reads}
       - input: ref('int_snowflake__dbt_relation_history')
         rows:
           - {node_id: n3, table_fqn: DB.DEV.T3,  dbt_cloud_environment_id: env_dev}
           - {node_id: n3, table_fqn: DB.PROD.T3, dbt_cloud_environment_id: env_prod}
     expect:
       rows:
-        - {table_fqn: DB.S.T1, signal_id: add_clustering_key_strong, suggested_clustering_key: 'col_a, col_b', additional_clustering_candidates: col_c, estimated_annual_savings_usd: 50,  incremental_confidence_score: null, environment_count: 1}
-        - {table_fqn: DB.S.T3, signal_id: convert_to_incremental,    suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 300, incremental_confidence_score: 85,   environment_count: 2}
-        - {table_fqn: DB.S.T4, signal_id: materialize_as_table,      suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 20,  incremental_confidence_score: null, environment_count: 1}
+        - {table_fqn: DB.S.T1, signal_id: add_clustering_key_strong, suggested_clustering_key: 'col_a, col_b', additional_clustering_candidates: col_c, estimated_annual_savings_usd: 50,  incremental_confidence_score: null, environment_count: 1, chain_role: null,        recompute_cost_source: null}
+        - {table_fqn: DB.S.T3, signal_id: convert_to_incremental,    suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 300, incremental_confidence_score: 85,   environment_count: 2, chain_role: null,        recompute_cost_source: null}
+        - {table_fqn: DB.S.T4, signal_id: materialize_as_table,      suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 20,  incremental_confidence_score: null, environment_count: 1, chain_role: recommended, recompute_cost_source: probe}
 
   - name: user_level_cost_attribution_splits_build_consumption_and_ai_spend
     description: >

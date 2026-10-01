@@ -281,19 +281,21 @@ all_recommendations as (
         tm.recommendation_reason,
         'config_change' as effort_category,
         tm.materialization_score as score,
-        -- The view's query runs on every read and on every build of a table it feeds
-        -- directly. Materialized, it runs once per dbt run (view_build_runs) instead.
-        (tm.select_count + tm.downstream_build_count) * tm.avg_query_duration_s
+        -- The view's query runs on every read and on every build of a table downstream of
+        -- it. Materialized, it runs once per dbt run (view_build_runs) instead. Each run
+        -- costs recompute_cost_s: the view probe's measured time, else the average read.
+        (tm.select_count + tm.downstream_build_count) * coalesce(tm.recompute_cost_s, 0)
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ annualize_materialization }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        greatest(tm.select_count + tm.downstream_build_count - tm.view_build_runs, 0)
-            * tm.avg_query_duration_s
+        tm.net_recompute_s_saved
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ annualize_materialization }} * {{ credit_rate_usd }} as estimated_annual_savings_usd,
         null as snowflake_ddl,
         tm.snapshot_date,
         case
             when tm.recommendation like '%Monitor%' then 'monitor'
+            -- Another view in the same chain is recommended instead (see chosen_view_for_chain)
+            when tm.chain_role = 'alternative' then 'monitor'
             else 'actionable'
         end as backlog_status,
         '{% raw %}{{ config(materialized=''table'') }}{% endraw %}' as dbt_model_config,

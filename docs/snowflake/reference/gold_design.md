@@ -309,16 +309,18 @@ The `autosuspend_cycles_30d` and `mcw_spindown_cycles_30d` come from `int_snowfl
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | `(select_count + downstream_build_count) × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
-| Savings | `max(select_count + downstream_build_count - view_build_runs, 0) × avg_query_duration_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
+| Current annual cost | `(select_count + downstream_build_count) × recompute_cost_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
+| Savings | `max(select_count + downstream_build_count - view_build_runs, 0) × recompute_cost_s × credits_per_hour / 3600 × (365 / lookback_days) × credit_rate_usd` |
 
 `lookback_days` is `table_materialization_lookback_days` (default 14), the window all three counts cover, so `365 / lookback_days` annualizes them.
 
 Logic: a view's query runs on every read (`select_count`) and on every build of a table it feeds (`downstream_build_count`). Materialized, it runs once per dbt run instead (`view_build_runs`, the number of times dbt created the view in the window). Savings are the runs that go away, so they can't exceed the cost.
 
-- **`downstream_build_count`** counts builds of the tables the view feeds *directly* (no view in between): CTAS and MERGE statements tagged with the downstream model's `node_id` in dbt's query comment. A view further up a chain gets no credit for those builds, because materializing the view nearest the table removes the upstream views' recompute too. Known edges: an incremental model merged through a temporary table counts twice per run; one appended through a temporary view counts zero.
+- **`downstream_build_count`** counts builds of every table downstream of the view through views and ephemerals only: CTAS and MERGE statements tagged with the downstream model's `node_id` in dbt's query comment. Known edges: an incremental model merged through a temporary table counts twice per run; one appended through a temporary view counts zero.
 - **`view_build_runs`** counts CREATE_VIEW statements tagged with the view's `node_id`, minimum 1.
-- Each downstream build is charged at the view's average query time, not the downstream model's whole build time: materializing removes the view's share of the build, not the build.
+- **`recompute_cost_s`** is the seconds one run of the view's query takes: measured by the view probe (`select hash_agg(*) from <view>`, result cache off, in `int_snowflake__view_probe`) when there is one, else the view's average read duration (`recompute_cost_source` says which). Read durations understate a view deep in a chain: a filtered read of it is cheap, but a downstream build recomputes all of it, plus every view above it. Each downstream build is charged this time, not the downstream model's whole build time: materializing removes the view's share of the build, not the build.
+
+**One view per chain.** Every view in a chain gets the same downstream builds, so materializing any of them removes that recompute: they're alternatives, not additions. For each table at the end of a chain, the candidate view with the highest net savings (`net_recompute_s_saved`; ties go to the view nearest the table) is `chain_role = 'recommended'` and actionable. The others are `'alternative'`, with status `monitor` and a reason naming the recommended view, so the cost-savings summary counts the chain once. A view feeding several tables is recommended if it wins for any of them. Ephemerals are never candidates (no relation to read or probe); a view below an ephemeral is probed with the ephemeral inlined, so it's credited with the ephemeral's work.
 
 #### Spillage
 

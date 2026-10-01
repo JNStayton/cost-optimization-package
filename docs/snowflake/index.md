@@ -39,7 +39,7 @@ GRANT CREATE VIEW ON SCHEMA <your_database>.<output_schema> TO ROLE <your_dbt_ro
 
 ### Full Setup (includes deep analysis features)
 
-The clustering key analysis and incremental key probing features run `APPROX_COUNT_DISTINCT` directly against your project's tables to measure column cardinality. This requires SELECT on those tables.
+The clustering key analysis and incremental key probing features run `APPROX_COUNT_DISTINCT` directly against your project's tables to measure column cardinality. The view probe runs `select hash_agg(*)` against views in view chains to measure their recompute cost (up to `table_materialization_view_probe_limit` views per run, default 10; set it to `0` to turn the probe off). These require SELECT on those tables and views; a view the role can't read is skipped and falls back to its read duration.
 
 ```sql
 -- =============================================================================

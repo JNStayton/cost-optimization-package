@@ -67,6 +67,12 @@ ranked as (
         icr.recommendation_status as incremental_recommendation_status,
         icr.assumptions as incremental_assumptions,
         icr.blocking_signals as incremental_blocking_signals,
+        -- View chains (materialize_as_table only): which view in the chain is recommended,
+        -- and the recompute cost behind its savings
+        tm.chain_role,
+        tm.chosen_view_for_chain,
+        tm.recompute_cost_s,
+        tm.recompute_cost_source,
         row_number() over (
             partition by ar.dedup_key, ar.domain
             order by ar.priority_tier,
@@ -79,6 +85,9 @@ ranked as (
     left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
         on icr.table_fqn = ar.table_fqn
         and (ar.signal_id like 'apply_incremental%' or ar.signal_id = 'convert_to_incremental')
+    left join {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
+        on tm.table_fqn = ar.table_fqn
+        and ar.signal_id = 'materialize_as_table'
     where ar.domain in ('materialization', 'clustering')
       and ar.backlog_status = 'actionable'
 )
@@ -111,6 +120,10 @@ select
     incremental_recommendation_status,
     incremental_assumptions,
     incremental_blocking_signals,
+    chain_role,
+    chosen_view_for_chain,
+    recompute_cost_s,
+    recompute_cost_source,
     environment_count,
     environment_ids,
     target_name,

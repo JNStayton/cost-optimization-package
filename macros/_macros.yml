@@ -288,6 +288,14 @@ macros:
       available.
       Implemented for: snowflake, bigquery.
 
+  - name: probe_view_recompute
+    description: >
+      Post-hook on int_snowflake__view_probe. Measures views' recompute cost by running
+      select hash_agg(*) from each view in a view chain with the result cache off, and
+      records the execution time. Limited by table_materialization_view_probe_limit and
+      table_materialization_view_probe_refresh_days.
+      Implemented for: snowflake.
+
   - name: relation_is_excluded
     description: >
       Returns a SQL boolean expression: true when a relation is excluded from
