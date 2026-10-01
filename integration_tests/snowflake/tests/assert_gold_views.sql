@@ -31,11 +31,12 @@
 {#- FIXTURE_WH_BUSY's config signal depends on the edition (multi-cluster is Enterprise). -#}
 {%- set is_enterprise = var('snowflake_enterprise_edition', true) %}
 {%- set busy_signal = 'overload_enable_mcw' if is_enterprise else 'overload_scale_up_standard' %}
-{#- Enterprise edition adds spillage (per-table performance recommendations): 4 more
-    non-stable backlog rows (SQL refactor actionable; worsening, steady and the chain
-    table monitor), one more actionable warehouse row, spillage groups on BUSY_2XL, IDLE
-    and HEALTHY, 7 spilling models, and demo_chain_table in cross-domain insights
-    (spillage + view_chain). -#}
+{#- Enterprise edition adds spillage (per-table performance recommendations): 7 more
+    non-stable backlog rows (SQL refactor and the three scale-ups actionable, since their
+    savings are null and the floor doesn't demote them; worsening, steady and the chain
+    table monitor), four more actionable warehouse rows, spillage groups on BUSY_2XL,
+    COLD, IDLE and HEALTHY, 7 spilling models, and demo_chain_table in cross-domain
+    insights (spillage + view_chain). -#}
 with checks as (
     select 'all_recommendations has no duplicate recommendations' as check_name,
            (select count(*) - count(distinct domain || '|' || signal_id || '|' || entity_name)
@@ -43,7 +44,7 @@ with checks as (
     union all
     select 'optimization_backlog rows',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }})::varchar as produced,
-           '{{ 17 if is_enterprise else 13 }}' as expected
+           '{{ 20 if is_enterprise else 13 }}' as expected
     union all
     select 'optimization_backlog excludes demoted DEMO_EVENTS',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }}
@@ -51,7 +52,7 @@ with checks as (
     union all
     select 'cost_savings_summary counts',
            (select listagg(domain || '=' || total_recommendations, ',') within group (order by domain)
-            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=5,warehouse={{ 6 if is_enterprise else 5 }}'
+            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=5,warehouse={{ 9 if is_enterprise else 5 }}'
     union all
     select 'top_recommendations rank 1',
            (select listagg(signal_id || '@' || warehouse_name, ',') from {{ ref('vw_snowflake__top_recommendations') }}
@@ -62,7 +63,7 @@ with checks as (
             from {{ ref('vw_snowflake__warehouse_optimizations') }}),
            'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},FIXTURE_WH_BUSY_2XL:{{ busy_signal }},'
            || '{{ "FIXTURE_WH_BUSY_2XL:spillage," if is_enterprise else "" }}'
-           || 'FIXTURE_WH_COLD:provisioning_gen2,FIXTURE_WH_HEALTHY:expensive_query,'
+           || 'FIXTURE_WH_COLD:provisioning_gen2,{{ "FIXTURE_WH_COLD:spillage," if is_enterprise else "" }}FIXTURE_WH_HEALTHY:expensive_query,'
            || '{{ "FIXTURE_WH_HEALTHY:spillage," if is_enterprise else "" }}'
            || 'FIXTURE_WH_IDLE:idle_reduce_auto_suspend'
            || '{{ ",FIXTURE_WH_IDLE:spillage" if is_enterprise else "" }}'

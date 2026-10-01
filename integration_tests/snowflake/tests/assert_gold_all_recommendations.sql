@@ -34,7 +34,14 @@ with produced as (
            -- Chain views by role (the probe decides which view wins)
            coalesce('chain_' || tm.chain_role, lower(split_part(ar.entity_name, '.', -1))) as entity,
            ar.backlog_status,
-           iff(tm.chain_role is not null, null, round(ar.estimated_annual_savings_usd, 2)) as savings
+           case
+               when tm.chain_role is not null then null
+               -- Spillage: savings are null; compare the measured cost instead (-1 flags a
+               -- non-null savings)
+               when ar.signal_id like 'spillage%'
+                   then iff(ar.estimated_annual_savings_usd is null, round(ar.estimated_annual_cost_usd, 2), -1)
+               else round(ar.estimated_annual_savings_usd, 2)
+           end as savings
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
         on tm.table_fqn = ar.table_fqn
@@ -58,16 +65,19 @@ expected as (
     union all select 'warehouse',       'provisioning_gen2',          'fixture_wh_cold',         'actionable',  14.40
     union all select 'warehouse',       '{{ busy_2xl_signal }}',      'fixture_wh_busy_2xl',     'actionable',  14.40
 {%- if var('snowflake_enterprise_edition', true) %}
-    {#- Spillage (Enterprise edition): signal and status from the tier key. Scale-ups'
-        GB-based savings are pennies, so the $1 floor demotes them to stable. #}
-    union all select 'warehouse', 'spillage_sql_refactor',       'demo_spill_heavy_large', 'actionable', 4.48
-    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_heavy_small', 'stable',     0.28
-    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_remote',      'stable',     0.32
-    union all select 'warehouse', 'spillage_scale_up',           'fixture_wh_idle',        'stable',     0.49
-    union all select 'warehouse', 'spillage_moderate_worsening', 'demo_spill_worsening',   'monitor',    0.23
-    union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_steady',      'monitor',    0.02
-    union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_minor',       'stable',     0.00
-    union all select 'warehouse', 'spillage_moderate_stable',    'demo_chain_table',       'monitor',    0.01
+    {#- Spillage (Enterprise edition): signal and status from the tier key. Savings are
+        null (so the $1 floor doesn't demote the scale-ups); the column holds the cost:
+        the spilling queries' runtime x the warehouse's list rate / 3600 x 365/30 x $2.
+        e.g. heavy_large 600 s on 2X-Large (32/hour) = $129.78; the IDLE aggregate is all
+        of IDLE's spilling queries, 120 + 90 + 30 + 36 s on Small (2/hour) = $3.73. #}
+    union all select 'warehouse', 'spillage_sql_refactor',       'demo_spill_heavy_large', 'actionable', 129.78
+    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_heavy_small', 'actionable',   3.24
+    union all select 'warehouse', 'spillage_scale_up',           'demo_spill_remote',      'actionable',   1.62
+    union all select 'warehouse', 'spillage_scale_up',           'fixture_wh_idle',        'actionable',   3.73
+    union all select 'warehouse', 'spillage_moderate_worsening', 'demo_spill_worsening',   'monitor',      1.22
+    union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_steady',      'monitor',      0.89
+    union all select 'warehouse', 'spillage_moderate_stable',    'demo_spill_minor',       'stable',       0.20
+    union all select 'warehouse', 'spillage_moderate_stable',    'demo_chain_table',       'monitor',      0.61
 {%- endif %}
 )
 

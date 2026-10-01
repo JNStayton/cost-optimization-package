@@ -264,7 +264,8 @@ select
 {%- endfor %}
 {#-
   Spillage cases (fct_snowflake__warehouse_performance_recommendations, Enterprise
-  edition): dbt builds of six demo tables that spill, 60 s each, tagged with the model's
+  edition): dbt builds of six demo tables that spill, each with its own runtime (the last
+  number, seconds; the spillage cost is priced from it), tagged with the model's
   node_id but run from a non-dbt session so they don't change the warehouse, expensive
   query or user attribution results. Spill is in GB (local, remote), days ago.
   demo_chain_table (the view chain slice's table) spills moderately 20 days ago: outside
@@ -273,22 +274,22 @@ select
 -#}
 {%- set gb = 1073741824 %}
 {%- set spill_builds = [
-    ('demo_spill_remote',      'FIXTURE_WH_IDLE',     2,  49,  2),
-    ('demo_spill_worsening',   'FIXTURE_WH_IDLE',     3,  49,  0),
-    ('demo_spill_steady',      'FIXTURE_WH_IDLE',     20, 2,   0),
-    ('demo_spill_steady',      'FIXTURE_WH_IDLE',     5,  2,   0),
-    ('demo_spill_heavy_small', 'FIXTURE_WH_COLD',     2,  60,  0),
-    ('demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 2,  60,  0),
-    ('demo_spill_minor',       'FIXTURE_WH_HEALTHY',  2,  0.5, 0),
-    ('demo_chain_table',       'FIXTURE_WH_HEALTHY',  20, 3,   0),
+    ('demo_spill_remote',      'FIXTURE_WH_IDLE',     2,  49,  2, 120),
+    ('demo_spill_worsening',   'FIXTURE_WH_IDLE',     3,  49,  0, 90),
+    ('demo_spill_steady',      'FIXTURE_WH_IDLE',     20, 2,   0, 30),
+    ('demo_spill_steady',      'FIXTURE_WH_IDLE',     5,  2,   0, 36),
+    ('demo_spill_heavy_small', 'FIXTURE_WH_COLD',     2,  60,  0, 240),
+    ('demo_spill_heavy_large', 'FIXTURE_WH_BUSY_2XL', 2,  60,  0, 600),
+    ('demo_spill_minor',       'FIXTURE_WH_HEALTHY',  2,  0.5, 0, 15),
+    ('demo_chain_table',       'FIXTURE_WH_HEALTHY',  20, 3,   0, 45),
 ] %}
-{% for tbl, wh, days_ago, local_gb, remote_gb in spill_builds %}
+{% for tbl, wh, days_ago, local_gb, remote_gb, exec_s in spill_builds %}
 union all
 select
     'spill_{{ tbl }}_{{ days_ago }}', dateadd(hour, -3, dateadd(day, -{{ days_ago }}, current_timestamp())),
     'hash_spill_{{ tbl }}', 'phash_spill_{{ tbl }}',
-    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', '{{ wh }}', 'Small', 60000, 1048576, 100, 0, 0,
-    'CREATE_TABLE_AS_SELECT', 60000, 1, 1, {{ (local_gb * gb) | int }}, {{ (remote_gb * gb) | int }},
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', '{{ wh }}', 'Small', {{ exec_s * 1000 }}, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', {{ exec_s * 1000 }}, 1, 1, {{ (local_gb * gb) | int }}, {{ (remote_gb * gb) | int }},
     '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.{{ tbl }}"} */ '
         || 'create or replace transient table {{ target.database }}.{{ target.schema }}.{{ tbl }} as (select 1 as id)',
     1, 'SUCCESS', 1000
