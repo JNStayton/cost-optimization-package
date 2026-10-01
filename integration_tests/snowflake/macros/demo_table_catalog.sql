@@ -23,5 +23,17 @@
      'columns': [('ROW_ID', 'NUMBER'), ('LOADED_AT', 'TIMESTAMP_NTZ')]},
     {'name': 'DEMO_INFREQUENT_BUILDS', 'id': 900007, 'size_gb': 50, 'row_count': 1045000,
      'columns': [('RECORD_ID', 'NUMBER'), ('UPDATED_AT', 'TIMESTAMP_NTZ')]},
+    {'name': 'DEMO_SPILL_REMOTE', 'id': 900008, 'size_gb': 1, 'row_count': 1000,
+     'columns': [('ID', 'NUMBER')]},
+    {'name': 'DEMO_SPILL_WORSENING', 'id': 900009, 'size_gb': 1, 'row_count': 1000,
+     'columns': [('ID', 'NUMBER')]},
+    {'name': 'DEMO_SPILL_STEADY', 'id': 900010, 'size_gb': 1, 'row_count': 1000,
+     'columns': [('ID', 'NUMBER')]},
+    {'name': 'DEMO_SPILL_HEAVY_SMALL', 'id': 900011, 'size_gb': 1, 'row_count': 1000,
+     'columns': [('ID', 'NUMBER')]},
+    {'name': 'DEMO_SPILL_HEAVY_LARGE', 'id': 900012, 'size_gb': 1, 'row_count': 1000,
+     'columns': [('ID', 'NUMBER')]},
+    {'name': 'DEMO_SPILL_MINOR', 'id': 900013, 'size_gb': 1, 'row_count': 1000,
+     'columns': [('ID', 'NUMBER')]},
   ]) }}
 {% endmacro %}

@@ -3,13 +3,14 @@
   earlier slices put in. One row per check; returns only failed checks.
     - all_recommendations: no recommendation appears twice (the integration project keeps a
       stale clustering snapshot beside the current one; only the latest may be read).
-    - optimization_backlog: the 8 non-stable recommendations (the demoted clustering one
+    - optimization_backlog: the 11 non-stable recommendations (the demoted clustering one
       is left out).
-    - cost_savings_summary: actionable counts per domain (warehouse 2, materialization 4).
+    - cost_savings_summary: actionable counts per domain (warehouse 5, materialization 4).
     - top_recommendations: FIXTURE_WH_BUSY's scale-up ranks first (tier 1; the pricier
       expensive-query signal is tier 2).
-    - warehouse_optimizations: FIXTURE_WH_BUSY (scale-up, expensive query) and
-      FIXTURE_WH_HEALTHY (expensive query).
+    - warehouse_optimizations: FIXTURE_WH_BUSY (scale-up, expensive query),
+      FIXTURE_WH_HEALTHY (expensive query), and IDLE, COLD and BUSY_2XL (their config
+      recommendations, in scope because the spillage slice's dbt builds run on them).
     - dbt_model_optimizations: demo_orders, demo_logs, demo_infrequent_builds, demo_slow_view.
     - top_expensive_queries: demo_orders' query, with its incremental fix co-occurring.
     - top_queried_models: demo_events, 20 SELECTs.
@@ -30,7 +31,7 @@ with checks as (
             from {{ ref('int_snowflake__all_recommendations') }})::varchar as produced, '0' as expected
     union all
     select 'optimization_backlog rows',
-           (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }})::varchar as produced, '8' as expected
+           (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }})::varchar as produced, '11' as expected
     union all
     select 'optimization_backlog excludes demoted DEMO_EVENTS',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }}
@@ -38,7 +39,7 @@ with checks as (
     union all
     select 'cost_savings_summary counts',
            (select listagg(domain || '=' || total_recommendations, ',') within group (order by domain)
-            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=4,warehouse=2'
+            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=4,warehouse=5'
     union all
     select 'top_recommendations rank 1',
            (select listagg(signal_id || '@' || warehouse_name, ',') from {{ ref('vw_snowflake__top_recommendations') }}
@@ -47,7 +48,8 @@ with checks as (
     select 'warehouse_optimizations',
            (select listagg(warehouse_name || ':' || signal_id, ',') within group (order by warehouse_name, signal_id)
             from {{ ref('vw_snowflake__warehouse_optimizations') }}),
-           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},FIXTURE_WH_HEALTHY:expensive_query'
+           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},FIXTURE_WH_BUSY_2XL:{{ busy_signal }},'
+           || 'FIXTURE_WH_COLD:provisioning_gen2,FIXTURE_WH_HEALTHY:expensive_query,FIXTURE_WH_IDLE:idle_reduce_auto_suspend'
     union all
     select 'dbt_model_optimizations models',
            (select listagg(model_name, ',') within group (order by model_name)

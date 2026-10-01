@@ -5,8 +5,11 @@
       demoted to 'stable'; the incremental and materialization recommendations ($13–75/yr)
       stay 'actionable'.
     - Scope: warehouse-level recommendations appear only for warehouses this project's
-      models run on. FIXTURE_WH_BUSY qualifies; IDLE, COLD, BUSY_XS, BUSY_2XL, BUSY_6XL and
-      SUSPENDED run no project models, and OVERSIZED runs another project's.
+      models run on. FIXTURE_WH_BUSY runs the expensive demo_orders query; IDLE, COLD and
+      BUSY_2XL run the spillage slice's dbt builds. BUSY_XS, BUSY_6XL and SUSPENDED run no
+      project models, and OVERSIZED runs another project's.
+    - Warehouse savings: IDLE 30 auto-suspend cycles x (300 - 60) s / 3600 x 2/hour
+      (Small) x 12 x $2 = $96; COLD and BUSY_2XL 6 credits x 10% x 12 x $2 = $14.40.
     - DEMO_SESSIONS (key probe failed) is 'monitor'; the expensive demo_logs query is
       'monitor'. DEMO_FAST_GROWTH and DEMO_NEW_TABLE have no recommendation.
     - Savings (to the cent) check the pricing: each model at its own build warehouse's list
@@ -21,6 +24,7 @@
 -#}
 {#- FIXTURE_WH_BUSY's config signal depends on the edition (multi-cluster is Enterprise). -#}
 {%- set busy_signal = 'overload_enable_mcw' if var('snowflake_enterprise_edition', true) else 'overload_scale_up_standard' %}
+{%- set busy_2xl_signal = busy_signal %}
 with produced as (
     select domain, signal_id, lower(split_part(entity_name, '.', -1)) as entity, backlog_status,
            round(estimated_annual_savings_usd, 2) as savings
@@ -37,6 +41,9 @@ expected as (
     union all select 'warehouse',       '{{ busy_signal }}', 'fixture_wh_busy',         'actionable', 144.00
     union all select 'warehouse',       'expensive_query_actionable', 'hash_fixture_wh_busy',    'actionable', 277.40
     union all select 'warehouse',       'expensive_query_monitor',    'hash_fixture_wh_healthy', 'monitor',     27.74
+    union all select 'warehouse',       'idle_reduce_auto_suspend',   'fixture_wh_idle',         'actionable',  96.00
+    union all select 'warehouse',       'provisioning_gen2',          'fixture_wh_cold',         'actionable',  14.40
+    union all select 'warehouse',       '{{ busy_2xl_signal }}',      'fixture_wh_busy_2xl',     'actionable',  14.40
 )
 
 select

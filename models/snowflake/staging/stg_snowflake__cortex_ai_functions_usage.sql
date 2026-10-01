@@ -1,6 +1,6 @@
 {{ config(
     materialized='incremental',
-    unique_key='query_id',
+    unique_key=['query_id', 'function_name', 'model_name'],
     on_schema_change='append_new_columns',
 ) }}
 
