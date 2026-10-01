@@ -319,6 +319,18 @@ models:
       chain, and drives the view probe and the one-view-per-chain choice.
 
   # ===========================================================================
+  # int_snowflake__table_upstream_views
+  # ===========================================================================
+  - name: int_snowflake__table_upstream_views
+    description: >
+      One row per table at the end of a view chain: upstream_view_chain (the views and
+      ephemerals its builds recompute inline, nearest first, each with its
+      materialization), upstream_view_count, and chain_recommended_view (the view the
+      materialization fact recommends for this table; null when none is a candidate).
+      Feeds the view_chain signal in vw_snowflake__cross_domain_insights and the chain
+      columns in the spillage views.
+
+  # ===========================================================================
   # int_snowflake__view_probe
   # ===========================================================================
   - name: int_snowflake__view_probe

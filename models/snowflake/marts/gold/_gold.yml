@@ -78,10 +78,24 @@ models:
     description: >
       Cross-domain signal detection. For each table with 2+ optimization signals from
       different domains, surfaces the signals as an array and picks the primary
-      recommendation using a ranked hierarchy.
+      recommendation using a ranked hierarchy. view_chain (the table's builds recompute
+      upstream views and ephemerals) is a signal; with spillage or an expensive query,
+      recommended_action adds the chain's recommended view to materialize.
     columns:
       - name: signals
-        description: Array of detected optimization signals (e.g., ['spillage', 'clustering'])
+        description: Array of detected optimization signals (e.g., ['spillage', 'clustering', 'view_chain'])
+      - name: recommended_action
+        description: >
+          The model's own top action (materialization, incremental, clustering). With a
+          view chain plus spillage or an expensive query: plus "additionally, materialize
+          <chain_recommended_view> as a table", or the chain as the headline when the
+          model has no other action.
+      - name: upstream_view_chain
+        description: Views and ephemerals the model's builds recompute inline, nearest first, each with its materialization.
+      - name: upstream_view_count
+        description: Number of views and ephemerals in upstream_view_chain.
+      - name: chain_recommended_view
+        description: The view chain's recommended view to materialize, if any.
       - name: signal_count
         description: Number of distinct signals detected (2+ for this view)
       - name: primary_recommendation
@@ -158,6 +172,15 @@ models:
         description: Concrete ALTER WAREHOUSE DDL (for config recs)
       - name: affected_model_count
         description: Count of models contributing to this signal (for aggregated model-level signals)
+      - name: affected_models_in_view_chains
+        description: >
+          Spillage rows: the spilling models whose builds recompute upstream views, each
+          with its upstream view count, e.g. 'fct_order_items (4 upstream view(s))'.
+      - name: view_chain_note
+        description: >
+          Spillage rows with models in view chains: how many of the spilling models
+          recompute upstream views, and a pointer to vw_snowflake__dbt_model_optimizations
+          for the view to materialize.
       - name: affected_models
         description: Comma-separated list of affected model names
       - name: warehouse_name
@@ -238,6 +261,10 @@ models:
 
   - name: vw_snowflake__top_spillage_models
     columns:
+      - name: upstream_view_count
+        description: Views and ephemerals this model's builds recompute inline (0 when none).
+      - name: upstream_view_chain
+        description: Those views and ephemerals, nearest first, each with its materialization.
       - name: table_fqn
         data_tests:
           - not_null

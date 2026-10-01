@@ -137,6 +137,16 @@ unit_tests:
         - n4: clustering is only 'monitor', so just spillage counts (1 category) → excluded.
         - n5: two spillage signals are one category → excluded.
         - a row with null node_id → excluded.
+      View chains (int_snowflake__table_upstream_views): view_chain is a signal and counts
+      toward the minimum of two.
+        - n7: incremental + spillage + chain → the model's own root cause and action, plus
+          the chain's part and "additionally, materialize v7 as a table".
+        - n8: spillage + chain only → the chain is the headline: "Materialize v8 as a table".
+        - n9: expensive query + chain, no recommended view to name → points to
+          vw_snowflake__dbt_model_optimizations; "adds to its cost".
+        - n10: clustering + chain, no spillage or expensive query → no addendum.
+        - n11: incremental + expensive query + chain, no recommended view → addendum
+          without a view name.
     model: vw_snowflake__cross_domain_insights
     given:
       - input: ref('int_snowflake__all_recommendations')
@@ -155,12 +165,31 @@ unit_tests:
           - {node_id: n5, model_name: m5, table_fqn: db.s.m5, domain: warehouse,       signal_id: spillage_moderate_stable,    backlog_status: actionable, priority_tier: 5, recommendation: rec_spill_2}
           - {node_id: null, model_name: mx, table_fqn: db.s.mx, domain: materialization, signal_id: materialize_as_table,      backlog_status: actionable, priority_tier: 2, recommendation: rec_materialize}
           - {node_id: null, model_name: mx, table_fqn: db.s.mx, domain: warehouse,     signal_id: spillage_scale_up,           backlog_status: actionable, priority_tier: 4, recommendation: rec_spill}
+          - {node_id: n7, model_name: m7, table_fqn: db.s.m7, domain: materialization, signal_id: apply_incremental_merge,     backlog_status: actionable, priority_tier: 1, recommendation: rec_incremental}
+          - {node_id: n7, model_name: m7, table_fqn: db.s.m7, domain: warehouse,       signal_id: spillage_scale_up,           backlog_status: actionable, priority_tier: 2, recommendation: rec_spill}
+          - {node_id: n8, model_name: m8, table_fqn: db.s.m8, domain: warehouse,       signal_id: spillage_moderate_stable,    backlog_status: monitor,    priority_tier: 1, recommendation: rec_spill}
+          - {node_id: n9, model_name: m9, table_fqn: db.s.m9, domain: warehouse,       signal_id: expensive_query_monitor,     backlog_status: monitor,    priority_tier: 1, recommendation: rec_expensive}
+          - {node_id: n10, model_name: m10, table_fqn: db.s.m10, domain: clustering,   signal_id: add_clustering_key_strong,   backlog_status: actionable, priority_tier: 1, recommendation: rec_cluster}
+          - {node_id: n11, model_name: m11, table_fqn: db.s.m11, domain: materialization, signal_id: convert_to_incremental,   backlog_status: actionable, priority_tier: 1, recommendation: rec_incremental}
+          - {node_id: n11, model_name: m11, table_fqn: db.s.m11, domain: warehouse,    signal_id: expensive_query_actionable,  backlog_status: actionable, priority_tier: 2, recommendation: rec_expensive}
+      - input: ref('int_snowflake__table_upstream_views')
+        rows:
+          - {table_dbt_model: n7,  upstream_view_chain: 'e7 (ephemeral), v7 (view), u7 (view)', upstream_view_count: 3, chain_recommended_view: v7}
+          - {table_dbt_model: n8,  upstream_view_chain: 'v8 (view), u8 (view)',                  upstream_view_count: 2, chain_recommended_view: v8}
+          - {table_dbt_model: n9,  upstream_view_chain: 'e9 (ephemeral)',                        upstream_view_count: 1, chain_recommended_view: null}
+          - {table_dbt_model: n10, upstream_view_chain: 'v10 (view)',                            upstream_view_count: 1, chain_recommended_view: v10}
+          - {table_dbt_model: n11, upstream_view_chain: 'v11 (view)',                            upstream_view_count: 1, chain_recommended_view: null}
     expect:
       rows:
         - {node_id: n1, insight_id: c82561ec215a6e31807ceedf3b3bd25e, signal_count: 2, primary_recommendation: rec_materialize, root_cause: "View recomputation creates large intermediate results that spill — high warehouse impact", recommended_action: "Materialize the view — eliminates cascading recomputation"}
         - {node_id: n2, insight_id: a6bbc91ae73dd21c0533f735470a9cd0, signal_count: 2, primary_recommendation: rec_incremental, root_cause: "Query is expensive because it rebuilds the full table every run",   recommended_action: "Convert to incremental — smaller working set resolves secondary issues"}
         - {node_id: n3, insight_id: 4443aee183b279f76a95c13c7f5bca0d, signal_count: 2, primary_recommendation: rec_cluster,     root_cause: "Expensive queries scan the full table because it lacks clustering", recommended_action: "Add clustering key — reduces scan volume and downstream compute"}
         - {node_id: n6, insight_id: b555773768bc1a672947d7f41f9c247f, signal_count: 2, primary_recommendation: rec_materialize, root_cause: "Multiple optimization signals detected — compound inefficiency",   recommended_action: "Materialize the view — eliminates cascading recomputation"}
+        - {node_id: n7, insight_id: c364e7cd25ef8288236d31f1ed69a94a, signal_count: 3, primary_recommendation: rec_incremental, root_cause: "Full table rebuilds overflow memory — high warehouse impact. Builds recompute 3 upstream view(s) inline, enlarging the working set that spills", recommended_action: "Convert to incremental — smaller working set resolves secondary issues; additionally, materialize v7 as a table: this model's builds recompute 3 upstream view(s), which adds to its spill"}
+        - {node_id: n8, insight_id: 5849253c0c07f8894c9ff2e5b69e834a, signal_count: 2, primary_recommendation: rec_spill, root_cause: "Builds recompute 2 upstream view(s) inline, enlarging the working set that spills", recommended_action: "Materialize v8 as a table: this model's builds recompute 2 upstream view(s), which adds to its spill"}
+        - {node_id: n9, insight_id: 06e7223b88d7d4640370627fd53901dc, signal_count: 2, primary_recommendation: rec_expensive, root_cause: "Builds are expensive partly because they recompute 1 upstream view(s)", recommended_action: "Its builds recompute 1 upstream view(s), which adds to its cost. See vw_snowflake__dbt_model_optimizations"}
+        - {node_id: n10, insight_id: b673e0e04fef7b457fb2825b040b844c, signal_count: 2, primary_recommendation: rec_cluster, root_cause: "Builds recompute 1 upstream view(s) inline", recommended_action: "Add clustering key — reduces scan volume and downstream compute"}
+        - {node_id: n11, insight_id: c1aae165bc91698aa6f7fe3a36fb8bd2, signal_count: 3, primary_recommendation: rec_incremental, root_cause: "Query is expensive because it rebuilds the full table every run. Builds are expensive partly because they recompute 1 upstream view(s)", recommended_action: "Convert to incremental — smaller working set resolves secondary issues; additionally, its builds recompute 1 upstream view(s), which adds to its cost (see vw_snowflake__dbt_model_optimizations)"}
 
   - name: optimization_backlog_dedupes_environments_and_classifies_actions
     description: >
@@ -216,6 +245,9 @@ unit_tests:
           2 models "m_one, m_two", savings 150; the scale-up recommendation (A_scale_up)
           wins even though the other recommendation (Z_monitor) sorts higher.
         - WH_B expensive_query: grouped as 'expensive_query'; no config row → null size.
+        - View chains: m1 ends a view chain (2 upstream views) → WH_A's spillage row lists
+          it in affected_models_in_view_chains with a note ("1 of 2"). m3 ends a chain too,
+          but its signal is an expensive query, so WH_B has no chain columns.
         - Excluded: a stable config signal, a spillage signal with no warehouse, and a
           non-warehouse-domain signal.
       Mixed actionable/monitor and mixed-effort groups are covered by
@@ -234,11 +266,15 @@ unit_tests:
       - input: ref('int_snowflake__warehouse_config')
         rows:
           - {warehouse_name: WH_A, current_size: MEDIUM, warehouse_category: dbt}
+      - input: ref('int_snowflake__table_upstream_views')
+        rows:
+          - {table_dbt_model: m1, upstream_view_count: 2}
+          - {table_dbt_model: m3, upstream_view_count: 1}
     expect:
       rows:
-        - {warehouse_name: WH_A, signal_id: oversized_scale_down, warehouse_current_size: MEDIUM, affected_model_count: null, recommendation: scale_down, recommendation_reason: oversized_reason, estimated_annual_savings_usd: 400}
-        - {warehouse_name: WH_A, signal_id: spillage,             warehouse_current_size: MEDIUM, affected_model_count: 2,    recommendation: A_scale_up, recommendation_reason: "2 model(s) affected: m_one, m_two. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.", estimated_annual_savings_usd: 150}
-        - {warehouse_name: WH_B, signal_id: expensive_query,      warehouse_current_size: null,   affected_model_count: 1,    recommendation: refactor,   recommendation_reason: "1 model(s) affected: m_three. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.", estimated_annual_savings_usd: 40}
+        - {warehouse_name: WH_A, signal_id: oversized_scale_down, warehouse_current_size: MEDIUM, affected_model_count: null, recommendation: scale_down, recommendation_reason: oversized_reason, estimated_annual_savings_usd: 400, affected_models_in_view_chains: null, view_chain_note: null}
+        - {warehouse_name: WH_A, signal_id: spillage,             warehouse_current_size: MEDIUM, affected_model_count: 2,    recommendation: A_scale_up, recommendation_reason: "2 model(s) affected: m_one, m_two. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.", estimated_annual_savings_usd: 150, affected_models_in_view_chains: "m_one (2 upstream view(s))", view_chain_note: "1 of 2 spilling model(s) recompute upstream views on every build. Materializing the recommended view shrinks their working set. See vw_snowflake__dbt_model_optimizations."}
+        - {warehouse_name: WH_B, signal_id: expensive_query,      warehouse_current_size: null,   affected_model_count: 1,    recommendation: refactor,   recommendation_reason: "1 model(s) affected: m_three. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.", estimated_annual_savings_usd: 40, affected_models_in_view_chains: null, view_chain_note: null}
 
   - name: warehouse_optimizations_mixed_groups_use_most_actionable_status_and_highest_effort
     description: >
@@ -264,6 +300,8 @@ unit_tests:
           - {domain: warehouse, warehouse_name: WH_P, signal_id: spillage_scale_up,          backlog_status: actionable, effort_category: architecture,      priority_tier: 4, hierarchy_rank: 3, recommendation: rec, node_id: m5, model_name: m_five}
           - {domain: warehouse, warehouse_name: WH_P, signal_id: spillage_moderate_worsening, backlog_status: actionable, effort_category: sql_refactor,     priority_tier: 5, hierarchy_rank: 3, recommendation: rec, node_id: m6, model_name: m_six}
       - input: ref('int_snowflake__warehouse_config')
+        rows: []
+      - input: ref('int_snowflake__table_upstream_views')
         rows: []
     expect:
       rows:

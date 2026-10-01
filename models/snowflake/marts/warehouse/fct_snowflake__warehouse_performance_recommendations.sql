@@ -284,8 +284,18 @@ select
                 || {{ next_warehouse_size('warehouse_current_size', 'up') }} || ''';'
         else null
     end as snowflake_ddl,
-    'spillage_overflow' as symptom
+    'spillage_overflow' as symptom,
+    -- View chain: the views and ephemerals this table's builds recompute inline
+    -- (nearest first). Materializing the chain's recommended view shrinks the
+    -- working set that spills.
+    coalesce(tuv.upstream_view_count, 0)                            as upstream_view_count,
+    tuv.upstream_view_chain
 from scored
+left join (
+    select table_dbt_model, upstream_view_count, upstream_view_chain
+    from {{ ref('int_snowflake__table_upstream_views') }}
+) as tuv
+    on tuv.table_dbt_model = scored.dbt_model
 order by
     case recommendation_key
         when 'remote_spill'             then 1
@@ -330,7 +340,9 @@ select
     || 'to enable this model (requires Snowflake Enterprise Edition or higher).'
                             as recommendation_reason,
     null::string            as snowflake_ddl,
-    null::string            as symptom
+    null::string            as symptom,
+    null::int               as upstream_view_count,
+    null::string            as upstream_view_chain
 where false
 
 {% endif %}

@@ -245,6 +245,15 @@ models:
       - name: warehouse_total_gb_spilled_30d
         description: Total GB spilled across all dbt queries on the associated warehouse in the 30-day window.
 
+      - name: upstream_view_count
+        description: >
+          Views and ephemerals this table's builds recompute inline (0 when none). A
+          spilling table at the end of a view chain spills partly because of that work;
+          materializing the chain's recommended view shrinks its working set.
+
+      - name: upstream_view_chain
+        description: The views and ephemerals, nearest first, each with its materialization.
+
       - name: recommendation_key
         description: >
           Spillage tier: remote_spill, local_heavy_small_wh, local_heavy_large_wh,

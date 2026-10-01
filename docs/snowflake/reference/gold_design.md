@@ -192,10 +192,25 @@ Key columns: `service_or_model`, `estimated_annual_savings_usd`
 | `primary_recommendation` | string | Recommendation text from lowest priority_tier signal |
 | `primary_domain` | string | Domain of the primary recommendation |
 | `root_cause` | string | Why these signals co-occur |
+| `recommended_action` | string | The model's own top action, plus the view chain addendum (below) |
+| `upstream_view_chain` | string | Views and ephemerals the model's builds recompute inline, nearest first, e.g. `int_order_item_summary (ephemeral), int_customer_order_items_geo (view)` |
+| `upstream_view_count` | int | How many |
+| `chain_recommended_view` | string | The chain's recommended view to materialize (from `fct_snowflake__table_materialization_candidates`) |
 
 Filters to `backlog_status IN ('actionable', 'monitor')` to include spillage and expensive query signals alongside actionable recommendations. Primary recommendation is derived from `min_by(recommendation, priority_tier)` — the signal with the lowest (best) priority_tier for that entity.
 
-Signal categories: spillage, clustering, incremental, materialization, expensive_query. HAVING requires 2+ distinct categories to surface a row.
+Signal categories: spillage, clustering, incremental, materialization, expensive_query, and view_chain. A row needs 2+ distinct categories.
+
+**`view_chain`** marks a table whose builds recompute upstream views and ephemerals inline (`int_snowflake__table_upstream_views`). It counts toward the two-signal minimum: it's effectively a materialization recommendation surfacing on the chain's end table, and it links spillage or cost to the chain.
+
+**Recommended action with a view chain.** The headline stays the model's own top action (materialization → incremental → clustering). When the model also has spillage or an expensive query, the chain is part of the cause, so the action adds the chain's recommended view:
+
+- *Own action + chain + spillage:* "Convert to incremental — …; additionally, materialize `int_order_items_vw` as a table: this model's builds recompute 3 upstream view(s), which adds to its spill." With an expensive query instead: "which adds to its cost."
+- *Chain + spillage (or expensive query), no other action:* the chain is the headline: "Materialize `int_order_items_vw` as a table: …"
+- *No view to name* (only ephemerals upstream, or no candidate view): "Its builds recompute N upstream view(s), …. See `vw_snowflake__dbt_model_optimizations`."
+- *Chain + another action, no spillage or expensive query:* the model's own action, unchanged.
+
+The root cause appends the chain's part the same way ("Builds recompute N upstream view(s) inline, enlarging the working set that spills").
 
 ---
 

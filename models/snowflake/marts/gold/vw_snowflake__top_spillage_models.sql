@@ -29,6 +29,8 @@ with spillage_models as (
         sp.recommendation,
         sp.recommendation_reason,
         sp.snowflake_ddl,
+        sp.upstream_view_count,
+        sp.upstream_view_chain,
         sp.snapshot_date,
         case
             when split_part(sp.dbt_model, '.', 2) = '{{ project_name }}'
@@ -87,6 +89,9 @@ select
     sm.recommendation,
     sm.recommendation_reason,
     sm.snowflake_ddl,
+    -- Views and ephemerals this model's builds recompute inline, nearest first
+    sm.upstream_view_count,
+    sm.upstream_view_chain,
     pc.priority_tier,
     pc.signal_id,
     pc.spillage_signal_count,

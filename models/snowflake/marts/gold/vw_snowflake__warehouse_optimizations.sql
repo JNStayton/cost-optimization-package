@@ -14,6 +14,10 @@
 
   For conditional config (scale up, MCW): shows which models need fixing first
   and defers the warehouse action behind those model-level fixes.
+
+  Spillage groups also list the spilling models that end view chains
+  (int_snowflake__table_upstream_views): their builds recompute upstream views inline,
+  so materializing the chain's recommended view shrinks the working set that spills.
 --#}
 
 with warehouse_config as (
@@ -37,6 +41,8 @@ config_recs as (
         ar.snowflake_ddl,
         null as affected_model_count,
         null as affected_models,
+        null as affected_models_in_view_chains,
+        null as view_chain_model_count,
         ar.snapshot_date
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     where ar.domain = 'warehouse'
@@ -95,11 +101,24 @@ model_signals as (
         count(distinct ar.node_id) as affected_model_count,
         listagg(distinct coalesce(ar.node_model_name, ar.model_name), ', ')
             within group (order by coalesce(ar.node_model_name, ar.model_name)) as affected_models,
+        listagg(distinct case when tuv.node_id is not null
+                    then coalesce(ar.node_model_name, ar.model_name) || ' (' || tuv.upstream_view_count || ' upstream view(s))' end, ', ')
+            within group (order by case when tuv.node_id is not null
+                    then coalesce(ar.node_model_name, ar.model_name) || ' (' || tuv.upstream_view_count || ' upstream view(s))' end)
+                                                                    as affected_models_in_view_chains,
+        count(distinct case when tuv.node_id is not null then ar.node_id end) as view_chain_model_count,
         sum(ar.estimated_annual_cost_usd) as estimated_annual_cost_usd,
         sum(ar.estimated_annual_savings_usd) as estimated_annual_savings_usd,
         max(ar.snowflake_ddl) as snowflake_ddl,
         max(ar.snapshot_date) as snapshot_date
     from {{ ref('int_snowflake__all_recommendations') }} as ar
+    left join (
+        select table_dbt_model as node_id, upstream_view_count
+        from {{ ref('int_snowflake__table_upstream_views') }}
+        where table_dbt_model is not null
+    ) as tuv
+        on tuv.node_id = ar.node_id
+       and ar.signal_id like 'spillage%'
     where ar.domain = 'warehouse'
       and ar.signal_id in ('spillage_scale_up', 'spillage_sql_refactor', 'spillage_moderate_worsening', 'spillage_moderate_stable', 'expensive_query_monitor', 'expensive_query_actionable')
       and ar.backlog_status in ('actionable', 'monitor')
@@ -122,7 +141,8 @@ combined as (
             else recommendation_reason
         end as recommendation_reason,
         estimated_annual_cost_usd, estimated_annual_savings_usd, snowflake_ddl,
-        affected_model_count, affected_models, snapshot_date
+        affected_model_count, affected_models, affected_models_in_view_chains,
+        null as view_chain_note, snapshot_date
     from config_recs
 
     union all
@@ -135,7 +155,16 @@ combined as (
             || '. Resolve model-level optimizations (clustering/incremental) before applying warehouse config changes.' as recommendation_reason,
         estimated_annual_cost_usd, estimated_annual_savings_usd,
         snowflake_ddl,
-        affected_model_count, affected_models, snapshot_date
+        affected_model_count, affected_models,
+        nullif(affected_models_in_view_chains, '') as affected_models_in_view_chains,
+        case
+            when view_chain_model_count > 0
+                then view_chain_model_count || ' of ' || affected_model_count
+                    || ' spilling model(s) recompute upstream views on every build. '
+                    || 'Materializing the recommended view shrinks their working set. '
+                    || 'See vw_snowflake__dbt_model_optimizations.'
+        end as view_chain_note,
+        snapshot_date
     from model_signals
 )
 
@@ -154,6 +183,8 @@ select
     c.snowflake_ddl,
     c.affected_model_count,
     c.affected_models,
+    c.affected_models_in_view_chains,
+    c.view_chain_note,
     c.snapshot_date
 from combined as c
 left join warehouse_config as wc on wc.warehouse_name = c.warehouse_name

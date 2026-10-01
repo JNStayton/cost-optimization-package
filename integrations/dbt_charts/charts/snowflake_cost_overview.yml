@@ -136,7 +136,8 @@ queries:
       REPLACE(RECOMMENDATION, CHR(8212), '-') AS recommendation,
       RECOMMENDATION_REASON AS recommendation_reason,
       ESTIMATED_ANNUAL_SAVINGS_USD AS savings,
-      BACKLOG_STATUS AS backlog_status
+      BACKLOG_STATUS AS backlog_status,
+      VIEW_CHAIN_NOTE AS view_chain_note
     FROM {{ ref('vw_snowflake__warehouse_optimizations') }}
     ORDER BY savings DESC NULLS LAST
 
@@ -145,7 +146,9 @@ queries:
       MODEL_NAME AS model_name,
       SIGNAL_COUNT AS signal_count,
       PRIMARY_RECOMMENDATION AS primary_recommendation,
-      ROOT_CAUSE AS root_cause
+      ROOT_CAUSE AS root_cause,
+      REPLACE(RECOMMENDED_ACTION, CHR(8212), '-') AS recommended_action,
+      UPSTREAM_VIEW_CHAIN AS upstream_view_chain
     FROM {{ ref('vw_snowflake__cross_domain_insights') }}
     ORDER BY signal_count DESC
 
@@ -273,6 +276,8 @@ charts:
               palette: dbt-seq-blue
         backlog_status:
           label: Status
+        view_chain_note:
+          label: View chains
 
   cross_domain_table:
     title: "Cross-domain insights"
@@ -290,6 +295,10 @@ charts:
           label: Primary recommendation
         root_cause:
           label: Root cause
+        recommended_action:
+          label: Recommended action
+        upstream_view_chain:
+          label: Upstream views (nearest first)
 
 rows:
   - title: "Headline"
