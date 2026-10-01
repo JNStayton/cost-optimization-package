@@ -1,0 +1,59 @@
+version: 2
+
+unit_tests:
+  - name: dbt_job_spillage_routes_or_sizes_up_by_model_and_time_share
+    description: >
+      int_snowflake__dbt_job_spillage rolls a job's model builds up per job and applies the
+      rule: time share (build time of the models that spilled / all build time) below 25%
+      → no signal; model share (models that spilled / models built) at or below 25% →
+      route the models, above → size up the job; time share at or above 75% → actionable,
+      else monitor. Default vars.
+
+      Cases:
+        - j1 (WH_A): 1 of 5 models spills and takes 90% → route, actionable. WH_A also
+          runs j3 and j4, so it's shared. Candidates one size up (Large): WH_L1, WH_L2.
+        - j2 (WH_B, alone): 2 of 2 spill, 100% → size up, actionable, not shared.
+        - j3 (WH_A): 1 of 2 spills (50%), 50% of time → size up, monitor.
+        - j4 (WH_A): 1 of 4 spills, 3% of time → no signal.
+        - A run outside the dbt platform with invocation_id in its query comment (WH_C,
+          Small) is its own job, 'invocation:inv1': 1 of 4 (25%) → route, 91% →
+          actionable. Candidates one size up (Medium), dbt-building warehouses first:
+          WH_A (11 builds), WH_B (2), WH_M (none).
+        - A build with neither job id nor invocation id is left out.
+    model: int_snowflake__dbt_job_spillage
+    given:
+      - input: ref('int_snowflake__query_history')
+        rows:
+          - {dbt_node_id: model.p.j1_m1, query_start_time: 2099-01-01, dbt_cloud_job_id: j1, dbt_cloud_run_id: r1, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 900000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j1_m2, query_start_time: 2099-01-01, dbt_cloud_job_id: j1, dbt_cloud_run_id: r1, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 25000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j1_m3, query_start_time: 2099-01-01, dbt_cloud_job_id: j1, dbt_cloud_run_id: r1, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 25000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j1_m4, query_start_time: 2099-01-01, dbt_cloud_job_id: j1, dbt_cloud_run_id: r1, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 25000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j1_m5, query_start_time: 2099-01-01, dbt_cloud_job_id: j1, dbt_cloud_run_id: r1, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 25000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j2_m1, query_start_time: 2099-01-01, dbt_cloud_job_id: j2, dbt_cloud_run_id: r2, query_text: 'create table x', warehouse_name: WH_B, execution_time_ms: 50000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j2_m2, query_start_time: 2099-01-01, dbt_cloud_job_id: j2, dbt_cloud_run_id: r2, query_text: 'create table x', warehouse_name: WH_B, execution_time_ms: 50000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j3_m1, query_start_time: 2099-01-01, dbt_cloud_job_id: j3, dbt_cloud_run_id: r3, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 50000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j3_m2, query_start_time: 2099-01-01, dbt_cloud_job_id: j3, dbt_cloud_run_id: r3, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 50000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j4_m1, query_start_time: 2099-01-01, dbt_cloud_job_id: j4, dbt_cloud_run_id: r4, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 10000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j4_m2, query_start_time: 2099-01-01, dbt_cloud_job_id: j4, dbt_cloud_run_id: r4, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 100000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j4_m3, query_start_time: 2099-01-01, dbt_cloud_job_id: j4, dbt_cloud_run_id: r4, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 100000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.j4_m4, query_start_time: 2099-01-01, dbt_cloud_job_id: j4, dbt_cloud_run_id: r4, query_text: 'create table x', warehouse_name: WH_A, execution_time_ms: 100000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.i_m1, query_start_time: 2099-01-01, dbt_cloud_job_id: null, dbt_cloud_run_id: null, query_text: '/* {"invocation_id": "inv1"} */ create table x', warehouse_name: WH_C, execution_time_ms: 300000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.i_m2, query_start_time: 2099-01-01, dbt_cloud_job_id: null, dbt_cloud_run_id: null, query_text: '/* {"invocation_id": "inv1"} */ create table x', warehouse_name: WH_C, execution_time_ms: 10000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.i_m3, query_start_time: 2099-01-01, dbt_cloud_job_id: null, dbt_cloud_run_id: null, query_text: '/* {"invocation_id": "inv1"} */ create table x', warehouse_name: WH_C, execution_time_ms: 10000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.i_m4, query_start_time: 2099-01-01, dbt_cloud_job_id: null, dbt_cloud_run_id: null, query_text: '/* {"invocation_id": "inv1"} */ create table x', warehouse_name: WH_C, execution_time_ms: 10000, bytes_spilled_local: 0, bytes_spilled_remote: 0}
+          - {dbt_node_id: model.p.adhoc, query_start_time: 2099-01-01, dbt_cloud_job_id: null, dbt_cloud_run_id: null, query_text: 'create table x', warehouse_name: WH_C, execution_time_ms: 999000, bytes_spilled_local: 1073741824, bytes_spilled_remote: 0}
+      - input: ref('int_snowflake__warehouse_config')
+        rows:
+          - {warehouse_name: WH_A,  current_size: MEDIUM}
+          - {warehouse_name: WH_B,  current_size: Medium}
+          - {warehouse_name: WH_C,  current_size: Small}
+          - {warehouse_name: WH_M,  current_size: MEDIUM}
+          - {warehouse_name: WH_L1, current_size: LARGE}
+          - {warehouse_name: WH_L2, current_size: Large}
+    expect:
+      rows:
+        - {job_key: j1,              signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: true,  candidate_warehouses: 'WH_L1, WH_L2'}
+        - {job_key: j2,              signal_id: spillage_job_scale_up, backlog_status: actionable, warehouse_shared: false, candidate_warehouses: 'WH_L1, WH_L2'}
+        - {job_key: j3,              signal_id: spillage_job_scale_up, backlog_status: monitor,    warehouse_shared: true,  candidate_warehouses: 'WH_L1, WH_L2'}
+        - {job_key: j4,              signal_id: null,                  backlog_status: null,       warehouse_shared: true,  candidate_warehouses: 'WH_L1, WH_L2'}
+        - {job_key: 'invocation:inv1', signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: false, candidate_warehouses: 'WH_A, WH_B, WH_M'}

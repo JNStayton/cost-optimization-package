@@ -94,6 +94,32 @@ table_spill_evidence as (
     group by sp.table_fqn
 ),
 
+-- Job-level spillage (int_snowflake__dbt_job_spillage): the spilling models of jobs where
+-- routing is recommended, one row per model (the job where it dominates most).
+job_route_models as (
+    select
+        jm.*,
+        dr.table_fqn                                                as model_table_fqn,
+        coalesce(dr.model_name, split_part(jm.model_node_id, '.', 3)) as route_model_name,
+        coalesce(dr.table_fqn, jm.model_node_id)                    as route_entity
+    from (
+        select
+            js.*,
+            sm.value:node_id::string    as model_node_id,
+            sm.value:build_s::float     as model_build_s,
+            sm.value:gb_spilled::float  as model_gb_spilled
+        from {{ ref('int_snowflake__dbt_job_spillage') }} as js,
+            lateral flatten(input => js.spilling_models) as sm
+        where js.signal_id = 'spillage_route_models'
+    ) as jm
+    left join {{ ref('int_dbt__relations') }} as dr
+        on dr.dbt_model = jm.model_node_id
+    qualify row_number() over (
+        partition by jm.model_node_id
+        order by jm.spilling_time_share_pct desc, jm.job_key
+    ) = 1
+),
+
 -- Hours saved and cost change for spillage recommendations, joined on in enriched.
 spill_effects as (
     -- Scale-ups of one table's warehouse: from the performance model
@@ -114,6 +140,31 @@ spill_effects as (
         round(tse.spill_blocked_s_total / 3600.0 * {{ annualize_spillage }}, 2),
         null
     from table_spill_evidence as tse
+
+    union all
+
+    -- Routed models: their build time, one size up
+    select
+        'spillage_route_models',
+        jrm.route_entity,
+        round(jrm.model_build_s * (1 - 1 / (2 * jrm.scale_up_efficiency)) / 3600.0 * {{ annualize_spillage }}, 2),
+        round(jrm.model_build_s
+              * coalesce({{ warehouse_credits_per_hour('jrm.warehouse_current_size') }}, 1) / 3600.0
+              * (1 / jrm.scale_up_efficiency - 1) * {{ annualize_spillage }} * {{ credit_rate_usd }}, 2)
+    from job_route_models as jrm
+
+    union all
+
+    -- A job sized up: its whole build time, one size up
+    select
+        'spillage_job_scale_up',
+        'dbt job ' || js.job_key,
+        round(js.build_s * (1 - 1 / (2 * js.scale_up_efficiency)) / 3600.0 * {{ annualize_spillage }}, 2),
+        round(js.build_s
+              * coalesce({{ warehouse_credits_per_hour('js.warehouse_current_size') }}, 1) / 3600.0
+              * (1 / js.scale_up_efficiency - 1) * {{ annualize_spillage }} * {{ credit_rate_usd }}, 2)
+    from {{ ref('int_snowflake__dbt_job_spillage') }} as js
+    where js.signal_id = 'spillage_job_scale_up'
 
     union all
 
@@ -331,6 +382,91 @@ all_recommendations as (
     ) as sp_agg
     left join warehouse_list_rates as wlr on wlr.warehouse_name = sp_agg.warehouse_name
     left join warehouse_spill_runtime as wsq on wsq.warehouse_name = sp_agg.warehouse_name
+
+    union all
+
+    -- =========================================================================
+    -- JOB-LEVEL SPILLAGE: ROUTE MODELS
+    -- A few models take most of a job's build time by spilling: route them to a larger
+    -- warehouse with snowflake_warehouse instead of resizing the job's warehouse.
+    -- Savings null (a size-up trades credits for time; see spill_effects).
+    -- =========================================================================
+    select
+        'warehouse' as domain,
+        jrm.route_entity as entity_name,
+        jrm.model_table_fqn as table_fqn,
+        jrm.model_node_id as dbt_model,
+        jrm.route_model_name as model_name,
+        jrm.warehouse_name,
+        'Route this model to a larger warehouse' as recommendation,
+        jrm.evidence
+            || ' Route the spilling models to a warehouse one size up ('
+            || coalesce(jrm.next_warehouse_size, 'larger') || ') with snowflake_warehouse, instead of resizing '
+            || 'the whole job''s warehouse. Candidate warehouses: '
+            || coalesce(jrm.candidate_warehouses, 'none found')
+            || '; or create or choose a warehouse your role can use.' as recommendation_reason,
+        'config_change' as effort_category,
+        jrm.model_gb_spilled as score,
+        jrm.model_build_s
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
+            * {{ annualize_spillage }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+        null::float as estimated_annual_savings_usd,
+        null as snowflake_ddl,
+        jrm.snapshot_date,
+        jrm.backlog_status,
+        '{% raw %}{{ config(snowflake_warehouse=''{% endraw %}'
+            || coalesce(split_part(jrm.candidate_warehouses, ', ', 1), '<larger warehouse>')
+            || '{% raw %}'') }}{% endraw %}' as dbt_model_config,
+        null as identified_unique_key,
+        'spillage_route_models' as signal_id
+    from job_route_models as jrm
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = jrm.warehouse_name
+
+    union all
+
+    -- =========================================================================
+    -- JOB-LEVEL SPILLAGE: SIZE UP THE JOB
+    -- Spill is spread across the job's models: run the job one size up. When the
+    -- warehouse also runs other jobs, recommend a dedicated warehouse instead of resizing
+    -- the shared one (no DDL).
+    -- =========================================================================
+    select
+        'warehouse' as domain,
+        'dbt job ' || js.job_key as entity_name,
+        null as table_fqn,
+        null as dbt_model,
+        null as model_name,
+        js.warehouse_name,
+        iff(js.warehouse_shared, 'Give this job a dedicated larger warehouse',
+            'Scale up this job''s warehouse') as recommendation,
+        js.evidence
+            || ' Spill is spread across the job''s models, so routing a few won''t help: run the job one size up ('
+            || coalesce(js.next_warehouse_size, 'no larger size') || ').'
+            || iff(js.warehouse_shared,
+                   ' Its warehouse, ' || js.warehouse_name || ', also runs other jobs: give this job a dedicated '
+                   || 'warehouse (in its environment settings, or with snowflake_warehouse) instead of resizing the shared one.',
+                   '')
+            || coalesce(' About ' || to_varchar(round(2 * js.scale_up_efficiency, 1)) || 'x faster, '
+                || iff(js.scale_up_efficiency < 1,
+                       'about +' || to_varchar(round((1 / js.scale_up_efficiency - 1) * 100)) || '% credits.',
+                       'about the same credits.'), '') as recommendation_reason,
+        'config_change' as effort_category,
+        js.total_gb_spilled as score,
+        js.build_s
+            * coalesce(wlr.credits_per_hour, 1) / 3600.0
+            * {{ annualize_spillage }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+        null::float as estimated_annual_savings_usd,
+        iff(js.warehouse_shared, null,
+            'ALTER WAREHOUSE ' || js.warehouse_name || ' SET WAREHOUSE_SIZE = ''' || js.next_warehouse_size || ''';')
+            as snowflake_ddl,
+        js.snapshot_date,
+        js.backlog_status,
+        null as dbt_model_config,
+        null as identified_unique_key,
+        'spillage_job_scale_up' as signal_id
+    from {{ ref('int_snowflake__dbt_job_spillage') }} as js
+    left join warehouse_list_rates as wlr on wlr.warehouse_name = js.warehouse_name
+    where js.signal_id = 'spillage_job_scale_up'
 
     union all
 
@@ -826,6 +962,9 @@ ranked as (
                 'add_clustering_key_strong', 'add_clustering_key_good',
                 'add_clustering_key_evaluate'
             ) then 3
+            -- Job-level spillage: rank 4 when actionable, 5 (monitor) otherwise
+            when e.signal_id in ('spillage_route_models', 'spillage_job_scale_up')
+                then iff(e.backlog_status = 'actionable', 4, 5)
             -- Rank 4: Conditional warehouse config (deferred behind model fixes)
             when e.signal_id in (
                 'spillage_scale_up', 'spillage_sql_refactor',

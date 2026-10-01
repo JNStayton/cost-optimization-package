@@ -301,6 +301,8 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 |----------|---------|-------------|
 | `table_materialization_lookback_days` | `14` | Lookback window for view query history. |
 | `table_materialization_min_query_count` | `10` | Minimum queries for a view to appear in results. |
+| `table_materialization_view_probe_limit` | `10` | Most views the view probe measures per run (`select hash_agg(*)` on views in view chains); `0` turns it off. |
+| `table_materialization_view_probe_refresh_days` | `7` | Re-probe a view after this many days. |
 | `incremental_overlap_days` | `31` | Re-scan window on all incremental runs (including first build). Set to at least your longest gap between package builds. Default supports monthly cadence. Reduce to 7 if running weekly. |
 | `incremental_unique_key_probe_threshold` | `0.95` | Uniqueness ratio threshold for key candidate detection. |
 | `incremental_candidates_lookback_days` | `60` | Lookback window for table rebuild history. |
@@ -323,6 +325,10 @@ Note: overriding package vars in your `dbt_project.yml` `vars:` section is **not
 | `spillage_lookback_days` | `30` | Analysis window for spillage recommendations. |
 | `spillage_min_total_gb` | `0.05` | Minimum total spillage (GB) to appear in results. |
 | `spillage_min_runs` | `1` | Minimum DML/CTAS runs to appear in results. |
+| `spillage_aggregate_threshold_gb` | `100` | Total spillage across a warehouse's models that triggers a warehouse-level scale-up. |
+| `spillage_job_min_time_share_pct` | `25` | Job-level spillage: below this share of a job's build time taken by spilling models, no recommendation. |
+| `spillage_job_actionable_time_share_pct` | `75` | Job-level spillage: at or above this share, the recommendation is actionable; between the two, monitor. |
+| `spillage_job_routing_max_model_share_pct` | `25` | Job-level spillage: at or below this share of models spilling, route those models to a larger warehouse; above it, size up the job. |
 | `expensive_query_lookback_days` | `30` | Analysis window for expensive queries. |
 | `credit_rate_usd` | `2` | Credit-to-dollar conversion rate (your contract rate). Used across all domains for cost estimation. |
 | `expensive_query_high_cost_threshold` | `10000` | Annual projected cost threshold for "High Cost" tier. |

@@ -212,6 +212,9 @@ vars:
   spillage_min_total_gb: 0.05
   spillage_min_runs: 1
   spillage_aggregate_threshold_gb: 100  # Total spillage across all models to trigger warehouse-level scale-up
+  spillage_job_min_time_share_pct: 25          # Below this share of a job's build time taken by spilling models, no job-level recommendation
+  spillage_job_actionable_time_share_pct: 75   # At or above it, job-level recommendations are actionable; between the two, monitor
+  spillage_job_routing_max_model_share_pct: 25 # At or below this share of models spilling, route those models; above it, size up the job
   expensive_query_lookback_days: 30
   credit_rate_usd: 2
   expensive_query_high_cost_threshold: 500

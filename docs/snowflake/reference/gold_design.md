@@ -360,6 +360,17 @@ At `eff`, the runtime falls to `T / (2 × eff)` at twice the rate. Our own calib
 
 **SQL refactors are priced from measured spill.** The `extract_spill_evidence` post-hook reads `GET_QUERY_OPERATOR_STATS` for a sample of each spilling table's queries (the most recent per query shape, last 14 days, into `int_snowflake__query_spill_evidence`). For each, `spill_blocked_s` is the execution time × the disk I/O share of the operators with spilling statistics; other disk I/O (scans, cache reads) isn't spill. The sample is scaled to all the table's spilling queries: `spill_blocked_s_total = sampled blocked_s × spilling_execution_s / sampled execution_s`. Blocked time is a lower bound on what removing the spill saves. Without operator stats (no MONITOR on the warehouse, or queries older than 14 days) the savings and hours are null.
 
+**Job-level spillage.** Per-table and per-warehouse spillage miss a common pattern: a few models dominate a dbt job's build time by spilling. `int_snowflake__dbt_job_spillage` rolls each job's builds up over the window (jobs from `dbt_cloud_job_id` in dbt's query comment; for runs outside the dbt platform, add `invocation_id` to your `query-comment` and each invocation is treated as a one-run job):
+
+| Model share (spilling / built) | Time share (spilling models' build time / all) | Signal | Status | Rank | Surfaces in |
+|---|---|---|---|---|---|
+| ≤ 25% | ≥ 75% | `spillage_route_models` | actionable | 4 | `vw_snowflake__dbt_model_optimizations` (one row per routed model, with a `snowflake_warehouse` config) |
+| > 25% | ≥ 75% | `spillage_job_scale_up` | actionable | 4 | `vw_snowflake__warehouse_optimizations` (entity `dbt job <id>`) |
+| either | 25–75% | the same signal, by model share | monitor | 5 | same |
+| any | < 25% | none | | | |
+
+The thresholds are the `spillage_job_*` vars. Routing and sizing up are alternatives for the same job, so a job gets one or the other. Routing names candidate warehouses one size up (existing warehouses at twice the credit rate, ones already running dbt builds first). A job size-up includes DDL unless other jobs share the warehouse; then it recommends a dedicated warehouse instead of resizing the shared one. Both are priced like scale-ups: cost from build time (the routed model's, or the whole job's), savings null, and hours saved and cost change from the efficiency curve.
+
 Null savings aren't demoted by `min_annual_savings_usd`, so scale-ups stay actionable. Earlier versions estimated cost from spilled GB (0.5 s per local GB, 5 s per remote GB, 70% savings); those constants were invented and are gone.
 
 #### Clustering

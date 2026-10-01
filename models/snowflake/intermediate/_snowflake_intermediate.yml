@@ -319,6 +319,24 @@ models:
       chain, and drives the view probe and the one-view-per-chain choice.
 
   # ===========================================================================
+  # int_snowflake__dbt_job_spillage
+  # ===========================================================================
+  - name: int_snowflake__dbt_job_spillage
+    description: >
+      Job-level spillage, one row per dbt job over spillage_lookback_days. Jobs come
+      from dbt_cloud_job_id in dbt's query comment; a run outside the dbt platform with
+      invocation_id in its query comment is its own job ('invocation:<id>'). Per job:
+      models built and spilling (spilling_model_share_pct), build time and the spilling
+      models' share of it (spilling_time_share_pct), spill GB, the warehouse (and
+      whether other jobs share it), the spilling models with their build seconds, and
+      candidate warehouses one size up (dbt-building ones first, at most five). The rule
+      (spillage_job_* vars): spilling_time_share_pct below the minimum → no signal;
+      model share at or below the routing maximum → spillage_route_models, above →
+      spillage_job_scale_up; time share at or above the actionable threshold →
+      actionable, else monitor. evidence states both shares, e.g. "3 of 16 models (19%)
+      took 92% of this job's build time".
+
+  # ===========================================================================
   # int_snowflake__query_spill_evidence
   # ===========================================================================
   - name: int_snowflake__query_spill_evidence

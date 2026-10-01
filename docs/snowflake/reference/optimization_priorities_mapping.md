@@ -114,6 +114,8 @@ Wait for model-level fixes unless no blocking model signal exists.
 | `overload_scale_up_large_mcw` | config_change | Scale up (MCW at ceiling) | overload > 10% AND max >= 10 | Same deferral logic | Last resort — cluster ceiling reached |
 | `spillage_scale_up` | config_change | Scale up warehouse (heavy spillage) | Any remote spill, or heavy local spill on a warehouse smaller than X-Large | Deferred if clustering/incremental signal exists for spilling models | Key cross-domain deferral example |
 | `spillage_sql_refactor` | sql_refactor | Refactor the spilling SQL (scaling has diminishing returns) | Heavy local spill on an X-Large or larger warehouse | Same deferral logic | No DDL; maps from the `local_heavy_large_wh` tier |
+| `spillage_route_models` | config_change | Route a job's dominant spilling models to a larger warehouse (`snowflake_warehouse`) | ≤ 25% of the job's models spill AND they take ≥ 75% of its build time | Same deferral logic | One row per model; shows in `vw_snowflake__dbt_model_optimizations` |
+| `spillage_job_scale_up` | config_change | Size up the job's warehouse (or give it a dedicated one if shared) | > 25% of the job's models spill AND they take ≥ 75% of its build time | Same deferral logic | Alternative to routing: one per job; shows in `vw_snowflake__warehouse_optimizations` |
 | `oversized_scale_down` | config_change | Scale down warehouse | load < 50% AND exec < 0.5s AND no queuing AND not smallest | Deferred if incremental/materialization signal exists for models on warehouse | Don't scale down if model changes will reduce load |
 | `oversized_disable_mcw` | config_change | Disable MCW (oversized) | load < 30% AND MCW AND no queuing | Same logic as scale_down | |
 
@@ -133,6 +135,7 @@ Requires workload planning — not simple config flips.
 |-----------|----------------|---------------|-------------------|-------|
 | `spillage_moderate_worsening` | monitoring | Monitor — moderate spillage trending worse | moderate spill AND trend worsening | Early warning |
 | `spillage_moderate_stable` | monitoring | Monitor — moderate spillage stable | moderate spill AND trend stable | Informational only |
+| `spillage_route_models`, `spillage_job_scale_up` (monitor) | config_change | Job-level spillage between the time-share thresholds | spilling models take 25–75% of a job's build time | Rank 5 while monitor; rank 4 when actionable |
 | `expensive_query_monitor` | monitoring | Monitor — recurring credit consumption | cost trend worsening | Informational; does not block promotion |
 
 ### Warehouse Domain — Other (Hierarchy Rank 1)

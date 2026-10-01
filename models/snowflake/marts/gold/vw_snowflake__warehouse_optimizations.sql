@@ -57,7 +57,9 @@ config_recs as (
           'overload_increase_clusters', 'overload_scale_up_large_mcw',
           'oversized_scale_down', 'oversized_disable_mcw',
           'overload_at_max_standard', 'idle_consolidate_standard',
-          'idle_consolidate_underloaded', 'provisioning_gen2'
+          'idle_consolidate_underloaded', 'provisioning_gen2',
+          -- Job-level spillage: one row per job (entity 'dbt job <id>')
+          'spillage_job_scale_up'
       )
       and ar.backlog_status in ('actionable', 'monitor')
 ),

@@ -88,7 +88,9 @@ ranked as (
     left join {{ ref('fct_snowflake__table_materialization_candidates') }} as tm
         on tm.table_fqn = ar.table_fqn
         and ar.signal_id = 'materialize_as_table'
-    where ar.domain in ('materialization', 'clustering')
+    where (ar.domain in ('materialization', 'clustering')
+           -- Job-level spillage routing is a dbt config change on the model
+           or ar.signal_id = 'spillage_route_models')
       and ar.backlog_status = 'actionable'
 )
 
