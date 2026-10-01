@@ -333,6 +333,42 @@ select
 {%- endif %}
 {%- endfor %}
 {#-
+  Job-level spillage (phase S3): dbt platform jobs (dbt_cloud_job_id / dbt_cloud_run_id in
+  the query comment), 2 runs each, 1 and 2 days ago, building models that only exist in
+  query history (job<J>_m<K>). (job, warehouse, models, spilling models, spilling model s,
+  other model s):
+    - 7001 on BUSY: 2 of 10 spill and take 91% of build time → route those models (actionable)
+    - 7002 alone on JOBS: 4 of 8 spill (50%), 91% of time → size up the job (actionable, DDL)
+    - 7003 on BUSY: 2 of 10 spill, 45% of time → route (monitor)
+    - 7004 on BUSY: 1 of 10 spills, 7% of time → no recommendation
+  Run from a non-dbt session, so they don't change the user attribution results.
+-#}
+{%- set dbt_jobs = [
+    (7001, 'FIXTURE_WH_BUSY', 10, 2, 400, 10),
+    (7002, 'FIXTURE_WH_JOBS', 8,  4, 200, 20),
+    (7003, 'FIXTURE_WH_BUSY', 10, 2, 100, 30),
+    (7004, 'FIXTURE_WH_BUSY', 10, 1, 20,  30),
+] %}
+{% for job, wh, n_models, n_spilling, spill_s, other_s in dbt_jobs %}
+{%- for run in range(2) %}
+{%- for m in range(n_models) %}
+{%- set spills = m < n_spilling %}
+union all
+select
+    'job_{{ job }}_r{{ run }}_m{{ m }}', dateadd(hour, -(2 + {{ m }}), dateadd(day, -{{ run + 1 }}, current_timestamp())),
+    'hash_job_{{ job }}_m{{ m }}', 'phash_job_{{ job }}_m{{ m }}',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', '{{ wh }}', 'Medium',
+    {{ (spill_s if spills else other_s) * 1000 }}, 1048576, 100, 0, 0,
+    'CREATE_TABLE_AS_SELECT', {{ (spill_s if spills else other_s) * 1000 }}, 1, 1,
+    {{ gb * 2 if spills else 0 }}, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.job{{ job }}_m{{ m }}", '
+        || '"dbt_cloud_job_id": "{{ job }}", "dbt_cloud_run_id": "{{ job }}{{ run }}"} */ '
+        || 'create or replace transient table {{ target.database }}.{{ target.schema }}.job{{ job }}_m{{ m }} as (select 1 as id)',
+    1, 'SUCCESS', 1000
+{%- endfor %}
+{%- endfor %}
+{%- endfor %}
+{#-
   Relation history: a second deployment of demo_orders, in <schema>_deploy under target
   'prod' with a dbt platform environment id. Run from a non-dbt session so it only
   feeds relation history (not the warehouse, expensive query or user attribution

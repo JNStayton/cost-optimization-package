@@ -66,6 +66,15 @@ expected as (
     union all select 'warehouse',       'idle_reduce_auto_suspend',   'fixture_wh_idle',         'actionable',  96.00
     union all select 'warehouse',       'provisioning_gen2',          'fixture_wh_cold',         'actionable',  14.40
     union all select 'warehouse',       '{{ busy_2xl_signal }}',      'fixture_wh_busy_2xl',     'actionable',  14.40
+    {#- Job-level spillage (both editions; dbt platform job ids in the query comment):
+        routing for job 7001's two dominant spillers (actionable) and job 7003's (monitor,
+        45% of build time), and a dedicated-warehouse size-up for job 7002. The column holds
+        the cost: build seconds x Medium (4/hour) / 3600 x 365/30 x $2. #}
+    union all select 'warehouse', 'spillage_route_models',  'job7001_m0',   'actionable', 21.63
+    union all select 'warehouse', 'spillage_route_models',  'job7001_m1',   'actionable', 21.63
+    union all select 'warehouse', 'spillage_route_models',  'job7003_m0',   'monitor',     5.41
+    union all select 'warehouse', 'spillage_route_models',  'job7003_m1',   'monitor',     5.41
+    union all select 'warehouse', 'spillage_job_scale_up',  'dbt job 7002', 'actionable', 47.59
 {%- if var('snowflake_enterprise_edition', true) %}
     {#- Spillage (Enterprise edition): signal and status from the tier key. Scale-up savings
         are null (so the $1 floor doesn't demote them); the column holds the cost:

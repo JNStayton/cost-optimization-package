@@ -3,11 +3,15 @@
   earlier slices put in. One row per check; returns only failed checks.
     - all_recommendations: no recommendation appears twice (the integration project keeps a
       stale clustering snapshot beside the current one; only the latest may be read).
-    - optimization_backlog: the 13 non-stable recommendations (the demoted clustering one
+    - optimization_backlog: the 18 non-stable recommendations (the demoted clustering one
       is left out), including both view chain views (one actionable, its alternative
       monitor).
-    - cost_savings_summary: actionable counts per domain (warehouse 5, materialization 5:
+    - cost_savings_summary: actionable counts per domain (warehouse 8, materialization 5:
       only the recommended view of the chain, not its alternative).
+    - Job-level spillage (both editions) adds 5 backlog rows: routing for job 7001's two
+      models and job 7002's size-up (actionable, 3 more warehouse rows), and job 7003's
+      routing (monitor). The routed models show in dbt_model_optimizations, and the job
+      size-up in warehouse_optimizations (FIXTURE_WH_JOBS).
     - top_recommendations: FIXTURE_WH_BUSY's scale-up ranks first (tier 1; the pricier
       expensive-query signal is tier 2).
     - warehouse_optimizations: FIXTURE_WH_BUSY (scale-up, expensive query),
@@ -44,7 +48,7 @@ with checks as (
     union all
     select 'optimization_backlog rows',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }})::varchar as produced,
-           '{{ 20 if is_enterprise else 13 }}' as expected
+           '{{ 25 if is_enterprise else 18 }}' as expected
     union all
     select 'optimization_backlog excludes demoted DEMO_EVENTS',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }}
@@ -52,7 +56,7 @@ with checks as (
     union all
     select 'cost_savings_summary counts',
            (select listagg(domain || '=' || total_recommendations, ',') within group (order by domain)
-            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=5,warehouse={{ 9 if is_enterprise else 5 }}'
+            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=5,warehouse={{ 12 if is_enterprise else 8 }}'
     union all
     select 'top_recommendations rank 1',
            (select listagg(signal_id || '@' || warehouse_name, ',') from {{ ref('vw_snowflake__top_recommendations') }}
@@ -69,13 +73,14 @@ with checks as (
            || '{{ "FIXTURE_WH_HEALTHY:spillage," if is_enterprise else "" }}'
            || 'FIXTURE_WH_IDLE:idle_reduce_auto_suspend'
            || '{{ ",FIXTURE_WH_IDLE:spillage" if is_enterprise else "" }}'
+           || ',FIXTURE_WH_JOBS:spillage_job_scale_up'
     union all
     select 'dbt_model_optimizations models',
            (select listagg(iff(startswith(model_name, 'demo_chain_'),
                                'chain_' || chain_role || ':' || recompute_cost_source, model_name), ',')
                    within group (order by model_name)
             from {{ ref('vw_snowflake__dbt_model_optimizations') }}),
-           'chain_recommended:probe,demo_infrequent_builds,demo_logs,demo_orders,demo_slow_view'
+           'chain_recommended:probe,demo_infrequent_builds,demo_logs,demo_orders,demo_slow_view,job7001_m0,job7001_m1'
     union all
     select 'top_expensive_queries',
            (select listagg(model_name || ':' || co_occurring_fixes, ',') within group (order by model_name)

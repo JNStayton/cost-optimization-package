@@ -8,6 +8,8 @@
   row (credits / compute credits). Query times are in ms; load is QUERY_LOAD_PERCENT.
   event_size uses WAREHOUSE_EVENTS_HISTORY's format (XSMALL); qh_size uses
   QUERY_HISTORY's (X-Small). node_id, when set, goes in a dbt query comment.
+  JOBS is for the job-level spillage slice: a Medium warehouse that runs one dbt platform
+  job alone, shaped like HEALTHY so it gets no config recommendation of its own.
 -#}
 {% macro demo_warehouse_catalog() %}
   {{ return([
@@ -38,6 +40,9 @@
      'elapsed': 2000, 'exec': 2000, 'overload': 0, 'provisioning': 0, 'load': 60,
      'credits': 1.0, 'compute': 0.95, 'autosuspends': 0, 'suspended_last': false,
      'node_id': 'model.cost_optimization_integration_tests.demo_logs'},
+    {'name': 'FIXTURE_WH_JOBS',       'id': 800010, 'session_id': 111, 'event_size': 'MEDIUM', 'qh_size': 'Medium',
+     'elapsed': 2000, 'exec': 2000, 'overload': 0, 'provisioning': 0, 'load': 60,
+     'credits': 1.0, 'compute': 0.95, 'autosuspends': 0, 'suspended_last': false, 'node_id': none},
     {'name': 'FIXTURE_WH_SUSPENDED',  'id': 800007, 'session_id': 107, 'event_size': 'XSMALL', 'qh_size': 'X-Small',
      'elapsed': 100, 'exec': 100, 'overload': 0, 'provisioning': 0, 'load': 10,
      'credits': 1.0, 'compute': 0.95, 'autosuspends': 0, 'suspended_last': true, 'node_id': none},

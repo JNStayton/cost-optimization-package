@@ -9,7 +9,7 @@
     - BUSY_6XL (6X-Large, queued; the largest size)  → split workloads, no DDL
     - COLD (5 s median provisioning wait)           → move to Gen2
     - OVERSIZED (Large, 10% load, 0.1 s queries)    → scale down to Medium
-    - HEALTHY                                       → stable, no DDL
+    - HEALTHY, JOBS                                 → stable, no DDL
     - BUILD (the incremental slice's dbt builds; no metering or events) → stable, no DDL
     - SUSPENDED (X-Small, oversized metrics; latest event is an auto-suspend, which
       carries no size)                              → already at minimum, no DDL
@@ -42,6 +42,7 @@ expected as (
     union all select 'FIXTURE_WH_COLD',      'provisioning_gen2',          'ALTER WAREHOUSE FIXTURE_WH_COLD SET RESOURCE_CONSTRAINT = ''STANDARD_GEN_2'';'
     union all select 'FIXTURE_WH_OVERSIZED', 'oversized_scale_down',       'ALTER WAREHOUSE FIXTURE_WH_OVERSIZED SET WAREHOUSE_SIZE = ''MEDIUM'';'
     union all select 'FIXTURE_WH_HEALTHY',   'stable',                     null
+    union all select 'FIXTURE_WH_JOBS',      'stable',                     null
     union all select 'FIXTURE_WH_BUILD',     'stable',                     null
     union all select 'FIXTURE_WH_SUSPENDED', 'oversized_at_minimum',       null
 )
