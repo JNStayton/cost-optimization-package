@@ -58,6 +58,8 @@ Fixed position in the optimization decision hierarchy — determines which type 
 | 5 | Monitor signals (expensive queries, moderate spillage) | Informational — no action template |
 | 6 | AI/Cortex | Different optimization surface |
 
+The hierarchy is defined once, in the `ranked` CTE of `int_snowflake__all_recommendations`. The priority window and every downstream view read `hierarchy_rank` from there, so a signal's rank cannot drift between models.
+
 ### Cascade Behavior
 
 When an optimization is applied:
@@ -110,7 +112,8 @@ Wait for model-level fixes unless no blocking model signal exists.
 | `overload_scale_up_standard` | config_change | Scale up (Standard edition) | overload > 10% AND Standard AND not smallest | Same deferral logic | Standard has no MCW option |
 | `overload_increase_clusters` | config_change | Increase max clusters | overload > 10% AND MCW STANDARD AND max < 10 | Same deferral logic | Cluster ceiling not yet reached |
 | `overload_scale_up_large_mcw` | config_change | Scale up (MCW at ceiling) | overload > 10% AND max >= 10 | Same deferral logic | Last resort — cluster ceiling reached |
-| `spillage_scale_up` | config_change | Scale up warehouse (heavy spillage) | Aggregate spillage > threshold (configurable) | Deferred if clustering/incremental signal exists for spilling models | Key cross-domain deferral example |
+| `spillage_scale_up` | config_change | Scale up warehouse (heavy spillage) | Any remote spill, or heavy local spill on a warehouse smaller than X-Large | Deferred if clustering/incremental signal exists for spilling models | Key cross-domain deferral example |
+| `spillage_sql_refactor` | sql_refactor | Refactor the spilling SQL (scaling has diminishing returns) | Heavy local spill on an X-Large or larger warehouse | Same deferral logic | No DDL; maps from the `local_heavy_large_wh` tier |
 | `oversized_scale_down` | config_change | Scale down warehouse | load < 50% AND exec < 0.5s AND no queuing AND not smallest | Deferred if incremental/materialization signal exists for models on warehouse | Don't scale down if model changes will reduce load |
 | `oversized_disable_mcw` | config_change | Disable MCW (oversized) | load < 30% AND MCW AND no queuing | Same logic as scale_down | |
 

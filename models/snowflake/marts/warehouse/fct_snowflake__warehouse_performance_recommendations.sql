@@ -232,6 +232,7 @@ select
     spill_trend,
     warehouse_spill_days_30d,
     warehouse_total_gb_spilled_30d,
+    recommendation_key,
     case
         when recommendation_key = 'remote_spill'
             then 'Scale up warehouse (remote spillage detected)'
@@ -321,6 +322,7 @@ select
     null::string            as spill_trend,
     null::int               as warehouse_spill_days_30d,
     null::float             as warehouse_total_gb_spilled_30d,
+    null::string            as recommendation_key,
     'Not available — requires Enterprise edition (snowflake_enterprise_edition = true)'
                             as recommendation,
     'ACCESS_HISTORY is required for table-level spillage attribution. '

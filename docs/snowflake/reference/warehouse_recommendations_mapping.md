@@ -87,6 +87,19 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 | 4.5 | `total_gb_spilled_local BETWEEN 1 AND 50 AND spill_trend != 'Worsening'` | Any | Stable -- no action | Minor local spillage ({total_gb_spilled_local} GB, trend stable). Local SSD spill has minimal performance impact at this volume. Continue monitoring. |
 | 4.6 | `is_snowpark_optimized = FALSE AND spillage is from Snowpark/Python UDFs` | Any | `ALTER WAREHOUSE {wh} SET WAREHOUSE_TYPE = 'SNOWPARK-OPTIMIZED';` | Spillage appears driven by Snowpark/Python workloads. Snowpark-optimized warehouses provide 16x memory per node for in-memory processing. (Note: higher credit rate -- 1.5x) |
 
+**How each tier reaches the gold layer.** `fct_snowflake__warehouse_performance_recommendations` outputs the tier as `recommendation_key` (Enterprise only; null on Standard). `int_snowflake__all_recommendations` maps from that key, never from the recommendation text:
+
+| Tier | `recommendation_key` | signal_id | effort_category | backlog_status |
+|---|---|---|---|---|
+| 4.1 | `remote_spill` | `spillage_scale_up` | config_change | actionable |
+| 4.2 | `local_heavy_small_wh` | `spillage_scale_up` | config_change | actionable |
+| 4.3 | `local_heavy_large_wh` | `spillage_sql_refactor` | sql_refactor | actionable |
+| 4.4 | `local_moderate_worsening` | `spillage_moderate_worsening` | investigation | monitor |
+| 4.5 | `local_moderate_stable` | `spillage_moderate_stable` | investigation | monitor |
+| — | `local_minor` | `spillage_moderate_stable` | config_change | stable |
+
+A row whose estimated savings fall below the savings floor is shown as `stable`, whatever its tier.
+
 ---
 
 ## 5. OVERSIZED WAREHOUSE (Priority: Medium -- cost savings opportunity)

@@ -245,11 +245,22 @@ models:
       - name: warehouse_total_gb_spilled_30d
         description: Total GB spilled across all dbt queries on the associated warehouse in the 30-day window.
 
+      - name: recommendation_key
+        description: >
+          Spillage tier: remote_spill, local_heavy_small_wh, local_heavy_large_wh,
+          local_moderate_worsening, local_moderate_stable, or local_minor.
+          int_snowflake__all_recommendations maps each to a signal, effort and status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['remote_spill', 'local_heavy_small_wh', 'local_heavy_large_wh',
+                         'local_moderate_worsening', 'local_moderate_stable', 'local_minor']
+
       - name: recommendation
         description: >
-          Spillage severity tier. One of: Critical — Refactor SQL or scale up warehouse
-          (remote spillage), Warn — Refactor SQL or scale up warehouse (heavy local spillage),
-          Monitor — Moderate local spillage.
+          Spillage recommendation text: scale up (remote spill, or heavy local spill on a
+          warehouse smaller than X-Large), optimize SQL (heavy local spill on X-Large or
+          larger), monitor (moderate spill, worsening or stable), or stable (minor spill).
 
       - name: recommendation_reason
         description: >

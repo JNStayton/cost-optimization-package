@@ -101,7 +101,7 @@ model_signals as (
         max(ar.snapshot_date) as snapshot_date
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     where ar.domain = 'warehouse'
-      and ar.signal_id in ('spillage_scale_up', 'spillage_moderate_worsening', 'spillage_moderate_stable', 'expensive_query_monitor', 'expensive_query_actionable')
+      and ar.signal_id in ('spillage_scale_up', 'spillage_sql_refactor', 'spillage_moderate_worsening', 'spillage_moderate_stable', 'expensive_query_monitor', 'expensive_query_actionable')
       and ar.backlog_status in ('actionable', 'monitor')
       and ar.warehouse_name is not null
     group by ar.warehouse_name,

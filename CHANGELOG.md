@@ -37,6 +37,7 @@ First public release: one package with a shared design across Snowflake, Databri
 - A data test that warns when any recommendation's estimated savings exceed its estimated cost, as a check on the cost formulas against your real data.
 - `dbt_excluded_schemas` and `dbt_excluded_targets` leave dev deployments out of recommendations. Nothing is excluded by default.
 - Clustering key evidence counts a column's filters only from queries that scan the table itself, matching column names whole, so filter shares (and savings) can't exceed their totals and short column names don't pick up longer ones' filters.
+- Spillage recommendations reach the gold layer by tier (`recommendation_key`), not by matching recommendation text. Heavy local spill on X-Large and larger warehouses is a separate `spillage_sql_refactor` signal (effort `sql_refactor`), and moderate spill is `monitor`. The priority hierarchy is defined once, so a signal's rank is the same in every gold view.
 - Environment counts are per deployment (physical table): a table built under several target names counts once, and recommendations aren't repeated for it.
 - Tolerates non-dbt query traffic: query comments and session metadata that aren't valid JSON are treated as non-dbt activity instead of failing the build.
 - Clustering operator evidence skips queries on warehouses the package's role can't monitor, instead of failing the build, and logs a per-table coverage summary. Grant `MONITOR` on those warehouses for full coverage (see the Snowflake permissions docs).

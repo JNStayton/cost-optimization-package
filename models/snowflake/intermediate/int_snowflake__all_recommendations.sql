@@ -143,9 +143,12 @@ all_recommendations as (
         sp.warehouse_name,
         sp.recommendation,
         sp.recommendation_reason,
-        case
-            when sp.total_gb_spilled_remote > 0 then 'sql_refactor'
-            when sp.total_gb_spilled_local > 50 then 'sql_refactor'
+        -- Signal, effort and status come from the performance model's tier key, not the
+        -- recommendation text (text matching mislabeled three tiers).
+        case sp.recommendation_key
+            when 'local_heavy_large_wh' then 'sql_refactor'
+            when 'local_moderate_worsening' then 'investigation'
+            when 'local_moderate_stable' then 'investigation'
             else 'config_change'
         end as effort_category,
         sp.total_gb_spilled_local + sp.total_gb_spilled_remote as score,
@@ -157,17 +160,20 @@ all_recommendations as (
             * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
         sp.snowflake_ddl,
         sp.snapshot_date,
-        case
-            when sp.recommendation like '%Monitor%' then 'monitor'
+        case sp.recommendation_key
+            when 'local_moderate_worsening' then 'monitor'
+            when 'local_moderate_stable' then 'monitor'
+            when 'local_minor' then 'stable'
             else 'actionable'
         end as backlog_status,
         null as dbt_model_config,
         null as identified_unique_key,
-        case
-            when sp.recommendation like '%Scale up%' then 'spillage_scale_up'
-            when sp.recommendation like '%moderate%' and sp.recommendation like '%worse%' then 'spillage_moderate_worsening'
-            when sp.recommendation like '%Stable%' or sp.recommendation like '%minor%' then 'spillage_moderate_stable'
-            else 'spillage_scale_up'
+        case sp.recommendation_key
+            when 'remote_spill' then 'spillage_scale_up'
+            when 'local_heavy_small_wh' then 'spillage_scale_up'
+            when 'local_heavy_large_wh' then 'spillage_sql_refactor'
+            when 'local_moderate_worsening' then 'spillage_moderate_worsening'
+            else 'spillage_moderate_stable'
         end as signal_id
     from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
     left join warehouse_list_rates as wlr on wlr.warehouse_name = sp.warehouse_name
@@ -687,7 +693,7 @@ enriched as (
 -- A signal alone on an entity is P1. Co-occurring signals are ranked by hierarchy.
 -- =========================================================================
 
-prioritized as (
+ranked as (
     select
         e.*,
         coalesce(e.node_id, e.entity_name) as dedup_key,
@@ -713,7 +719,8 @@ prioritized as (
             ) then 3
             -- Rank 4: Conditional warehouse config (deferred behind model fixes)
             when e.signal_id in (
-                'spillage_scale_up', 'overload_enable_mcw', 'overload_scale_up_standard',
+                'spillage_scale_up', 'spillage_sql_refactor',
+                'overload_enable_mcw', 'overload_scale_up_standard',
                 'overload_increase_clusters', 'overload_scale_up_large_mcw',
                 'oversized_scale_down', 'oversized_disable_mcw',
                 'overload_at_max_standard', 'idle_consolidate_standard',
@@ -728,50 +735,28 @@ prioritized as (
             when e.domain = 'ai' then 6
             -- Default
             else 5
-        end as hierarchy_rank,
-        -- Per-entity priority: rank 1 = do first for this entity
-        -- Actionable items always rank above monitor/stable regardless of hierarchy
+        end as hierarchy_rank
+    from enriched as e
+),
+
+prioritized as (
+    select
+        r.*,
+        -- Per-entity priority: rank 1 = do first for this entity.
+        -- Actionable items always rank above monitor/stable regardless of hierarchy;
+        -- then the hierarchy (defined once, above); then savings.
         row_number() over (
-            partition by coalesce(e.node_id, e.entity_name)
+            partition by r.dedup_key
             order by
-                case e.backlog_status
+                case r.backlog_status
                     when 'actionable' then 1
                     when 'monitor' then 2
                     else 3
                 end,
-                case
-                    when e.signal_id in (
-                        'idle_reduce_auto_suspend', 'idle_switch_scaling_policy',
-                        'idle_reduce_max_clusters', 'idle_reduce_min_clusters',
-                        'idle_enable_mcw_bursty',
-                        'provisioning_enable_auto_resume', 'provisioning_increase_suspend',
-                        'provisioning_increase_suspend_300', 'provisioning_warm_cluster',
-                        'overload_switch_scaling_policy'
-                    ) then 1
-                    when e.signal_id in ('convert_to_incremental', 'materialize_as_table')
-                        or e.signal_id like 'apply_incremental_%'
-                        then 2
-                    when e.signal_id in (
-                        'add_clustering_key_strong', 'add_clustering_key_good',
-                        'add_clustering_key_evaluate'
-                    ) then 3
-                    when e.signal_id in (
-                        'spillage_scale_up', 'overload_enable_mcw', 'overload_scale_up_standard',
-                        'overload_increase_clusters', 'overload_scale_up_large_mcw',
-                        'oversized_scale_down', 'oversized_disable_mcw',
-                        'overload_at_max_standard', 'idle_consolidate_standard',
-                        'idle_consolidate_underloaded', 'provisioning_gen2'
-                    ) then 4
-                    when e.signal_id in (
-                        'spillage_moderate_worsening', 'spillage_moderate_stable',
-                        'expensive_query_monitor', 'expensive_query_actionable'
-                    ) then 5
-                    when e.domain = 'ai' then 6
-                    else 5
-                end,
-                e.estimated_annual_savings_usd desc nulls last
+                r.hierarchy_rank,
+                r.estimated_annual_savings_usd desc nulls last
         ) as priority_tier
-    from enriched as e
+    from ranked as r
 )
 
 select
