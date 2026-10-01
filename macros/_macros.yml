@@ -296,6 +296,25 @@ macros:
       table_materialization_view_probe_refresh_days.
       Implemented for: snowflake.
 
+  - name: extract_spill_evidence
+    description: >
+      Post-hook on fct_snowflake__warehouse_performance_recommendations. Samples each
+      spilling table's most recent spilling query per query shape (last 14 days, up to
+      5) and records, from GET_QUERY_OPERATOR_STATS, the time its spilling operators
+      were blocked on disk in int_snowflake__query_spill_evidence. Queries the role
+      can't analyze are recorded as skipped. Enterprise edition.
+      Implemented for: snowflake.
+
+  - name: warehouse_scale_up_efficiency
+    description: >
+      SQL case expression: the scaling efficiency of the step up from a warehouse size
+      (1.00 for X-Small and Small, 0.86 Medium, 0.92 Large, 0.86 X-Large, 0.85 2X-Large,
+      0.81 3X-Large to 5X-Large, null for 6X-Large), from the Snowflake Summit session
+      "Beyond Code: Right-Sizing Your Warehouse". Snowflake only (not dispatched).
+    arguments:
+      - name: size_column
+        description: "Column or expression holding the warehouse size, in either size format."
+
   - name: relation_is_excluded
     description: >
       Returns a SQL boolean expression: true when a relation is excluded from

@@ -59,6 +59,78 @@ model_warehouses as (
     group by 1
 ),
 
+-- Spillage measurements -------------------------------------------------------------
+-- Each warehouse's spilling queries in the window: runtime for the aggregate signal's
+-- cost and its scale-up effect.
+warehouse_spill_runtime as (
+    select
+        qh.warehouse_name,
+        sum(coalesce(qh.execution_time_ms, 0)) / 1000.0 as spilling_execution_s,
+        max(wc.current_size) as warehouse_current_size
+    from {{ ref('int_snowflake__query_history') }} as qh
+    left join {{ ref('int_snowflake__warehouse_config') }} as wc
+        on wc.warehouse_name = qh.warehouse_name
+    where cast(qh.query_start_time as date) >= dateadd(day, -{{ spillage_lookback_days }}, current_date())
+      and (qh.bytes_spilled_local > 0 or qh.bytes_spilled_remote > 0)
+    group by qh.warehouse_name
+),
+
+-- Time each table's spilling operators spent blocked on disk (int_snowflake__query_spill_evidence,
+-- from operator stats on a sample of its spilling queries), scaled from the sample to all
+-- of its spilling queries: blocked_s x total runtime / sampled runtime.
+table_spill_evidence as (
+    select
+        sp.table_fqn,
+        count(*)                                    as sampled_query_count,
+        sum(ev.execution_time_s)                    as sampled_execution_s,
+        sum(ev.spill_blocked_s)                     as sampled_blocked_s,
+        sum(ev.spill_blocked_s) * max(sp.spilling_execution_s)
+            / nullif(sum(ev.execution_time_s), 0)   as spill_blocked_s_total
+    from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
+    inner join {{ ref('int_snowflake__query_spill_evidence') }} as ev
+        on ev.table_fqn = sp.table_fqn
+       and ev.evidence_status = 'ok'
+       and cast(ev.query_start_time as date) >= dateadd(day, -{{ spillage_lookback_days }}, current_date())
+    group by sp.table_fqn
+),
+
+-- Hours saved and cost change for spillage recommendations, joined on in enriched.
+spill_effects as (
+    -- Scale-ups of one table's warehouse: from the performance model
+    select
+        'spillage_scale_up' as signal_id,
+        sp.table_fqn as entity_name,
+        sp.estimated_annual_hours_saved,
+        sp.estimated_annual_cost_change_usd
+    from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
+    where sp.recommendation_key in ('remote_spill', 'local_heavy_small_wh')
+
+    union all
+
+    -- SQL refactor: removing the spill saves at least the blocked time
+    select
+        'spillage_sql_refactor',
+        tse.table_fqn,
+        round(tse.spill_blocked_s_total / 3600.0 * {{ annualize_spillage }}, 2),
+        null
+    from table_spill_evidence as tse
+
+    union all
+
+    -- Aggregate scale-up of a warehouse: all its spilling queries
+    select
+        'spillage_scale_up',
+        wsr.warehouse_name,
+        round(wsr.spilling_execution_s
+              * (1 - 1 / (2 * {{ warehouse_scale_up_efficiency('wsr.warehouse_current_size') }}))
+              / 3600.0 * {{ annualize_spillage }}, 2),
+        round(wsr.spilling_execution_s
+              * coalesce({{ warehouse_credits_per_hour('wsr.warehouse_current_size') }}, 1) / 3600.0
+              * (1 / {{ warehouse_scale_up_efficiency('wsr.warehouse_current_size') }} - 1)
+              * {{ annualize_spillage }} * {{ credit_rate_usd }}, 2)
+    from warehouse_spill_runtime as wsr
+),
+
 all_recommendations as (
 
     -- =========================================================================
@@ -144,7 +216,16 @@ all_recommendations as (
         sp.model_name,
         sp.warehouse_name,
         sp.recommendation,
-        sp.recommendation_reason,
+        sp.recommendation_reason
+            || case
+                when sp.recommendation_key = 'local_heavy_large_wh' and tse.table_fqn is not null
+                    then ' Measured on ' || tse.sampled_query_count || ' sampled spilling quer'
+                        || iff(tse.sampled_query_count = 1, 'y', 'ies')
+                        || ': spilling operators were blocked on disk for '
+                        || to_varchar(round(100 * tse.sampled_blocked_s / nullif(tse.sampled_execution_s, 0)))
+                        || '% of the runtime, the least a fix that removes the spill saves.'
+                else ''
+               end as recommendation_reason,
         -- Signal, effort and status come from the performance model's tier key, not the
         -- recommendation text (text matching mislabeled three tiers).
         case sp.recommendation_key
@@ -155,12 +236,19 @@ all_recommendations as (
         end as effort_category,
         sp.total_gb_spilled_local + sp.total_gb_spilled_remote as score,
         -- Cost: the measured runtime of the table's spilling queries at its warehouse's
-        -- list rate, annualized. Savings aren't estimated (null): resizing trades credits
-        -- for time, and what a SQL fix saves isn't known from runtime alone.
+        -- list rate, annualized. Savings: for a SQL refactor, the time its spilling
+        -- operators were blocked on disk (operator stats), priced the same way; null
+        -- without operator stats. Scale-ups trade credits for time, so their savings are
+        -- null and their effect is in estimated_annual_hours_saved and
+        -- estimated_annual_cost_change_usd.
         sp.spilling_execution_s
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
             * {{ annualize_spillage }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        null::float as estimated_annual_savings_usd,
+        case when sp.recommendation_key = 'local_heavy_large_wh' then
+            tse.spill_blocked_s_total
+                * coalesce(wlr.credits_per_hour, 1) / 3600.0
+                * {{ annualize_spillage }} * {{ credit_rate_usd }}
+        end::float as estimated_annual_savings_usd,
         sp.snowflake_ddl,
         sp.snapshot_date,
         case sp.recommendation_key
@@ -180,6 +268,7 @@ all_recommendations as (
         end as signal_id
     from {{ ref('fct_snowflake__warehouse_performance_recommendations') }} as sp
     left join warehouse_list_rates as wlr on wlr.warehouse_name = sp.warehouse_name
+    left join table_spill_evidence as tse on tse.table_fqn = sp.table_fqn
     where sp.recommendation not like 'Not available%'
 
     union all
@@ -201,7 +290,15 @@ all_recommendations as (
         sp_agg.models_spilling || ' model(s) collectively spilling '
             || sp_agg.total_gb_spilled || ' GB over 30 days on ' || sp_agg.warehouse_name
             || '. No single model exceeds the heavy threshold, but the aggregate load indicates '
-            || 'the warehouse is undersized for the combined workload.' as recommendation_reason,
+            || 'the warehouse is undersized for the combined workload.'
+            || coalesce(' Scaling up: about '
+                || to_varchar(round(2 * {{ warehouse_scale_up_efficiency('sp_agg.warehouse_current_size') }}, 1))
+                || 'x faster on its spilling queries, '
+                || iff({{ warehouse_scale_up_efficiency('sp_agg.warehouse_current_size') }} < 1,
+                       'about +' || to_varchar(round((1 / {{ warehouse_scale_up_efficiency('sp_agg.warehouse_current_size') }} - 1) * 100)) || '% credits',
+                       'about the same credits')
+                || '. Scaling up reduces spill; eliminating it may also need the models'' SQL or materialization changed.', '')
+            as recommendation_reason,
         'config_change' as effort_category,
         sp_agg.total_gb_spilled as score,
         -- Cost: the runtime of all the warehouse's spilling queries in the window, at its
@@ -233,15 +330,7 @@ all_recommendations as (
             and max(case when sp.total_gb_spilled_local > 50 then 1 else 0 end) = 0
     ) as sp_agg
     left join warehouse_list_rates as wlr on wlr.warehouse_name = sp_agg.warehouse_name
-    left join (
-        select
-            warehouse_name,
-            sum(coalesce(execution_time_ms, 0)) / 1000.0 as spilling_execution_s
-        from {{ ref('int_snowflake__query_history') }}
-        where cast(query_start_time as date) >= dateadd(day, -{{ spillage_lookback_days }}, current_date())
-          and (bytes_spilled_local > 0 or bytes_spilled_remote > 0)
-        group by warehouse_name
-    ) as wsq on wsq.warehouse_name = sp_agg.warehouse_name
+    left join warehouse_spill_runtime as wsq on wsq.warehouse_name = sp_agg.warehouse_name
 
     union all
 
@@ -647,6 +736,8 @@ enriched as (
         ar.score,
         ar.estimated_annual_cost_usd,
         ar.estimated_annual_savings_usd,
+        se.estimated_annual_hours_saved,
+        se.estimated_annual_cost_change_usd,
         ar.snowflake_ddl,
         ar.snapshot_date,
         ar.backlog_status,
@@ -659,6 +750,10 @@ enriched as (
         coalesce(rh.target_name, rh_fallback.target_name) as target_name,
         coalesce(rh.dbt_cloud_environment_id, rh_fallback.dbt_cloud_environment_id) as dbt_cloud_environment_id
     from all_recommendations as ar
+    -- Spillage only: hours saved and cost change (scale-ups), hours saved (SQL refactor)
+    left join spill_effects as se
+        on se.signal_id = ar.signal_id
+       and se.entity_name = ar.entity_name
     left join {{ ref('int_snowflake__dbt_relation_history') }} as rh
         on rh.table_fqn = ar.table_fqn
     -- Fallback: match on node_id when table_fqn doesn't match
@@ -786,6 +881,10 @@ select
     score,
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
+    -- Spillage: scale-ups trade credits for time (savings null). Hours saved per year,
+    -- and the change in annual cost (positive = costs more). SQL refactors: hours saved.
+    estimated_annual_hours_saved,
+    estimated_annual_cost_change_usd,
     snowflake_ddl,
     snapshot_date,
     case

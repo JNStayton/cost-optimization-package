@@ -253,6 +253,23 @@ models:
           Total execution time, in seconds, of those spilling queries. Prices the spillage
           in int_snowflake__all_recommendations (runtime x the warehouse's list rate).
 
+      - name: scale_up_efficiency
+        description: >
+          Benchmark efficiency of the step up from the warehouse's current size
+          (warehouse_scale_up_efficiency): 1.0 = doubling the size halves the runtime at
+          the same credits. Null for 6X-Large and unknown sizes.
+
+      - name: estimated_annual_hours_saved
+        description: >
+          Scale-up tiers (remote_spill, local_heavy_small_wh): runtime saved a year,
+          spilling_execution_s x (1 - 1 / (2 x scale_up_efficiency)) / 3600, annualized.
+
+      - name: estimated_annual_cost_change_usd
+        description: >
+          Scale-up tiers: the change in annual cost, spilling_execution_s x credits per
+          hour / 3600 x (1 / scale_up_efficiency - 1) x credit_rate_usd, annualized.
+          Positive = costs more; 0 where the step is perfectly efficient.
+
       - name: upstream_view_count
         description: >
           Views and ephemerals this table's builds recompute inline (0 when none). A

@@ -342,11 +342,25 @@ Logic: a view's query runs on every read (`select_count`) and on every build of 
 | Metric | Formula |
 |--------|---------|
 | Current annual cost | `spilling_execution_s × credits_per_hour / 3600 × (365 / spillage_lookback_days) × credit_rate_usd` |
-| Savings | null (not estimated) |
+| Savings, SQL refactor | `spill_blocked_s_total × credits_per_hour / 3600 × (365 / spillage_lookback_days) × credit_rate_usd`; null without operator stats |
+| Savings, scale-up | null: see hours saved and cost change |
+| Hours saved, scale-up | `spilling_execution_s × (1 − 1 / (2 × eff)) / 3600 × (365 / spillage_lookback_days)` |
+| Cost change, scale-up | `spilling_execution_s × credits_per_hour / 3600 × (1 / eff − 1) × (365 / spillage_lookback_days) × credit_rate_usd` (positive = costs more) |
+| Hours saved, SQL refactor | `spill_blocked_s_total / 3600 × (365 / spillage_lookback_days)` |
 
 `spilling_execution_s` (on `fct_snowflake__warehouse_performance_recommendations`) is the measured runtime of the table's spilling queries in the `spillage_lookback_days` window (default 30), attributed to the table through `ACCESS_HISTORY`, the same attribution as the spilled GB. The table's warehouse is the one its spilling queries spilled most on, and `credits_per_hour` is that warehouse's list rate. The aggregate (per-warehouse) spillage recommendation uses the same calculation over all of the warehouse's spilling queries.
 
-Savings are null. Scaling up trades credits for time: a calibration on spilling queries halved their runtime at roughly the same credits, so a scale-up's dollar savings can't be told apart from zero. What a SQL fix saves isn't known from runtime alone. Null savings aren't demoted by `min_annual_savings_usd`, so scale-ups and SQL refactors stay actionable. Earlier versions estimated cost from spilled GB (0.5 s per local GB, 5 s per remote GB, 70% savings); those constants were invented and are gone.
+**Scale-ups trade credits for time.** A calibration on spilling dbt builds halved their runtime at roughly the same credits, so a scale-up's dollar savings can't be told apart from zero, and its savings are null. Instead, `estimated_annual_hours_saved` and `estimated_annual_cost_change_usd` state the trade, and the reason text says it ("about 1.7x faster (… hours a year), about +16% credits"). `eff` is the efficiency of the step up from the warehouse's current size (`warehouse_scale_up_efficiency`), from the Snowflake Summit session "Beyond Code: Right-Sizing Your Warehouse" (one complex query on every size):
+
+| Step up from | X-Small, Small | Medium | Large | X-Large | 2X-Large | 3X–5X-Large | 6X-Large |
+|---|---|---|---|---|---|---|---|
+| eff | 1.00 | 0.86 | 0.92 | 0.86 | 0.85 | 0.81 | null |
+
+At `eff`, the runtime falls to `T / (2 × eff)` at twice the rate. Our own calibration measured 0.91–0.97 for X-Small → Small on spilling queries. Scaling up reduces spill; eliminating it may also need the model's SQL or materialization changed.
+
+**SQL refactors are priced from measured spill.** The `extract_spill_evidence` post-hook reads `GET_QUERY_OPERATOR_STATS` for a sample of each spilling table's queries (the most recent per query shape, last 14 days, into `int_snowflake__query_spill_evidence`). For each, `spill_blocked_s` is the execution time × the disk I/O share of the operators with spilling statistics; other disk I/O (scans, cache reads) isn't spill. The sample is scaled to all the table's spilling queries: `spill_blocked_s_total = sampled blocked_s × spilling_execution_s / sampled execution_s`. Blocked time is a lower bound on what removing the spill saves. Without operator stats (no MONITOR on the warehouse, or queries older than 14 days) the savings and hours are null.
+
+Null savings aren't demoted by `min_annual_savings_usd`, so scale-ups stay actionable. Earlier versions estimated cost from spilled GB (0.5 s per local GB, 5 s per remote GB, 70% savings); those constants were invented and are gone.
 
 #### Clustering
 

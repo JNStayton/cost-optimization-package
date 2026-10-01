@@ -1,6 +1,8 @@
+-- depends_on: {{ ref('int_snowflake__query_spill_evidence') }}
 {{
   config(
     materialized='table',
+    post_hook="{{ extract_spill_evidence() }}",
   )
 }}
 
@@ -36,6 +38,8 @@
 {% set min_total_gb        = var('spillage_min_total_gb', 0.05) %}
 {% set min_runs            = var('spillage_min_runs', 1) %}
 {% set trend_split_days    = (lookback_days / 2) | int %}
+{% set annualize           = 365.0 / lookback_days %}
+{% set credit_rate_usd     = var('credit_rate_usd', 2) %}
 
 {% if is_enterprise %}
 
@@ -224,6 +228,28 @@ scored as (
     left join warehouse_context  as wc  on wc.warehouse_name = coalesce(tw.warehouse_name, nullif(dr.warehouse_name, ''))
     left join {{ ref('int_snowflake__warehouse_config') }} as wc_size
         on wc_size.warehouse_name = coalesce(tw.warehouse_name, nullif(dr.warehouse_name, ''))
+),
+
+-- Scale-ups trade credits for time. From the measured spilling runtime (T) and the
+-- benchmark efficiency of the step up (eff): runtime falls to T / (2 x eff) at twice the
+-- rate, so time saved = T x (1 - 1 / (2 x eff)) and cost changes by T x rate x (1/eff - 1).
+scaled as (
+    select
+        sc.*,
+        {{ warehouse_scale_up_efficiency('sc.warehouse_current_size') }}   as scale_up_efficiency,
+        coalesce({{ warehouse_credits_per_hour('sc.warehouse_current_size') }}, 1) as credits_per_hour,
+        case when sc.recommendation_key in ('remote_spill', 'local_heavy_small_wh') then
+            round(sc.spilling_execution_s
+                  * (1 - 1 / (2 * {{ warehouse_scale_up_efficiency('sc.warehouse_current_size') }}))
+                  / 3600.0 * {{ annualize }}, 2)
+        end                                                          as estimated_annual_hours_saved,
+        case when sc.recommendation_key in ('remote_spill', 'local_heavy_small_wh') then
+            round(sc.spilling_execution_s
+                  * coalesce({{ warehouse_credits_per_hour('sc.warehouse_current_size') }}, 1) / 3600.0
+                  * (1 / {{ warehouse_scale_up_efficiency('sc.warehouse_current_size') }} - 1)
+                  * {{ annualize }} * {{ credit_rate_usd }}, 2)
+        end                                                          as estimated_annual_cost_change_usd
+    from scored as sc
 )
 
 select
@@ -250,6 +276,10 @@ select
     -- Runtime of the table's spilling queries in the window: what the spillage costs
     spilling_query_count,
     spilling_execution_s,
+    -- Scale-ups only: time saved and the cost change (positive = costs more), annualized
+    scale_up_efficiency,
+    estimated_annual_hours_saved,
+    estimated_annual_cost_change_usd,
     warehouse_spill_days_30d,
     warehouse_total_gb_spilled_30d,
     recommendation_key,
@@ -296,7 +326,20 @@ select
         else
             total_gb_spilled_local || ' GB of local spillage over '
             || {{ lookback_days }} || ' days. Trend: ' || spill_trend || '. Minor — no action needed.'
-    end                                                             as recommendation_reason,
+    end
+    || case
+        when recommendation_key in ('remote_spill', 'local_heavy_small_wh') and scale_up_efficiency is not null
+            then ' Scaling up: about ' || to_varchar(round(2 * scale_up_efficiency, 1)) || 'x faster (about '
+                || to_varchar(estimated_annual_hours_saved) || ' hours a year), '
+                || case
+                    when estimated_annual_cost_change_usd > 0
+                        then 'about +' || to_varchar(round((1 / scale_up_efficiency - 1) * 100)) || '% credits (+$'
+                            || to_varchar(estimated_annual_cost_change_usd) || ' a year)'
+                    else 'about the same credits'
+                   end
+                || '. Scaling up reduces spill; eliminating it may also need the model''s SQL or materialization changed.'
+        else ''
+       end                                                          as recommendation_reason,
     -- Concrete DDL (only for scale-up recommendations)
     case
         when recommendation_key in ('remote_spill', 'local_heavy_small_wh')
@@ -310,7 +353,7 @@ select
     -- working set that spills.
     coalesce(tuv.upstream_view_count, 0)                            as upstream_view_count,
     tuv.upstream_view_chain
-from scored
+from scaled as scored
 left join (
     select table_dbt_model, upstream_view_count, upstream_view_chain
     from {{ ref('int_snowflake__table_upstream_views') }}
@@ -352,6 +395,9 @@ select
     null::string            as spill_trend,
     null::int               as spilling_query_count,
     null::float             as spilling_execution_s,
+    null::float             as scale_up_efficiency,
+    null::float             as estimated_annual_hours_saved,
+    null::float             as estimated_annual_cost_change_usd,
     null::int               as warehouse_spill_days_30d,
     null::float             as warehouse_total_gb_spilled_30d,
     null::string            as recommendation_key,

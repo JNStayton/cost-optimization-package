@@ -66,7 +66,8 @@ GRANT SELECT ON TABLE <database>.<schema>.<table> TO ROLE <your_dbt_role>;
 -- =============================================================================
 -- STEP 5 (optional): Grant MONITOR on warehouses whose queries you want analyzed
 -- Required for: full operator evidence in the extract_operator_evidence post-hook
--- (clustering candidates and clustering keys).
+-- (clustering candidates and clustering keys), and in the extract_spill_evidence
+-- post-hook (measured savings for spillage SQL refactors).
 --
 -- The hook calls GET_QUERY_OPERATOR_STATS on recent queries against your
 -- clustering candidates. Snowflake requires OPERATE or MONITOR on the warehouse

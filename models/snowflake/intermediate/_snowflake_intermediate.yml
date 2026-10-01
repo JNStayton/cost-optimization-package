@@ -319,6 +319,21 @@ models:
       chain, and drives the view probe and the one-view-per-chain choice.
 
   # ===========================================================================
+  # int_snowflake__query_spill_evidence
+  # ===========================================================================
+  - name: int_snowflake__query_spill_evidence
+    description: >
+      Where sampled spilling queries' time goes, from GET_QUERY_OPERATOR_STATS. One row
+      per (query, table it's attributed to). Written by the extract_spill_evidence
+      post-hook on fct_snowflake__warehouse_performance_recommendations: for each
+      spilling table, the most recent completed spilling query of each query shape in
+      the last 14 days (up to 5). spill_blocked_s = execution time x the disk I/O share
+      of operators with spilling statistics only (other disk I/O, like scans and cache
+      reads, isn't spill); it's a lower bound on what removing the spill saves.
+      evidence_status 'skipped' (with skip_reason) when the stats couldn't be read: the
+      role must own the query or hold MONITOR on its warehouse. Enterprise edition.
+
+  # ===========================================================================
   # int_snowflake__table_upstream_views
   # ===========================================================================
   - name: int_snowflake__table_upstream_views
@@ -379,3 +394,14 @@ models:
       domain-specific fact models into a single interface with cost estimation and
       effort classification. Shared foundation for all gold-layer views.
       Grain: one row per (entity_name, domain, recommendation, table_fqn).
+    columns:
+      - name: estimated_annual_hours_saved
+        description: >
+          Spillage only. Scale-ups: hours of runtime saved a year, from the measured
+          spilling runtime and the benchmark efficiency of the step up. SQL refactors:
+          the time spilling operators were blocked on disk, from operator stats (null
+          without them).
+      - name: estimated_annual_cost_change_usd
+        description: >
+          Spillage scale-ups only: the change in annual cost from scaling up (positive =
+          costs more). Scale-ups trade credits for time, so their savings are null.
