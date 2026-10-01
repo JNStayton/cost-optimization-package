@@ -29,6 +29,8 @@
     and defaults as those marts), so annualize by 365 / window, not x12 (a 30-day window). -#}
 {% set annualize_materialization = 365.0 / var('table_materialization_lookback_days', 14) %}
 {% set annualize_clustering = 365.0 / var('clustering_candidates_lookback_days', 7) %}
+{% set spillage_lookback_days = var('spillage_lookback_days', 30) %}
+{% set annualize_spillage = 365.0 / spillage_lookback_days %}
 {% set monitored_projects = var('dbt_monitored_projects', []) %}
 {% if monitored_projects | length == 0 %}
   {% set monitored_projects = [project_name] %}
@@ -152,12 +154,13 @@ all_recommendations as (
             else 'config_change'
         end as effort_category,
         sp.total_gb_spilled_local + sp.total_gb_spilled_remote as score,
-        (sp.total_gb_spilled_local * 0.5 + sp.total_gb_spilled_remote * 5.0)
+        -- Cost: the measured runtime of the table's spilling queries at its warehouse's
+        -- list rate, annualized. Savings aren't estimated (null): resizing trades credits
+        -- for time, and what a SQL fix saves isn't known from runtime alone.
+        sp.spilling_execution_s
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        (sp.total_gb_spilled_local * 0.5 + sp.total_gb_spilled_remote * 5.0)
-            * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
+            * {{ annualize_spillage }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+        null::float as estimated_annual_savings_usd,
         sp.snowflake_ddl,
         sp.snapshot_date,
         case sp.recommendation_key
@@ -201,12 +204,12 @@ all_recommendations as (
             || 'the warehouse is undersized for the combined workload.' as recommendation_reason,
         'config_change' as effort_category,
         sp_agg.total_gb_spilled as score,
-        sp_agg.total_gb_spilled * 0.5
+        -- Cost: the runtime of all the warehouse's spilling queries in the window, at its
+        -- list rate, annualized. Savings aren't estimated (null), as for per-table spillage.
+        coalesce(wsq.spilling_execution_s, 0)
             * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
-        sp_agg.total_gb_spilled * 0.5
-            * coalesce(wlr.credits_per_hour, 1) / 3600.0
-            * 12 * {{ credit_rate_usd }} * 0.7 as estimated_annual_savings_usd,
+            * {{ annualize_spillage }} * {{ credit_rate_usd }} as estimated_annual_cost_usd,
+        null::float as estimated_annual_savings_usd,
         'ALTER WAREHOUSE ' || sp_agg.warehouse_name || ' SET WAREHOUSE_SIZE = '''
             || {{ next_warehouse_size('sp_agg.warehouse_current_size', 'up') }} || ''';' as snowflake_ddl,
         current_date() as snapshot_date,
@@ -230,6 +233,15 @@ all_recommendations as (
             and max(case when sp.total_gb_spilled_local > 50 then 1 else 0 end) = 0
     ) as sp_agg
     left join warehouse_list_rates as wlr on wlr.warehouse_name = sp_agg.warehouse_name
+    left join (
+        select
+            warehouse_name,
+            sum(coalesce(execution_time_ms, 0)) / 1000.0 as spilling_execution_s
+        from {{ ref('int_snowflake__query_history') }}
+        where cast(query_start_time as date) >= dateadd(day, -{{ spillage_lookback_days }}, current_date())
+          and (bytes_spilled_local > 0 or bytes_spilled_remote > 0)
+        group by warehouse_name
+    ) as wsq on wsq.warehouse_name = sp_agg.warehouse_name
 
     union all
 

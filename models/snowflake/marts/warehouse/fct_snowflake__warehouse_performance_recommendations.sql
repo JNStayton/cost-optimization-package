@@ -109,30 +109,44 @@ warehouse_context as (
     group by warehouse_name
 ),
 
--- Find the primary warehouse that ran spilling queries for each table
--- Matches via table name in query_text for DML queries (builds that spilled)
+-- The table's spilling queries in the window, attributed through ACCESS_HISTORY (the
+-- same attribution as the spill GB above): their runtime prices the spillage, and the
+-- warehouse that spilled most is the one to resize.
+spilling_queries as (
+    select
+        upper(qta.table_database) || '.' || upper(qta.table_schema) || '.' || upper(qta.table_name)
+                                                                    as table_fqn,
+        qh.query_id,
+        qh.warehouse_name,
+        qh.execution_time_ms,
+        coalesce(qh.bytes_spilled_local, 0) + coalesce(qh.bytes_spilled_remote, 0) as bytes_spilled
+    from {{ ref('int_snowflake__query_table_access') }} as qta
+    inner join {{ ref('int_snowflake__query_history') }} as qh
+        on qh.query_id = qta.query_id
+    where cast(qh.query_start_time as date) >= dateadd(day, -{{ lookback_days }}, current_date())
+      and (qh.bytes_spilled_local > 0 or qh.bytes_spilled_remote > 0)
+),
+
+spilling_runtime as (
+    select
+        table_fqn,
+        count(distinct query_id)                                    as spilling_query_count,
+        round(sum(coalesce(execution_time_ms, 0)) / 1000.0, 3)      as spilling_execution_s
+    from (select distinct table_fqn, query_id, execution_time_ms from spilling_queries)
+    group by table_fqn
+),
+
 table_warehouse as (
     select
         table_fqn,
         warehouse_name,
         row_number() over (
             partition by table_fqn
-            order by total_spill desc
+            order by sum(bytes_spilled) desc, warehouse_name
         ) as rn
-    from (
-        select
-            ts.table_fqn,
-            qh.warehouse_name,
-            sum(qh.bytes_spilled_local + qh.bytes_spilled_remote) as total_spill
-        from table_spillage_summary as ts
-        inner join {{ ref('int_snowflake__query_history') }} as qh
-            on qh.query_type in ('INSERT', 'MERGE', 'CREATE_TABLE_AS_SELECT')
-            and qh.query_start_time >= dateadd(day, -{{ lookback_days }}, current_date())
-            and (qh.bytes_spilled_local > 0 or qh.bytes_spilled_remote > 0)
-            and qh.warehouse_name is not null
-            and qh.query_text ilike '%' || ts.table_name || '%'
-        group by 1, 2
-    )
+    from spilling_queries
+    where warehouse_name is not null
+    group by table_fqn, warehouse_name
 ),
 
 dbt_relations as (
@@ -199,8 +213,11 @@ scored as (
                 then 'local_moderate_stable'
             else 'local_minor'
         end                                                         as recommendation_key,
-        coalesce(wc_size.current_size, 'unknown') as warehouse_current_size
+        coalesce(wc_size.current_size, 'unknown') as warehouse_current_size,
+        sr.spilling_query_count,
+        sr.spilling_execution_s
     from table_spillage_summary as ts
+    left join spilling_runtime   as sr  on sr.table_fqn  = ts.table_fqn
     left join dbt_relations      as dr  on dr.table_fqn  = ts.table_fqn
     left join table_warehouse    as tw  on tw.table_fqn  = ts.table_fqn and tw.rn = 1
     left join trend_split        as trs on trs.table_fqn = ts.table_fqn
@@ -230,6 +247,9 @@ select
     spill_gb_recent_15d,
     spill_gb_prior_15d,
     spill_trend,
+    -- Runtime of the table's spilling queries in the window: what the spillage costs
+    spilling_query_count,
+    spilling_execution_s,
     warehouse_spill_days_30d,
     warehouse_total_gb_spilled_30d,
     recommendation_key,
@@ -330,6 +350,8 @@ select
     null::float             as spill_gb_recent_15d,
     null::float             as spill_gb_prior_15d,
     null::string            as spill_trend,
+    null::int               as spilling_query_count,
+    null::float             as spilling_execution_s,
     null::int               as warehouse_spill_days_30d,
     null::float             as warehouse_total_gb_spilled_30d,
     null::string            as recommendation_key,

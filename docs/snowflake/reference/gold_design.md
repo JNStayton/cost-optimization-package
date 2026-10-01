@@ -341,12 +341,12 @@ Logic: a view's query runs on every read (`select_count`) and on every build of 
 
 | Metric | Formula |
 |--------|---------|
-| Current annual cost | Estimated time overhead from spilling: `(local_gb_spilled × 0.5 + remote_gb_spilled × 5.0) × credits_per_hour / 3600 × 12 × credit_rate_usd` (spilled GB cover the 30-day `spillage_lookback_days` window, so × 12 annualizes) |
-| Savings | `current_cost × 0.7` |
+| Current annual cost | `spilling_execution_s × credits_per_hour / 3600 × (365 / spillage_lookback_days) × credit_rate_usd` |
+| Savings | null (not estimated) |
 
-The aggregate (per-warehouse) spillage recommendation uses local spillage only: `total_gb_spilled × 0.5 × credits_per_hour / 3600 × 12 × credit_rate_usd`, with the same 0.7 savings factor.
+`spilling_execution_s` (on `fct_snowflake__warehouse_performance_recommendations`) is the measured runtime of the table's spilling queries in the `spillage_lookback_days` window (default 30), attributed to the table through `ACCESS_HISTORY`, the same attribution as the spilled GB. The table's warehouse is the one its spilling queries spilled most on, and `credits_per_hour` is that warehouse's list rate. The aggregate (per-warehouse) spillage recommendation uses the same calculation over all of the warehouse's spilling queries.
 
-The `0.5 seconds per GB` (local) and `5.0 seconds per GB` (remote) are conservative estimates. Local spillage adds ~0.5-2 seconds per GB; remote spillage adds ~2-10 seconds per GB.
+Savings are null. Scaling up trades credits for time: a calibration on spilling queries halved their runtime at roughly the same credits, so a scale-up's dollar savings can't be told apart from zero. What a SQL fix saves isn't known from runtime alone. Null savings aren't demoted by `min_annual_savings_usd`, so scale-ups and SQL refactors stay actionable. Earlier versions estimated cost from spilled GB (0.5 s per local GB, 5 s per remote GB, 70% savings); those constants were invented and are gone.
 
 #### Clustering
 

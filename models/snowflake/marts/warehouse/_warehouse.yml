@@ -245,6 +245,14 @@ models:
       - name: warehouse_total_gb_spilled_30d
         description: Total GB spilled across all dbt queries on the associated warehouse in the 30-day window.
 
+      - name: spilling_query_count
+        description: Queries touching this table that spilled in the window (ACCESS_HISTORY attribution).
+
+      - name: spilling_execution_s
+        description: >
+          Total execution time, in seconds, of those spilling queries. Prices the spillage
+          in int_snowflake__all_recommendations (runtime x the warehouse's list rate).
+
       - name: upstream_view_count
         description: >
           Views and ephemerals this table's builds recompute inline (0 when none). A
