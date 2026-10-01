@@ -31,11 +31,17 @@ select
 from (
     select
         *,
-        iff(endswith(read_fqn, '.DEMO_EVENTS'),
-            array_construct(object_construct('columnName', 'REGION'),
-                            object_construct('columnName', 'EVENT_DATE'),
-                            object_construct('columnName', 'AMOUNT')),
-            array_construct()) as read_columns
+        case
+            when endswith(read_fqn, '.DEMO_EVENTS')
+                then array_construct(object_construct('columnName', 'REGION'),
+                                     object_construct('columnName', 'EVENT_DATE'),
+                                     object_construct('columnName', 'EVENT_ID'),
+                                     object_construct('columnName', 'AMOUNT'))
+            when endswith(read_fqn, '.DAILY_DEMO_EVENTS')
+                then array_construct(object_construct('columnName', 'EVENT_DATE'),
+                                     object_construct('columnName', 'EVENTS'))
+            else array_construct()
+        end as read_columns
     from (
         select
             query_id,

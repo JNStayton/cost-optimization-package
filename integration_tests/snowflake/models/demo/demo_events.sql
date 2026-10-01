@@ -10,5 +10,9 @@ select
     seq4() % 5000                                      as customer_id,
     decode(seq4() % 5, 0, 'NA', 1, 'EU', 2, 'APAC', 3, 'LATAM', 'MEA') as region,
     (seq4() % 50 = 0)                                  as is_test,
-    uniform(1, 1000, seq4())                           as amount
+    uniform(1, 1000, seq4())                           as amount,
+    -- A short column name contained in a longer one (EVENT_ID). Reads filter EVENT_ID (event_id <> 12345: a condition
+    -- the optimizer can't drop as always true) but
+    -- never ID, so ID must get no filter evidence and must not become a clustering key.
+    seq4() % 3                                         as id
 from table(generator(rowcount => 200000))

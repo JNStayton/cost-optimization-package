@@ -28,16 +28,27 @@
       to GET_QUERY_OPERATOR_STATS, which rejects IDs that don't exist, so these must be real.
       Result caching is turned off first, since a cached result has no table scan to report.
     - 2 INSERTs (fake IDs are fine: the hook only analyzes SELECTs) give a read/write ratio > 1.
+    - 3 REAL filtered SELECTs on daily_demo_events, a child table of demo_events, more recent
+      than the reads above, so the hook (10 queries per table) analyzes 3 child queries and
+      7 demo_events reads. The child filters on EVENT_DATE must not count for demo_events:
+      EVENT_DATE has 7 filtering queries out of 7 analyzed, not 10 of 7.
+    - The reads also filter EVENT_ID, which must not count as a filter on ID.
     - The SELECTs take 1 s each, so the clustering recommendation's savings stay under the
       $1 min_annual_savings_usd floor (about $0.50/yr): the gold slice's "pennies demoted" case.
 -#}
 -- depends_on: {{ ref('demo_events') }}
+-- depends_on: {{ ref('daily_demo_events') }}
 {%- set clustering_qids = [] -%}
+{%- set child_qids = [] -%}
 {%- if execute -%}
   {%- do run_query("alter session set use_cached_result = false") -%}
   {%- for i in range(20) -%}
-    {%- do run_query("select count(*), sum(amount) from " ~ ref('demo_events') ~ " where region = 'EU' and event_date >= dateadd(day, -" ~ (i + 1) ~ ", current_date())") -%}
+    {%- do run_query("select count(*), sum(amount) from " ~ ref('demo_events') ~ " where region = 'EU' and event_id <> 12345 and event_date >= dateadd(day, -" ~ (i + 1) ~ ", current_date())") -%}
     {%- do clustering_qids.append(run_query("select last_query_id()").columns[0].values()[0]) -%}
+  {%- endfor -%}
+  {%- for i in range(3) -%}
+    {%- do run_query("select sum(events) from " ~ ref('daily_demo_events') ~ " where event_date >= dateadd(day, -" ~ (i + 2) ~ ", current_date())") -%}
+    {%- do child_qids.append(run_query("select last_query_id()").columns[0].values()[0]) -%}
   {%- endfor -%}
 {%- endif %}
 
@@ -123,7 +134,16 @@ union all
 select
     '{{ qid }}', dateadd(minute, -{{ loop.index }}, current_timestamp()), 'hash_events_{{ loop.index }}', 'phash_events_{{ loop.index }}',
     'FIXTURE_ANALYST', 'FIXTURE_REPORTER', 'FIXTURE_WH', 'X-Small', 1000, 52428800, 100, 0, 0, 'SELECT', 1000, 90, 100, 0, 0,
-    'select count(*), sum(amount) from {{ events_fqn }} where region = ''EU'' and event_date >= current_date() - {{ loop.index }}',
+    'select count(*), sum(amount) from {{ events_fqn }} where region = ''EU'' and event_id <> 12345 and event_date >= current_date() - {{ loop.index }}',
+    1, 'SUCCESS', 0
+{%- endfor %}
+{%- set daily_fqn = target.database ~ '.' ~ target.schema ~ '.daily_demo_events' %}
+{% for qid in child_qids %}
+union all
+select
+    '{{ qid }}', dateadd(second, -{{ 5 + loop.index * 5 }}, current_timestamp()), 'hash_daily_{{ loop.index }}', 'phash_daily_{{ loop.index }}',
+    'FIXTURE_ANALYST', 'FIXTURE_REPORTER', 'FIXTURE_WH', 'X-Small', 500, 1048576, 100, 0, 0, 'SELECT', 500, 1, 1, 0, 0,
+    'select sum(events) from {{ daily_fqn }} where event_date >= current_date() - {{ loop.index + 1 }}',
     1, 'SUCCESS', 0
 {%- endfor %}
 {% for i in range(2) %}

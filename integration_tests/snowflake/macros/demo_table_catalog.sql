@@ -9,7 +9,7 @@
   {{ return([
     {'name': 'DEMO_EVENTS', 'id': 900001, 'size_gb': 5, 'row_count': 200000,
      'columns': [('EVENT_ID', 'NUMBER'), ('EVENT_DATE', 'DATE'), ('CUSTOMER_ID', 'NUMBER'),
-                 ('REGION', 'TEXT'), ('IS_TEST', 'BOOLEAN'), ('AMOUNT', 'NUMBER')]},
+                 ('REGION', 'TEXT'), ('IS_TEST', 'BOOLEAN'), ('AMOUNT', 'NUMBER'), ('ID', 'NUMBER')]},
     {'name': 'DEMO_ORDERS', 'id': 900002, 'size_gb': 50, 'row_count': 1065000,
      'columns': [('ORDER_ID', 'NUMBER'), ('CUSTOMER_ID', 'NUMBER'), ('AMOUNT', 'NUMBER'),
                  ('UPDATED_AT', 'TIMESTAMP_NTZ')]},

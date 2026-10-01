@@ -1,8 +1,10 @@
 {#-
   The two post-hooks on fct_snowflake__table_clustering_candidates wrote what they should
   for demo_events:
-    - extract_operator_evidence analyzed the 10 most recent of the 20 real fixture SELECTs (clustering_key_operator_queries_per_table: 10) (via
-      GET_QUERY_OPERATOR_STATS) and captured Filter operators on EVENT_DATE and REGION.
+    - extract_operator_evidence analyzed 10 queries (clustering_key_operator_queries_per_table:
+      10), via GET_QUERY_OPERATOR_STATS: the 3 child-table (daily_demo_events) reads and the
+      7 most recent demo_events reads. EVENT_DATE filters appear in all 10; REGION only in
+      the 7 demo_events reads.
     - refresh_column_cardinality recorded exact distinct counts for the low-cardinality
       columns. (CUSTOMER_ID and EVENT_ID are left out: their counts are approximate.)
   Returns one row per failed check.
@@ -24,7 +26,7 @@ checks as (
            (select count(distinct query_id) from evidence where operator_type = 'Filter' and column_name = 'EVENT_DATE'), 10
     union all
     select 'evidence: queries with a Filter on REGION',
-           (select count(distinct query_id) from evidence where operator_type = 'Filter' and column_name = 'REGION'), 10
+           (select count(distinct query_id) from evidence where operator_type = 'Filter' and column_name = 'REGION'), 7
 {#- On Enterprise edition the hook profiles only columns ACCESS_HISTORY shows were queried
     (REGION, EVENT_DATE, AMOUNT), so IS_TEST, never queried, must not be profiled. -#}
 {%- set is_enterprise = var('snowflake_enterprise_edition', true) %}
