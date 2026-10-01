@@ -2,7 +2,7 @@
   config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key=['node_id', 'table_fqn'],
+    unique_key=['node_id', 'table_fqn', 'target_name'],
     on_schema_change='append_new_columns',
   )
 }}
@@ -17,7 +17,7 @@
   materialized. Enables cross-environment recommendation deduplication and
   identification of models that exist in non-prod but haven't reached prod yet.
 
-  Grain: one row per (node_id, table_fqn)
+  Grain: one row per (node_id, table_fqn, target_name)
 --#}
 
 {% set lookback_days = var('dbt_relation_history_lookback_days', 90) %}
