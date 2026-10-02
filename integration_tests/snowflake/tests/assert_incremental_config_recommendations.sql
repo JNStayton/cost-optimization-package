@@ -9,6 +9,8 @@
                      ('investigate'); the probe confirms RECORD_ID → 60, and the status is
                      recomputed to 'actionable_review'
   effort_category must follow the final status (the probe updates both).
+  The key assumption follows the probe too: '(validated)' when it confirms the key, and
+  removed when it fails (demo_sessions).
     - demo_fast_growth (Low ROI) and demo_new_table (Insufficient History) aren't listed.
   Returns rows only on mismatch.
 -#}
@@ -16,7 +18,9 @@ with produced as (
     select
         lower(table_name) as table_name, incremental_strategy, upper(suggested_filter_column) as filter_column,
         likely_unique_key, confidence_score, recommendation_status, effort_category,
-        array_to_string(array_sort(blocking_signals), ',') as blocking_signals
+        array_to_string(array_sort(blocking_signals), ',') as blocking_signals,
+        coalesce(array_to_string(filter(assumptions, a variant -> contains(a::string, 'unique and non-null')), ','), '')
+            as key_assumption
     from {{ ref('fct_snowflake__incremental_config_recommendations') }}
     where startswith(lower(table_name), 'demo_')
 ),
@@ -24,10 +28,12 @@ with produced as (
 expected as (
     select 'demo_orders' as table_name, 'merge' as incremental_strategy, 'UPDATED_AT' as filter_column,
            'order_id' as likely_unique_key, 70 as confidence_score, 'actionable_review' as recommendation_status,
-           'actionable_review' as effort_category, '' as blocking_signals
-    union all select 'demo_sessions', 'merge',  'STARTED_AT', null, 30, 'investigate', 'investigation', 'key_not_exact_or_nullable'
-    union all select 'demo_logs',     'append', 'LOGGED_AT',  null, 70, 'actionable_review', 'actionable_review', ''
-    union all select 'demo_infrequent_builds', 'merge', 'UPDATED_AT', 'record_id', 60, 'actionable_review', 'actionable_review', 'low_build_frequency'
+           'actionable_review' as effort_category, '' as blocking_signals,
+           'ORDER_ID is unique and non-null (validated)' as key_assumption
+    union all select 'demo_sessions', 'merge',  'STARTED_AT', null, 30, 'investigate', 'investigation', 'key_not_exact_or_nullable', ''
+    union all select 'demo_logs',     'append', 'LOGGED_AT',  null, 70, 'actionable_review', 'actionable_review', '', ''
+    union all select 'demo_infrequent_builds', 'merge', 'UPDATED_AT', 'record_id', 60, 'actionable_review', 'actionable_review', 'low_build_frequency',
+                     'RECORD_ID is unique and non-null (validated)'
 )
 
 select
@@ -38,7 +44,8 @@ select
     p.confidence_score      as produced_confidence, e.confidence_score      as expected_confidence,
     p.recommendation_status as produced_status,     e.recommendation_status as expected_status,
     p.effort_category       as produced_effort,     e.effort_category       as expected_effort,
-    p.blocking_signals      as produced_blocking,   e.blocking_signals      as expected_blocking
+    p.blocking_signals      as produced_blocking,   e.blocking_signals      as expected_blocking,
+    p.key_assumption        as produced_assumption, e.key_assumption        as expected_assumption
 from produced as p
 full outer join expected as e on p.table_name = e.table_name
 where p.incremental_strategy  is distinct from e.incremental_strategy
@@ -48,3 +55,4 @@ where p.incremental_strategy  is distinct from e.incremental_strategy
    or p.recommendation_status is distinct from e.recommendation_status
    or p.effort_category       is distinct from e.effort_category
    or p.blocking_signals      is distinct from e.blocking_signals
+   or p.key_assumption        is distinct from e.key_assumption

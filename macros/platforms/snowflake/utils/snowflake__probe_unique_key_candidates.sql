@@ -12,12 +12,15 @@
       - confidence_score increased by 10 (validated signal)
       - blocking_signals: removes 'key_pending_exact_validation'
       - dbt_model_config: unique_key parameter updated
+      - assumptions: the key assumption reads '<KEY> is unique and non-null (validated)'
+      - strategy_notes: names the confirmed key
 
     When no single-column key passes:
       - strategy downgraded to investigate (recommendation_status updated)
       - confidence_score decreased by 30
       - blocking_signals: adds 'key_not_exact_or_nullable'
       - identified_unique_key cleared
+      - assumptions: the pending key assumption is removed (strategy_notes explains)
 
     Only probes tables where incremental_strategy = 'merge' (append doesn't
     require a key). This keeps compute cost proportional to actionable candidates.
@@ -102,6 +105,13 @@
                 else 'investigation'
               end,
               blocking_signals      = array_except(blocking_signals, array_construct('key_pending_exact_validation')),
+              assumptions           = transform(assumptions, a variant -> iff(
+                endswith(a::string, '(pending validation)'),
+                '{{ ns.confirmed_key | upper }} is unique and non-null (validated)'::variant,
+                a)),
+              strategy_notes        = replace(strategy_notes,
+                'Merge on ' || '{{ best_conv_key }}' || ' ',
+                'Merge on ' || '{{ ns.confirmed_key | upper }}' || ' '),
               dbt_model_config      = replace(
                 dbt_model_config,
                 'unique_key=''' || '{{ old_key_in_template }}' || '''',
@@ -138,6 +148,7 @@
                 array_construct('key_not_exact_or_nullable')
               ),
               identified_unique_key = null,
+              assumptions           = filter(assumptions, a variant -> not endswith(a::string, '(pending validation)')),
               strategy_notes        = 'Key probe failed: no single-column candidate passed exact uniqueness '
                 || '(count(*) = count(distinct key) AND null_count = 0). '
                 || 'Consider a composite surrogate key via dbt_utils.generate_surrogate_key([<grain_columns>]).'
