@@ -8,9 +8,9 @@
 #   mkdocs build --strict # fails on broken links, as the publish workflow does
 site_name: dbt Cost Optimization Package
 site_description: Find cost optimization opportunities in your dbt project on Snowflake, Databricks, BigQuery and Redshift.
-site_url: https://dbt-labs.github.io/dbt-cost-optimization-package/
-repo_url: https://github.com/dbt-labs/dbt-cost-optimization-package
-repo_name: dbt-labs/dbt-cost-optimization-package
+site_url: https://dbt-labs.github.io/dbt-cost-optimization/
+repo_url: https://github.com/dbt-labs/dbt-cost-optimization
+repo_name: dbt-labs/dbt-cost-optimization
 edit_uri: edit/main/docs/
 docs_dir: docs
 

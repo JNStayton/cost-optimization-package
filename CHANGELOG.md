@@ -63,5 +63,5 @@ First public release: one package with a shared design across Snowflake, Databri
 - Table materialization, incremental materialization, and incremental config recommendations.
 - VACUUM and ANALYZE candidates.
 
-[Unreleased]: https://github.com/dbt-labs/dbt-cost-optimization-package/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/dbt-labs/dbt-cost-optimization-package/releases/tag/v1.0.0
+[Unreleased]: https://github.com/dbt-labs/dbt-cost-optimization/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/dbt-labs/dbt-cost-optimization/releases/tag/v1.0.0

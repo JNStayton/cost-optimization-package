@@ -6,7 +6,7 @@ go to the file on GitHub.
 """
 import re
 
-REPO_BLOB = "https://github.com/dbt-labs/dbt-cost-optimization-package/blob/main/"
+REPO_BLOB = "https://github.com/dbt-labs/dbt-cost-optimization/blob/main/"
 SITE_PAGES = {
     "README.md": "index.md",
     "TESTING.md": "testing.md",
