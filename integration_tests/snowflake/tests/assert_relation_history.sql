@@ -4,7 +4,7 @@
     - demo_orders is built under target names 'default' and 'dev' into the same schema:
       one row, both targets listed, 14 builds.
     - demo_orders also has a second deployment (<schema>_deploy, target 'prod',
-      environment 12345): a separate row. The model's environment_count is 2.
+      environment 12345): a separate row. The model's deployed_relation_count is 2.
     - No table appears twice, and neither does a materialization candidate.
   Exclusion (dbt_excluded_targets / dbt_excluded_schemas): demo_logs is built only under
   'dev'. With dbt_excluded_targets: ['dev'] it is excluded and has no recommendation;
@@ -32,8 +32,8 @@ checks as (
            (select target_name || ' / ' || array_to_string(dbt_cloud_environment_ids, ',') from rh where table_fqn = '{{ deploy_fqn }}'),
            'prod / 12345'
     union all
-    select 'demo_orders environment_count',
-           (select max(environment_count) from {{ ref('vw_snowflake__dbt_model_optimizations') }}
+    select 'demo_orders deployed_relation_count',
+           (select max(deployed_relation_count) from {{ ref('vw_snowflake__dbt_model_optimizations') }}
             where model_name = 'demo_orders')::varchar,
            '2'
     union all

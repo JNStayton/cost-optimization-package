@@ -270,7 +270,7 @@ final as (
             then
                 'Queries scan '
                 || round(scan_ratio * 100, 0)
-                || '% of ' || estimated_micropartitions
+                || '% of ' || round(estimated_micropartitions)::number(38, 0)
                 || ' micropartitions on average. '
                 || select_count || ' reads over the lookback window at '
                 || round(avg_execution_time_ms / 1000, 1) || 's average. '

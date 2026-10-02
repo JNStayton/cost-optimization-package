@@ -15,7 +15,7 @@
 with env_counts as (
     select
         node_id,
-        count(distinct table_fqn) as environment_count,
+        count(distinct table_fqn) as deployed_relation_count,
         array_agg(distinct dbt_cloud_environment_id) as environment_ids
     from {{ ref('int_snowflake__dbt_relation_history') }}
     where node_id is not null
@@ -26,7 +26,7 @@ with env_counts as (
 ranked as (
     select
         ar.*,
-        coalesce(ec.environment_count, 1) as environment_count,
+        coalesce(ec.deployed_relation_count, 1) as deployed_relation_count,
         ec.environment_ids,
         row_number() over (
             partition by ar.dedup_key, ar.domain, ar.signal_id
@@ -60,7 +60,7 @@ select
         when dbt_model_config is not null then 'dbt_config'
         else 'investigation'
     end as action_type,
-    environment_count,
+    deployed_relation_count,
     environment_ids,
     target_name,
     snapshot_date

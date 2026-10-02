@@ -595,7 +595,7 @@ When multiple environments have the same recommendation for the same logical mod
 |-------|--------|-------------|
 | `dbt_cloud_environment_id` | Query comment JSON | Unique per dbt platform environment. Not present on dbt platform Studio (development) builds or outside dbt platform. |
 | `target_name` | Query comment JSON | Human-readable but unreliable: often "default" in dbt platform, and one Studio session can record both "default" and "dev". |
-| `environment_count` | Derived | Number of deployments of the model: distinct physical tables it has been built into (e.g. a dev schema and a prod schema), excluding excluded ones. |
+| `deployed_relation_count` | Derived | Number of deployments of the model: distinct physical tables it has been built into (e.g. a dev schema, a prod schema, and dbt Cloud CI schemas), excluding `dbt_excluded_schemas` / `dbt_excluded_targets`. Set `dbt_excluded_schemas: ['DBT_CLOUD_PR_%']` to leave CI schemas out. |
 | `environment_ids` | Derived | Array of all `dbt_cloud_environment_id` values for this model. |
 
 `int_snowflake__dbt_relation_history` has **one row per physical table**. A table built under several target names is one deployment: `target_name` is the latest build's target, and `target_names` and `dbt_cloud_environment_ids` list every one seen. Keeping one row per table keeps joins on the table name one-to-one, so recommendations aren't multiplied.

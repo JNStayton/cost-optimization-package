@@ -551,8 +551,9 @@ models:
           The dbt project name extracted from the node_id (second segment).
           Enables filtering recommendations by project.
 
-      - name: environment_count
+      - name: deployed_relation_count
         description: >
-          Number of distinct physical environments (table_fqn values) where this logical
-          dbt model has been materialized. Useful for identifying models that exist across
-          dev/staging/prod.
+          Number of distinct relations (table_fqn values) this dbt model has been built
+          into, excluding dbt_excluded_schemas / dbt_excluded_targets. Counts every schema:
+          dev, prod, and CI schemas such as DBT_CLOUD_PR_%. To leave CI out, set
+          dbt_excluded_schemas: ['DBT_CLOUD_PR_%'].
