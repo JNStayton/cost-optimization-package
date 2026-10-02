@@ -10,7 +10,9 @@
     builds from WAREHOUSE_EVENTS_HISTORY first, then this macro enriches with
     live config from SHOW WAREHOUSES.
 
-    SHOW WAREHOUSES returns one row per warehouse — no looping needed.
+    SHOW WAREHOUSES returns one row per warehouse — no looping needed. A max cluster
+    count above 1 also marks the warehouse multi-cluster: the events model only sees
+    multi-cluster warehouses that spun up a second cluster in its window.
   --#}
 
   {% if execute and target.type == 'snowflake' %}
@@ -60,11 +62,19 @@
           auto_resume          = source.auto_resume,
           scaling_policy       = source.scaling_policy,
           min_cluster_count    = source.min_cluster_count,
-          max_cluster_count    = source.max_cluster_count
+          max_cluster_count    = source.max_cluster_count,
+          -- A warehouse configured for more than one cluster is multi-cluster even if it
+          -- hasn't spun up a second cluster in the events window
+          is_multicluster      = target.is_multicluster or source.max_cluster_count > 1,
+          warehouse_category   = case
+                                     when target.warehouse_category = 'adaptive' then 'adaptive'
+                                     when target.is_multicluster or source.max_cluster_count > 1 then 'multi_cluster'
+                                     else target.warehouse_category
+                                 end
       when not matched then insert
-          (warehouse_name, current_size, is_smallest_size, is_largest_size, auto_suspend_seconds, auto_resume, scaling_policy, min_cluster_count, max_cluster_count)
+          (warehouse_name, current_size, is_smallest_size, is_largest_size, auto_suspend_seconds, auto_resume, scaling_policy, min_cluster_count, max_cluster_count, is_multicluster)
       values
-          (source.warehouse_name, source.current_size, source.is_smallest_size, source.is_largest_size, source.auto_suspend_seconds, source.auto_resume, source.scaling_policy, source.min_cluster_count, source.max_cluster_count)
+          (source.warehouse_name, source.current_size, source.is_smallest_size, source.is_largest_size, source.auto_suspend_seconds, source.auto_resume, source.scaling_policy, source.min_cluster_count, source.max_cluster_count, source.max_cluster_count > 1)
     {% endset %}
 
     {% do run_query(merge_sql) %}

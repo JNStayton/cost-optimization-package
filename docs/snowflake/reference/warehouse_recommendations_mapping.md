@@ -13,7 +13,7 @@ Complete symptom-to-optimization map for warehouse-level recommendations. Organi
 | `median_provisioning_ms` | Yes | INT_SNOWFLAKE__WAREHOUSE_QUERY_STATS_DAILY |
 | `total_gb_spilled_local` / `remote` | Yes | INT_SNOWFLAKE__WAREHOUSE_SPILLAGE_DAILY |
 | `avg_query_load_pct` | Yes | INT_SNOWFLAKE__WAREHOUSE_QUERY_STATS_DAILY |
-| `is_multicluster` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG |
+| `is_multicluster` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG: a second cluster spun up in the last 90 days (WAREHOUSE_EVENTS_HISTORY), or `max_cluster_count > 1` in SHOW WAREHOUSES |
 | `warehouse_size` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG |
 | `is_gen2` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG |
 | `auto_suspend` | Yes | INT_SNOWFLAKE__WAREHOUSE_CONFIG (via refresh_warehouse_config post-hook, SHOW WAREHOUSES) |
