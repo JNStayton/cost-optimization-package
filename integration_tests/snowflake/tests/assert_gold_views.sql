@@ -39,7 +39,8 @@
     non-stable backlog rows (SQL refactor and the three scale-ups actionable, since their
     savings are null and the floor doesn't demote them; worsening, steady and the chain
     table monitor), four more actionable warehouse rows, spillage groups on BUSY,
-    BUSY_2XL, IDLE and HEALTHY, 7 spilling models, and demo_chain_table in cross-domain
+    BUSY_2XL, IDLE and HEALTHY, 7 spilling models, the bursty multi-cluster recommendation
+    (actionable with null savings: one more backlog row and actionable warehouse row), and demo_chain_table in cross-domain
     insights (spillage + view_chain). -#}
 with checks as (
     select 'all_recommendations has no duplicate recommendations' as check_name,
@@ -48,7 +49,7 @@ with checks as (
     union all
     select 'optimization_backlog rows',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }})::varchar as produced,
-           '{{ 25 if is_enterprise else 18 }}' as expected
+           '{{ 26 if is_enterprise else 18 }}' as expected
     union all
     select 'optimization_backlog excludes demoted DEMO_EVENTS',
            (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }}
@@ -56,7 +57,7 @@ with checks as (
     union all
     select 'cost_savings_summary counts',
            (select listagg(domain || '=' || total_recommendations, ',') within group (order by domain)
-            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=5,warehouse={{ 12 if is_enterprise else 8 }}'
+            from {{ ref('vw_snowflake__cost_savings_summary') }}), 'materialization=5,warehouse={{ 13 if is_enterprise else 8 }}'
     union all
     select 'top_recommendations rank 1',
            (select listagg(signal_id || '@' || warehouse_name, ',') from {{ ref('vw_snowflake__top_recommendations') }}
@@ -65,7 +66,8 @@ with checks as (
     select 'warehouse_optimizations',
            (select listagg(warehouse_name || ':' || signal_id, ',') within group (order by warehouse_name, signal_id)
             from {{ ref('vw_snowflake__warehouse_optimizations') }}),
-           'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},'
+           '{{ "FIXTURE_WH_BURSTY:idle_enable_mcw_bursty," if is_enterprise else "" }}'
+           || 'FIXTURE_WH_BUSY:expensive_query,FIXTURE_WH_BUSY:{{ busy_signal }},'
            || '{{ "FIXTURE_WH_BUSY:spillage," if is_enterprise else "" }}'
            || 'FIXTURE_WH_BUSY_2XL:{{ busy_signal }},'
            || '{{ "FIXTURE_WH_BUSY_2XL:spillage," if is_enterprise else "" }}'

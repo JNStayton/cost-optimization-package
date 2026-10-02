@@ -1,7 +1,8 @@
 {#-
   refresh_warehouse_config (post-hook on int_snowflake__warehouse_config) merges live
   SHOW WAREHOUSES settings. The fixture warehouses don't exist live, so they must keep null
-  settings (the recommendations then fall back to 300 s auto-suspend). The target's own
+  settings (the recommendations then fall back to 300 s auto-suspend), except the four the
+  integration project's simulate_show_warehouses hook sets on Enterprise edition. The target's own
   warehouse does exist, so it must have its live size and auto-suspend, plus its live
   scaling policy and cluster counts on Enterprise edition (fixed STANDARD / 1 on Standard) (the fixtures have no events for it, so its size comes only from
   the hook). Every warehouse the hook gives a size must also get is_smallest_size and
@@ -28,8 +29,19 @@ checks as (
            1 as expected
     union all
     select 'fixture warehouses have no live settings',
-           (select count(*) from config where startswith(warehouse_name, 'FIXTURE_WH_') and auto_suspend_seconds is not null),
+           (select count(*) from config where startswith(warehouse_name, 'FIXTURE_WH_') and auto_suspend_seconds is not null
+              and warehouse_name not in ('FIXTURE_WH_BURSTY', 'FIXTURE_WH_MCW_IDLE', 'FIXTURE_WH_MCW_BUSY', 'FIXTURE_WH_MCW_OVERSIZED')),
            0
+    union all
+    -- The simulated SHOW WAREHOUSES values (Enterprise only; macros/simulate_show_warehouses.sql),
+    -- with a max cluster count above 1 marking the warehouse multi-cluster
+    select 'simulated SHOW WAREHOUSES settings',
+           (select count(*) from config
+            where warehouse_name in ('FIXTURE_WH_BURSTY', 'FIXTURE_WH_MCW_IDLE', 'FIXTURE_WH_MCW_BUSY', 'FIXTURE_WH_MCW_OVERSIZED')
+              and auto_suspend_seconds is not null
+              and is_multicluster = (max_cluster_count > 1)
+              and (warehouse_category = 'multi_cluster') = (max_cluster_count > 1)),
+           {{ 4 if var('snowflake_enterprise_edition', true) else 0 }}
     union all
     select 'live sizes have size flags',
            (select count(*) from config where current_size is not null

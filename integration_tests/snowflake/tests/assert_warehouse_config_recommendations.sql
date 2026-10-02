@@ -15,6 +15,14 @@
       carries no size)                              → already at minimum, no DDL
   On Enterprise edition, the four queuing single-cluster warehouses (BUSY, BUSY_XS,
   BUSY_2XL, BUSY_6XL) get "enable multi-cluster" instead; the rest are the same.
+  Multi-cluster branches (Enterprise; settings from the simulated SHOW WAREHOUSES hook,
+  macros/simulate_show_warehouses.sql):
+    - BURSTY (50% idle, auto-suspend 60, 90% load, single cluster) → 1.6 enable multi-cluster
+    - MCW_IDLE (50% idle, auto-suspend 60, ECONOMY, 1–3 clusters)  → 1.2 switch to STANDARD
+    - MCW_BUSY (queuing, STANDARD, 1–3 clusters)                    → 2.5 max clusters to 4
+    - MCW_OVERSIZED (10% load, 1–2 clusters)                        → 5.1 disable multi-cluster
+  On Standard edition they keep the defaults (300 s auto-suspend, one cluster): reduce
+  auto-suspend (BURSTY, MCW_IDLE), scale up (MCW_BUSY), scale down (MCW_OVERSIZED).
   Returns rows only on mismatch.
 -#}
 with produced as (
@@ -38,6 +46,18 @@ expected as (
     union all select 'FIXTURE_WH_BUSY_XS',   'overload_scale_up_standard', 'ALTER WAREHOUSE FIXTURE_WH_BUSY_XS SET WAREHOUSE_SIZE = ''SMALL'';'
     union all select 'FIXTURE_WH_BUSY_2XL',  'overload_scale_up_standard', 'ALTER WAREHOUSE FIXTURE_WH_BUSY_2XL SET WAREHOUSE_SIZE = ''3X-LARGE'';'
     union all select 'FIXTURE_WH_BUSY_6XL',  'overload_at_max_standard',   null
+{%- endif %}
+{%- if var('snowflake_enterprise_edition', true) %}
+    union all select 'FIXTURE_WH_BURSTY',        'idle_enable_mcw_bursty',
+        'ALTER WAREHOUSE FIXTURE_WH_BURSTY SET MAX_CLUSTER_COUNT = 2, MIN_CLUSTER_COUNT = 1, SCALING_POLICY = ''STANDARD'';'
+    union all select 'FIXTURE_WH_MCW_IDLE',      'idle_switch_scaling_policy', 'ALTER WAREHOUSE FIXTURE_WH_MCW_IDLE SET SCALING_POLICY = ''STANDARD'';'
+    union all select 'FIXTURE_WH_MCW_BUSY',      'overload_increase_clusters', 'ALTER WAREHOUSE FIXTURE_WH_MCW_BUSY SET MAX_CLUSTER_COUNT = 4;'
+    union all select 'FIXTURE_WH_MCW_OVERSIZED', 'oversized_disable_mcw',      'ALTER WAREHOUSE FIXTURE_WH_MCW_OVERSIZED SET MAX_CLUSTER_COUNT = 1;'
+{%- else %}
+    union all select 'FIXTURE_WH_BURSTY',        'idle_reduce_auto_suspend',   'ALTER WAREHOUSE FIXTURE_WH_BURSTY SET AUTO_SUSPEND = 60;'
+    union all select 'FIXTURE_WH_MCW_IDLE',      'idle_reduce_auto_suspend',   'ALTER WAREHOUSE FIXTURE_WH_MCW_IDLE SET AUTO_SUSPEND = 60;'
+    union all select 'FIXTURE_WH_MCW_BUSY',      'overload_scale_up_standard', 'ALTER WAREHOUSE FIXTURE_WH_MCW_BUSY SET WAREHOUSE_SIZE = ''LARGE'';'
+    union all select 'FIXTURE_WH_MCW_OVERSIZED', 'oversized_scale_down',       'ALTER WAREHOUSE FIXTURE_WH_MCW_OVERSIZED SET WAREHOUSE_SIZE = ''MEDIUM'';'
 {%- endif %}
     union all select 'FIXTURE_WH_COLD',      'provisioning_gen2',          'ALTER WAREHOUSE FIXTURE_WH_COLD SET RESOURCE_CONSTRAINT = ''STANDARD_GEN_2'';'
     union all select 'FIXTURE_WH_OVERSIZED', 'oversized_scale_down',       'ALTER WAREHOUSE FIXTURE_WH_OVERSIZED SET WAREHOUSE_SIZE = ''MEDIUM'';'

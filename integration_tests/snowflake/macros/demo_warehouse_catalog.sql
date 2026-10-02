@@ -10,6 +10,9 @@
   QUERY_HISTORY's (X-Small). node_id, when set, goes in a dbt query comment.
   JOBS is for the job-level spillage slice: a Medium warehouse that runs one dbt platform
   job alone, shaped like HEALTHY so it gets no config recommendation of its own.
+  BURSTY and the three MCW_ warehouses are for the multi-cluster branches (Enterprise).
+  Their SHOW WAREHOUSES settings (auto-suspend, scaling policy, cluster counts) come from
+  macros/simulate_show_warehouses.sql; on Standard they keep the defaults.
 -#}
 {% macro demo_warehouse_catalog() %}
   {{ return([
@@ -42,6 +45,18 @@
      'node_id': 'model.cost_optimization_integration_tests.demo_logs'},
     {'name': 'FIXTURE_WH_JOBS',       'id': 800010, 'session_id': 111, 'event_size': 'MEDIUM', 'qh_size': 'Medium',
      'elapsed': 2000, 'exec': 2000, 'overload': 0, 'provisioning': 0, 'load': 60,
+     'credits': 1.0, 'compute': 0.95, 'autosuspends': 0, 'suspended_last': false, 'node_id': none},
+    {'name': 'FIXTURE_WH_BURSTY',     'id': 800011, 'session_id': 112, 'event_size': 'SMALL',  'qh_size': 'Small',
+     'elapsed': 2000, 'exec': 2000, 'overload': 0, 'provisioning': 0, 'load': 90,
+     'credits': 1.0, 'compute': 0.5, 'autosuspends': 0, 'suspended_last': false, 'node_id': none},
+    {'name': 'FIXTURE_WH_MCW_IDLE',   'id': 800012, 'session_id': 113, 'event_size': 'SMALL',  'qh_size': 'Small',
+     'elapsed': 2000, 'exec': 2000, 'overload': 0, 'provisioning': 0, 'load': 60,
+     'credits': 1.0, 'compute': 0.5, 'autosuspends': 0, 'suspended_last': false, 'node_id': none},
+    {'name': 'FIXTURE_WH_MCW_BUSY',   'id': 800013, 'session_id': 114, 'event_size': 'MEDIUM', 'qh_size': 'Medium',
+     'elapsed': 5000, 'exec': 3000, 'overload': 2000, 'provisioning': 0, 'load': 100,
+     'credits': 10.0, 'compute': 9.5, 'autosuspends': 0, 'suspended_last': false, 'node_id': none},
+    {'name': 'FIXTURE_WH_MCW_OVERSIZED', 'id': 800014, 'session_id': 115, 'event_size': 'LARGE', 'qh_size': 'Large',
+     'elapsed': 100, 'exec': 100, 'overload': 0, 'provisioning': 0, 'load': 10,
      'credits': 1.0, 'compute': 0.95, 'autosuspends': 0, 'suspended_last': false, 'node_id': none},
     {'name': 'FIXTURE_WH_SUSPENDED',  'id': 800007, 'session_id': 107, 'event_size': 'XSMALL', 'qh_size': 'X-Small',
      'elapsed': 100, 'exec': 100, 'overload': 0, 'provisioning': 0, 'load': 10,

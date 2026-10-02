@@ -76,6 +76,16 @@ expected as (
     union all select 'warehouse', 'spillage_route_models',  'job7003_m1',   'monitor',     5.41
     union all select 'warehouse', 'spillage_job_scale_up',  'dbt job 7002', 'actionable', 47.59
 {%- if var('snowflake_enterprise_edition', true) %}
+    {#- The null-estimate floor case (Enterprise): enabling multi-cluster for the bursty
+        warehouse has no dollar estimate (null savings), so min_annual_savings_usd must not
+        demote it. #}
+    union all select 'warehouse', 'idle_enable_mcw_bursty', 'fixture_wh_bursty', 'actionable', null
+{%- else %}
+    {#- Standard: BURSTY keeps the default 300 s auto-suspend → reduce it; no auto-suspend
+        cycles, so $0 savings, demoted to stable by the floor. #}
+    union all select 'warehouse', 'idle_reduce_auto_suspend', 'fixture_wh_bursty', 'stable', 0.00
+{%- endif %}
+{%- if var('snowflake_enterprise_edition', true) %}
     {#- Spillage (Enterprise edition): signal and status from the tier key. Scale-up savings
         are null (so the $1 floor doesn't demote them); the column holds the cost:
         the spilling queries' runtime x the warehouse's list rate / 3600 x 365/30 x $2.

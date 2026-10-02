@@ -369,6 +369,19 @@ select
 {%- endfor %}
 {%- endfor %}
 {#-
+  Multi-cluster slice (Enterprise): one query tagged with this project's node_id on
+  FIXTURE_WH_BURSTY, from a non-dbt session, so its warehouse recommendation is in the
+  project's scope and reaches the gold layer: the bursty multi-cluster recommendation has
+  no dollar estimate, and the savings floor must not demote it.
+-#}
+union all
+select
+    'bursty_scope', dateadd(hour, -5, current_timestamp()), 'hash_bursty_scope', 'phash_bursty_scope',
+    'FIXTURE_BUILDER', 'FIXTURE_TRANSFORMER', 'FIXTURE_WH_BURSTY', 'Small', 100, 0, 100, 0, 0,
+    'SELECT', 100, 0, 0, 0, 0,
+    '/* {"app": "dbt", "node_id": "model.cost_optimization_integration_tests.demo_orders"} */ select 1',
+    1, 'SUCCESS', 0
+{#-
   Relation history: a second deployment of demo_orders, in <schema>_deploy under target
   'prod' with a dbt platform environment id. Run from a non-dbt session so it only
   feeds relation history (not the warehouse, expensive query or user attribution

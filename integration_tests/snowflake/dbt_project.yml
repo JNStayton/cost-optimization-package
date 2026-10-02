@@ -24,6 +24,12 @@ models:
   dbt_cost_optimization_package:
     +schema: "{{ var('package_test_schema', 'integration') }}"
     snowflake:
+      intermediate:
+        int_snowflake__warehouse_config:
+          # Simulated SHOW WAREHOUSES values for fixture warehouses (Enterprise edition),
+          # for the multi-cluster branches. See macros/simulate_show_warehouses.sql.
+          +post-hook:
+            - "{{ simulate_show_warehouses() }}"
       marts:
         clustering:
           fct_snowflake__table_clustering_candidates:
