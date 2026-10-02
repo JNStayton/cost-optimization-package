@@ -94,7 +94,7 @@ Both terms are independent and additive. `downstream_build_time_s` already accou
 
 ### Purpose
 
-Identifies dbt models materialized as `table` that are candidates for conversion to `incremental` materialization, based on rebuild cost, table size, and rebuild redundancy. Excludes this package's own models (`package_name = 'dbt_cost_optimization_package'`) so the package never recommends converting its own intermediates.
+Identifies dbt models materialized as `table` that are candidates for conversion to `incremental` materialization, based on rebuild cost, table size, and rebuild redundancy. Excludes this package's own models (`package_name = 'dbt_cost_optimization'`) so the package never recommends converting its own intermediates.
 
 ### Scoring
 

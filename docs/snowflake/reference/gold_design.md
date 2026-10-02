@@ -573,7 +573,7 @@ These are detected by joining fact models on `table_fqn` or `node_id` and lookin
 
 ### Correlation 12: Package Self-Referential Spillage
 
-**Detection:** `fct_warehouse_spillage_recommendations` contains rows where `package_name = 'dbt_cost_optimization_package'`.
+**Detection:** `fct_warehouse_spillage_recommendations` contains rows where `package_name = 'dbt_cost_optimization'`.
 
 **Root cause:** The optimization package's own models are spilling because they query large ACCOUNT_USAGE views. This is a "heal thyself" signal.
 

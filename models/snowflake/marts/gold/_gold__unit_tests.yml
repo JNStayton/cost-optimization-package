@@ -329,7 +329,7 @@ unit_tests:
     model: vw_snowflake__top_queried_models
     overrides:
       vars:
-        dbt_monitored_projects: ['dbt_cost_optimization_package']
+        dbt_monitored_projects: ['dbt_cost_optimization']
     given:
       - input: ref('int_snowflake__table_query_stats_daily')
         rows:
@@ -341,8 +341,8 @@ unit_tests:
           - {table_database: DB, table_schema: S, table_name: T4, stats_date: 2099-01-01, select_count: 5,    select_execution_time_ms_sum: 100,    bytes_scanned_sum: 100}
       - input: ref('int_dbt__relations')
         rows:
-          - {table_fqn: DB.S.T1, dbt_model: model.dbt_cost_optimization_package.t1, model_name: t1, package_name: dbt_cost_optimization_package}
-          - {table_fqn: DB.S.T2, dbt_model: model.dbt_cost_optimization_package.t2, model_name: t2, package_name: dbt_cost_optimization_package}
+          - {table_fqn: DB.S.T1, dbt_model: model.dbt_cost_optimization.t1, model_name: t1, package_name: dbt_cost_optimization}
+          - {table_fqn: DB.S.T2, dbt_model: model.dbt_cost_optimization.t2, model_name: t2, package_name: dbt_cost_optimization}
           - {table_fqn: DB.S.T3, dbt_model: model.other_project.t3,                model_name: t3, package_name: other_project}
     expect:
       rows:
@@ -366,15 +366,15 @@ unit_tests:
     given:
       - input: ref('fct_snowflake__warehouse_performance_recommendations')
         rows:
-          - {table_fqn: DB.S.M1, model_name: m1, dbt_model: model.dbt_cost_optimization_package.m1, warehouse_name: WH1, total_gb_spilled_local: 2, total_gb_spilled_remote: 1, recommendation: Scale up warehouse}
+          - {table_fqn: DB.S.M1, model_name: m1, dbt_model: model.dbt_cost_optimization.m1, warehouse_name: WH1, total_gb_spilled_local: 2, total_gb_spilled_remote: 1, recommendation: Scale up warehouse}
           - {table_fqn: DB.S.M2, model_name: m2, dbt_model: model.other_pkg.m2,                     warehouse_name: WH1, total_gb_spilled_local: 1, total_gb_spilled_remote: 0, recommendation: Monitor}
-          - {table_fqn: DB.S.M3, model_name: m3, dbt_model: model.dbt_cost_optimization_package.m3, warehouse_name: WH1, total_gb_spilled_local: 9, total_gb_spilled_remote: 9, recommendation: Not available on Standard edition}
+          - {table_fqn: DB.S.M3, model_name: m3, dbt_model: model.dbt_cost_optimization.m3, warehouse_name: WH1, total_gb_spilled_local: 9, total_gb_spilled_remote: 9, recommendation: Not available on Standard edition}
           - {table_fqn: DB.S.M4, model_name: m4, dbt_model: null,                                   warehouse_name: WH1, total_gb_spilled_local: 9, total_gb_spilled_remote: 9, recommendation: Scale up warehouse}
       - input: ref('int_snowflake__query_history')
         rows:
-          - {query_text: '/* {"node_id": "model.dbt_cost_optimization_package.m1"} */ insert into t', dbt_cloud_run_id: r_new, dbt_cloud_job_id: j1, query_start_time: '2099-01-02 00:00:00', bytes_spilled_local: 1073741824}
-          - {query_text: '/* {"node_id": "model.dbt_cost_optimization_package.m1"} */ insert into t', dbt_cloud_run_id: r_old, dbt_cloud_job_id: j1, query_start_time: '2099-01-01 00:00:00', bytes_spilled_local: 1073741824}
-          - {query_text: '/* {"node_id": "model.dbt_cost_optimization_package.m1"} */ insert into t', dbt_cloud_run_id: r_ancient, dbt_cloud_job_id: j1, query_start_time: '2000-01-01 00:00:00', bytes_spilled_local: 1073741824}
+          - {query_text: '/* {"node_id": "model.dbt_cost_optimization.m1"} */ insert into t', dbt_cloud_run_id: r_new, dbt_cloud_job_id: j1, query_start_time: '2099-01-02 00:00:00', bytes_spilled_local: 1073741824}
+          - {query_text: '/* {"node_id": "model.dbt_cost_optimization.m1"} */ insert into t', dbt_cloud_run_id: r_old, dbt_cloud_job_id: j1, query_start_time: '2099-01-01 00:00:00', bytes_spilled_local: 1073741824}
+          - {query_text: '/* {"node_id": "model.dbt_cost_optimization.m1"} */ insert into t', dbt_cloud_run_id: r_ancient, dbt_cloud_job_id: j1, query_start_time: '2000-01-01 00:00:00', bytes_spilled_local: 1073741824}
       - input: ref('int_snowflake__all_recommendations')
         rows:
           - {table_fqn: DB.S.M1, priority_tier: 4, signal_id: spillage_scale_up}
@@ -472,16 +472,16 @@ unit_tests:
           - {session_id: 1}
       - input: ref('int_snowflake__query_history')
         rows:
-          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q1, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 3600000,  query_start_time: '2099-01-01 00:00:00', query_text: insert}
-          - {user_name: u_mixed,    role_name: TRANSFORMER, query_id: q2, session_id: 1, warehouse_name: WH1,        query_type: MERGE,  dbt_node_id: model.dbt_cost_optimization_package.b, total_elapsed_time_ms: 36000000, query_start_time: '2099-01-01 00:00:00', query_text: merge}
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q1, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization.a, total_elapsed_time_ms: 3600000,  query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_mixed,    role_name: TRANSFORMER, query_id: q2, session_id: 1, warehouse_name: WH1,        query_type: MERGE,  dbt_node_id: model.dbt_cost_optimization.b, total_elapsed_time_ms: 36000000, query_start_time: '2099-01-01 00:00:00', query_text: merge}
           - {user_name: u_mixed,    role_name: TRANSFORMER, query_id: q3, session_id: 9, warehouse_name: WH1,        query_type: SELECT, dbt_node_id: null,                                   total_elapsed_time_ms: 1000000,  query_start_time: '2099-01-01 00:00:00', query_text: select * from DB.S.T1}
           - {user_name: u_consumer, role_name: ANALYST,     query_id: q4, session_id: 9, warehouse_name: WH_UNKNOWN, query_type: SELECT, dbt_node_id: null,                                   total_elapsed_time_ms: 1000000,  query_start_time: '2099-01-01 00:00:00', query_text: select * from DB.S.T1}
           - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q5, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.other_project.x,                 total_elapsed_time_ms: 99000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
-          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q6, session_id: 9, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 99000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
-          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q7, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 99000000, query_start_time: '2000-01-01 00:00:00', query_text: insert}
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q6, session_id: 9, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization.a, total_elapsed_time_ms: 99000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_builder,  role_name: TRANSFORMER, query_id: q7, session_id: 1, warehouse_name: WH1,        query_type: INSERT, dbt_node_id: model.dbt_cost_optimization.a, total_elapsed_time_ms: 99000000, query_start_time: '2000-01-01 00:00:00', query_text: insert}
       - input: ref('int_dbt__relations')
         rows:
-          - {database_name: DB, schema_name: S, table_name: T1, package_name: dbt_cost_optimization_package}
+          - {database_name: DB, schema_name: S, table_name: T1, package_name: dbt_cost_optimization}
       - input: ref('fct_snowflake__ai_user_spend_recommendations')
         rows:
           - {user_name: u_ai, default_role: DATA_SCIENTIST, total_credits_30d: 5, total_queries_30d: 50}
@@ -508,7 +508,7 @@ unit_tests:
           - {table_database: DB, table_schema: S, table_name: T3, stats_date: 2099-01-01, select_count: 5,  select_execution_time_ms_sum: 1000, bytes_scanned_sum: 0}
       - input: ref('int_dbt__relations')
         rows:
-          - {table_fqn: DB.S.T1, dbt_model: model.dbt_cost_optimization_package.t1, model_name: t1, package_name: dbt_cost_optimization_package}
+          - {table_fqn: DB.S.T1, dbt_model: model.dbt_cost_optimization.t1, model_name: t1, package_name: dbt_cost_optimization}
           - {table_fqn: DB.S.T3, dbt_model: model.other_project.t3,                model_name: t3, package_name: other_project}
     expect:
       rows:
@@ -525,7 +525,7 @@ unit_tests:
     given:
       - input: ref('fct_snowflake__warehouse_performance_recommendations')
         rows:
-          - {table_fqn: DB.S.M1, model_name: m1, dbt_model: model.dbt_cost_optimization_package.m1, warehouse_name: WH1, total_gb_spilled_local: 2, total_gb_spilled_remote: 1, recommendation: Scale up warehouse}
+          - {table_fqn: DB.S.M1, model_name: m1, dbt_model: model.dbt_cost_optimization.m1, warehouse_name: WH1, total_gb_spilled_local: 2, total_gb_spilled_remote: 1, recommendation: Scale up warehouse}
       - input: ref('int_snowflake__query_history')
         rows: []
       - input: ref('int_snowflake__all_recommendations')
@@ -562,12 +562,12 @@ unit_tests:
       - input: ref('int_snowflake__query_history')
         rows:
           - {user_name: u_multi,  role_name: ANALYST,     query_id: q1, session_id: 9, warehouse_name: WH1, query_type: SELECT, dbt_node_id: null, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: select * from DB.S.T1 join DB.S.T2 using (id)}
-          - {user_name: u_two_wh, role_name: TRANSFORMER, query_id: q2, session_id: 1, warehouse_name: WH1, query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
-          - {user_name: u_two_wh, role_name: TRANSFORMER, query_id: q3, session_id: 1, warehouse_name: WH2, query_type: INSERT, dbt_node_id: model.dbt_cost_optimization_package.a, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_two_wh, role_name: TRANSFORMER, query_id: q2, session_id: 1, warehouse_name: WH1, query_type: INSERT, dbt_node_id: model.dbt_cost_optimization.a, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
+          - {user_name: u_two_wh, role_name: TRANSFORMER, query_id: q3, session_id: 1, warehouse_name: WH2, query_type: INSERT, dbt_node_id: model.dbt_cost_optimization.a, total_elapsed_time_ms: 1000000, query_start_time: '2099-01-01 00:00:00', query_text: insert}
       - input: ref('int_dbt__relations')
         rows:
-          - {database_name: DB, schema_name: S, table_name: T1, package_name: dbt_cost_optimization_package}
-          - {database_name: DB, schema_name: S, table_name: T2, package_name: dbt_cost_optimization_package}
+          - {database_name: DB, schema_name: S, table_name: T1, package_name: dbt_cost_optimization}
+          - {database_name: DB, schema_name: S, table_name: T2, package_name: dbt_cost_optimization}
       - input: ref('fct_snowflake__ai_user_spend_recommendations')
         rows: []
     expect:

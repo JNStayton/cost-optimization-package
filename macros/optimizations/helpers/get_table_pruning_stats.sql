@@ -4,7 +4,7 @@
   Add a <platform>__get_table_pruning_stats with the same arguments to support another platform.
 --#}
 {% macro get_table_pruning_stats(database_name, schema_name, table_name, lookback_days=7) %}
-  {{ return(adapter.dispatch('get_table_pruning_stats', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('get_table_pruning_stats', 'dbt_cost_optimization')(
       database_name=database_name,
       schema_name=schema_name,
       table_name=table_name,

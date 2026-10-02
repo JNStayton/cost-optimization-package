@@ -55,7 +55,7 @@
 
     {% set performance_sql %}
       with dbt_sessions as (
-          {{ dbt_cost_optimization_package.dbt_session_filter(lookback_days=lookback_days) }}
+          {{ dbt_cost_optimization.dbt_session_filter(lookback_days=lookback_days) }}
       ),
 
       dbt_query_stats as (
@@ -215,7 +215,7 @@
         {% for r in sorted_recs %}
             {% if loop.index > 20 %}{% break %}{% endif %}
 
-            {{ dbt_cost_optimization_package.log_recommendation(
+            {{ dbt_cost_optimization.log_recommendation(
                 title='Warehouse: ' ~ r.warehouse_name ~ ' (' ~ r.warehouse_size ~ ')',
                 recommendation=r.recommendation,
                 reason=r.reason,

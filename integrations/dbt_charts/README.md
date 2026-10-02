@@ -18,7 +18,7 @@ layers, so this board does not generalize to them as-is.
    ```
 
 2. Build this package's models, from your project root. Select the whole
-   package (`package:dbt_cost_optimization_package`), not just `tag:gold` -
+   package (`package:dbt_cost_optimization`), not just `tag:gold` -
    the gold views are tagged `gold`, but the fact tables they read from
    (clustering, materialization, warehouse, AI spend) each carry their own
    domain tag instead. Selecting the whole package builds everything this
@@ -26,7 +26,7 @@ layers, so this board does not generalize to them as-is.
    ancestor selection to pull in exactly the right set:
 
    ```bash
-   dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
+   dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization
    ```
 
 3. Set your dbt profile name as an environment variable, once, in your
@@ -44,7 +44,7 @@ layers, so this board does not generalize to them as-is.
 4. Launch:
 
    ```bash
-   cd dbt_packages/dbt_cost_optimization_package/integrations/dbt_charts
+   cd dbt_packages/dbt_cost_optimization/integrations/dbt_charts
    dct validate
    dct serve
    ```

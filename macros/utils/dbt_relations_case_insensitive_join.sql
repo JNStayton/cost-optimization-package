@@ -4,7 +4,7 @@
   Add a <platform>__dbt_relations_case_insensitive_join with the same arguments to support another platform.
 --#}
 {% macro dbt_relations_case_insensitive_join(left_alias) %}
-  {{ return(adapter.dispatch('dbt_relations_case_insensitive_join', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('dbt_relations_case_insensitive_join', 'dbt_cost_optimization')(
       left_alias=left_alias
   )) }}
 {% endmacro %}

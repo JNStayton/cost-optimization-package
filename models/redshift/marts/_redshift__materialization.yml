@@ -190,7 +190,7 @@ models:
       dbt TABLE models that are candidates for conversion to INCREMENTAL
       materialization, based on rebuild cost, table size, and rebuild redundancy
       over a configurable lookback window. Excludes this package's own models
-      (package_name = 'dbt_cost_optimization_package') so the package never
+      (package_name = 'dbt_cost_optimization') so the package never
       recommends converting its own intermediates.
 
       The key signal is rebuild_redundancy_rate = rows_at_period_start /

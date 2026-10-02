@@ -35,11 +35,11 @@ Every unit test and macro test has been checked to **fail** when the logic it co
 - **dbt v2.** The package is tested on dbt v2. dbt v1 isn't supported yet.
 - **A Snowflake role that can read `SNOWFLAKE.ACCOUNT_USAGE`** (`IMPORTED PRIVILEGES` on the `SNOWFLAKE` database), plus a warehouse.
 - **A dedicated test schema.** Setting up unit tests builds tables (mostly empty) in it. Because the package sets `+schema: dbt_cost_optimization`, models land in `<your target schema>_dbt_cost_optimization`.
-- **A dbt profile target** for this repo's profile, `dbt_cost_optimization_package`, in `~/.dbt/profiles.yml`. Key-pair authentication works well for repeated test runs:
+- **A dbt profile target** for this repo's profile, `dbt_cost_optimization`, in `~/.dbt/profiles.yml`. Key-pair authentication works well for repeated test runs:
 
   ```yaml
   # ~/.dbt/profiles.yml (outside the repo). Placeholder values only.
-  dbt_cost_optimization_package:
+  dbt_cost_optimization:
     target: test
     outputs:
       test:
@@ -67,13 +67,13 @@ Every command below passes `--vars '{dbt_cost_optimization_enabled: true}'`, bec
 Data tests check real output, so run them where the package analyzes real activity: in a dbt project that installs this package and has models with query history.
 
 ```bash
-dbt build --select package:dbt_cost_optimization_package --vars '{dbt_cost_optimization_enabled: true}'
+dbt build --select package:dbt_cost_optimization --vars '{dbt_cost_optimization_enabled: true}'
 ```
 
 To run only the tests against models you've already built:
 
 ```bash
-dbt test --select package:dbt_cost_optimization_package,test_type:data --vars '{dbt_cost_optimization_enabled: true}'
+dbt test --select package:dbt_cost_optimization,test_type:data --vars '{dbt_cost_optimization_enabled: true}'
 ```
 
 ### Unit and macro tests: from this repo
@@ -149,12 +149,12 @@ The integration fixtures have only the columns the package reads. The smoke test
 ```bash
 cd integration_tests/snowflake
 V='{snowflake_usage_database: SNOWFLAKE, snowflake_usage_schema: ACCOUNT_USAGE, package_test_schema: smoke_standard, snowflake_enterprise_edition: false}'
-dbt build --select package:dbt_cost_optimization_package \
+dbt build --select package:dbt_cost_optimization \
   --exclude int_snowflake__warehouse_config+ fct_snowflake__table_clustering_candidates+ test_type:singular \
   --empty --full-refresh --vars "$V"
 dbt build --select int_snowflake__warehouse_config fct_snowflake__table_clustering_candidates \
   --exclude test_type:singular --full-refresh --vars "$V"
-dbt build --select package:dbt_cost_optimization_package \
+dbt build --select package:dbt_cost_optimization \
   --exclude int_snowflake__warehouse_config fct_snowflake__table_clustering_candidates test_type:singular \
   --empty --full-refresh --vars "$V"
 ```
@@ -202,7 +202,7 @@ A failing unit test prints a row-by-row diff, with `expected -> actual` for each
   - **Keep slices from changing each other.** Builds that one slice needs, but that shouldn't count as dbt sessions, run from session 1 (no dbt session), so they don't change the user attribution or expensive-query results.
   - **Make assertions edition-aware** with `{% if var('snowflake_enterprise_edition', true) %}` wherever Enterprise should differ. Everywhere else, both editions must give the same result.
   - **Where a value comes from a real measurement** (the view probe, operator stats), assert it's consistent with the measurement rather than a fixed number.
-- **Put macro tests in `tests/snowflake/macros/`.** They're enabled and tagged by the `data_tests: dbt_cost_optimization_package: snowflake: macros:` block in `dbt_project.yml`. Keep that config scoped to `macros:`: config under `data_tests:` also applies to generic tests defined in the models' YAML when the paths overlap.
+- **Put macro tests in `tests/snowflake/macros/`.** They're enabled and tagged by the `data_tests: dbt_cost_optimization: snowflake: macros:` block in `dbt_project.yml`. Keep that config scoped to `macros:`: config under `data_tests:` also applies to generic tests defined in the models' YAML when the paths overlap.
 
 ---
 

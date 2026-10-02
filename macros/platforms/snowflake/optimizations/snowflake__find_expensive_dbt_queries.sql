@@ -41,7 +41,7 @@
 
     {% set performance_sql %}
       with dbt_sessions as (
-          {{ dbt_cost_optimization_package.dbt_session_filter(lookback_days=lookback_days) }}
+          {{ dbt_cost_optimization.dbt_session_filter(lookback_days=lookback_days) }}
       ),
 
       query_costs as (
@@ -209,7 +209,7 @@
 
         {% for r in sorted_recs %}
             {% set title = 'Model: ' ~ r.model_fqn ~ ' (' ~ r.current_materialization ~ ')' if r.model_fqn else 'Query hash: ' ~ r.query_hash %}
-            {{ dbt_cost_optimization_package.log_recommendation(
+            {{ dbt_cost_optimization.log_recommendation(
                 title=title,
                 recommendation=r.recommendation,
                 reason=r.reason,

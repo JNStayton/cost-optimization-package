@@ -4,7 +4,7 @@
   Add a <platform>__get_clustering_score with the same arguments to support another platform.
 --#}
 {% macro get_clustering_score(avg_rows, total_rows, usage_count) %}
-  {{ return(adapter.dispatch('get_clustering_score', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('get_clustering_score', 'dbt_cost_optimization')(
       avg_rows=avg_rows,
       total_rows=total_rows,
       usage_count=usage_count

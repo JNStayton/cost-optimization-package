@@ -4,7 +4,7 @@
   Add a <platform>__refresh_warehouse_config with the same arguments to support another platform.
 --#}
 {% macro refresh_warehouse_config() %}
-  {{ return(adapter.dispatch('refresh_warehouse_config', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('refresh_warehouse_config', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__refresh_warehouse_config() %}

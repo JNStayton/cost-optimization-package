@@ -4,7 +4,7 @@
   Add a <platform>__dbt_session_filter with the same arguments to support another platform.
 --#}
 {% macro dbt_session_filter(lookback_days=7) %}
-  {{ return(adapter.dispatch('dbt_session_filter', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('dbt_session_filter', 'dbt_cost_optimization')(
       lookback_days=lookback_days
   )) }}
 {% endmacro %}

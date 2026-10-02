@@ -4,7 +4,7 @@
   Add a <platform>__find_table_materialization_candidates with the same arguments to support another platform.
 --#}
 {% macro find_table_materialization_candidates(lookback_days=14, min_query_count=10, include_package_models=false) %}
-  {{ return(adapter.dispatch('find_table_materialization_candidates', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('find_table_materialization_candidates', 'dbt_cost_optimization')(
       lookback_days=lookback_days,
       min_query_count=min_query_count,
       include_package_models=include_package_models

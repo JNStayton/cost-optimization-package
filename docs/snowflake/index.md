@@ -200,7 +200,7 @@ To build package models, explicitly opt in:
 **Recommended: dedicated scheduled jobs** (no changes to existing jobs required)
 ```bash
 # All package models
-dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization_package
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization
 
 # Or select by optimization domain
 dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:warehouse

@@ -10,7 +10,7 @@
     Usage:
 
       with dbt_sessions as (
-          {{ dbt_cost_optimization_package.dbt_session_filter(lookback_days=7) }}
+          {{ dbt_cost_optimization.dbt_session_filter(lookback_days=7) }}
       ),
       ...
 

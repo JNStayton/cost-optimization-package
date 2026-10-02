@@ -5,7 +5,7 @@
   Add a <platform>__refresh_column_cardinality with the same arguments to support another platform.
 --#}
 {% macro refresh_column_cardinality() %}
-  {{ return(adapter.dispatch('refresh_column_cardinality', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('refresh_column_cardinality', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__refresh_column_cardinality() %}

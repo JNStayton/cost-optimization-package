@@ -4,7 +4,7 @@
   Add a <platform>__build_incremental_config_template with the same arguments to support another platform.
 --#}
 {% macro build_incremental_config_template() %}
-  {{ return(adapter.dispatch('build_incremental_config_template', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('build_incremental_config_template', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__build_incremental_config_template() %}

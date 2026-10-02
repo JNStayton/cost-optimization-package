@@ -6,7 +6,7 @@
     - redshift__probe_unique_key_candidates    (macros/platforms/redshift/utils/redshift__probe_unique_key_candidates.sql)
 --#}
 {% macro probe_unique_key_candidates() %}
-  {{ return(adapter.dispatch('probe_unique_key_candidates', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('probe_unique_key_candidates', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__probe_unique_key_candidates() %}

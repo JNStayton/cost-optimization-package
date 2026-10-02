@@ -15,7 +15,7 @@ unit_tests:
     given:
       - input: ref('int_snowflake__warehouse_expensive_queries_daily')
         rows:
-          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization.a, stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
     expect:
@@ -36,7 +36,7 @@ unit_tests:
     given:
       - input: ref('int_snowflake__warehouse_expensive_queries_daily')
         rows:
-          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization.a, stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
     expect:
@@ -57,7 +57,7 @@ unit_tests:
     given:
       - input: ref('int_snowflake__warehouse_expensive_queries_daily')
         rows:
-          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization.a, stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
     expect:
@@ -79,7 +79,7 @@ unit_tests:
     given:
       - input: ref('int_snowflake__warehouse_expensive_queries_daily')
         rows:
-          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization.a, stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
     expect:
@@ -102,7 +102,7 @@ unit_tests:
     given:
       - input: ref('int_snowflake__warehouse_expensive_queries_daily')
         rows:
-          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization_package.a, stats_date: 2099-01-01, total_credits: 1}
+          - {query_hash: h_this_project,  dbt_node_id: model.dbt_cost_optimization.a, stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_other_project, dbt_node_id: model.other_project.b,                 stats_date: 2099-01-01, total_credits: 1}
           - {query_hash: h_non_dbt,       dbt_node_id: null,                                  stats_date: 2099-01-01, total_credits: 1}
     expect:

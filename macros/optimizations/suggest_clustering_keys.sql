@@ -4,7 +4,7 @@
   Add a <platform>__suggest_clustering_keys with the same arguments to support another platform.
 --#}
 {% macro suggest_clustering_keys(model_name, database=none, schema=none, include_boolean_cols=false) %}
-  {{ return(adapter.dispatch('suggest_clustering_keys', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('suggest_clustering_keys', 'dbt_cost_optimization')(
       model_name=model_name,
       database=database,
       schema=schema,

@@ -4,7 +4,7 @@
   Add a <platform>__find_table_clustering_candidates with the same arguments to support another platform.
 --#}
 {% macro find_table_clustering_candidates(lookback_days=7, ignore_table_size=false, dbt_project_only=true, include_package_models=false, target_databases=[], target_schemas=[]) %}
-  {{ return(adapter.dispatch('find_table_clustering_candidates', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('find_table_clustering_candidates', 'dbt_cost_optimization')(
       lookback_days=lookback_days,
       ignore_table_size=ignore_table_size,
       dbt_project_only=dbt_project_only,

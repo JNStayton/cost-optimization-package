@@ -18,7 +18,7 @@ dbt run-operation find_table_clustering_candidates --args '{lookback_days: 14, i
 | `lookback_days` | 7 | Days of query history to analyze |
 | `ignore_table_size` | false | Skip the 1 GB minimum size filter |
 | `dbt_project_only` | true | Only evaluate tables that are dbt models in the current project |
-| `include_package_models` | false | Include models from installed dbt packages (e.g., dbt_cost_optimization_package). By default, only the installing project's models are evaluated. |
+| `include_package_models` | false | Include models from installed dbt packages (e.g., dbt_cost_optimization). By default, only the installing project's models are evaluated. |
 | `target_databases` | [] | Limit scan to specific databases |
 | `target_schemas` | [] | Limit scan to specific schemas |
 

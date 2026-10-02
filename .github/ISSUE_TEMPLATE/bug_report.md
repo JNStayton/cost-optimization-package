@@ -15,7 +15,7 @@ A clear and concise description of what the bug is. You can also use the issue t
 ### Steps to reproduce
 <!---
 In as much detail as possible, please provide steps to reproduce the issue: the command you ran
-(e.g. `dbt build --select package:dbt_cost_optimization_package`, or
+(e.g. `dbt build --select package:dbt_cost_optimization`, or
 `dbt run-operation find_spillage_candidates --args '{...}'`), the vars you set, and any
 other configuration that matters.
 --->

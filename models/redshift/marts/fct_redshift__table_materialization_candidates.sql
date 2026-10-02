@@ -82,7 +82,7 @@ with view_candidates as (
 
     from {{ ref('int_dbt__relations') }}
     where lower(materialized) in ('view', 'ephemeral')
-        and lower(package_name) != 'dbt_cost_optimization_package'
+        and lower(package_name) != 'dbt_cost_optimization'
 
 ),
 

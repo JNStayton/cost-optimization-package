@@ -4,7 +4,7 @@
   Add a <platform>__get_clustering_cardinality_stats with the same arguments to support another platform.
 --#}
 {% macro get_clustering_cardinality_stats(model_relation, include_boolean_cols=false) %}
-  {{ return(adapter.dispatch('get_clustering_cardinality_stats', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('get_clustering_cardinality_stats', 'dbt_cost_optimization')(
       model_relation=model_relation,
       include_boolean_cols=include_boolean_cols
   )) }}

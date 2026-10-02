@@ -30,7 +30,7 @@ select
     case
         when dbt_node_id like 'test.%'
             then 'dbt_test'
-        when dbt_node_id like 'model.dbt_cost_optimization_package.%'
+        when dbt_node_id like 'model.dbt_cost_optimization.%'
             then 'package_internal'
         when dbt_node_id like 'model.%'
             then 'dbt_model_build'

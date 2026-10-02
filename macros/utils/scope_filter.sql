@@ -4,7 +4,7 @@
   Add a <platform>__scope_filter with the same arguments to support another platform.
 --#}
 {% macro scope_filter(project_col='node_project_name', allow_null_col='node_id') %}
-  {{ return(adapter.dispatch('scope_filter', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('scope_filter', 'dbt_cost_optimization')(
       project_col=project_col,
       allow_null_col=allow_null_col
   )) }}

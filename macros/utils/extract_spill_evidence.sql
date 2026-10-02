@@ -4,7 +4,7 @@
     - snowflake__extract_spill_evidence   (macros/platforms/snowflake/utils/snowflake__extract_spill_evidence.sql)
 --#}
 {% macro extract_spill_evidence() %}
-  {{ return(adapter.dispatch('extract_spill_evidence', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('extract_spill_evidence', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__extract_spill_evidence() %}

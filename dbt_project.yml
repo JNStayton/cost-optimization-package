@@ -1,8 +1,8 @@
-name: 'dbt_cost_optimization_package'
+name: 'dbt_cost_optimization'
 version: '1.0.0'
 config-version: 2
 
-profile: 'dbt_cost_optimization_package'
+profile: 'dbt_cost_optimization'
 
 model-paths: ["models"]
 docs-paths: ["docs"]
@@ -16,7 +16,7 @@ require-dbt-version: [">=1.0.0"]
 
 # Model configurations
 models:
-  dbt_cost_optimization_package:
+  dbt_cost_optimization:
     +schema: dbt_cost_optimization
     # Shared platform-agnostic models (always enabled for ref resolution)
     shared:
@@ -114,11 +114,11 @@ models:
 # Package developers turn them on with `dbt_cost_optimization_run_package_tests: true`
 # (see TESTING.md). Data tests stay on: they check the installing project's real output.
 unit_tests:
-  dbt_cost_optimization_package:
+  dbt_cost_optimization:
     +enabled: "{{ var('dbt_cost_optimization_enabled', false) and var('dbt_cost_optimization_run_package_tests', false) }}"
 
 data_tests:
-  dbt_cost_optimization_package:
+  dbt_cost_optimization:
     snowflake:
       macros:
         +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('dbt_cost_optimization_run_package_tests', false) }}"

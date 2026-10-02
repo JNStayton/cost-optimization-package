@@ -4,7 +4,7 @@
     - snowflake__probe_view_recompute   (macros/platforms/snowflake/utils/snowflake__probe_view_recompute.sql)
 --#}
 {% macro probe_view_recompute() %}
-  {{ return(adapter.dispatch('probe_view_recompute', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('probe_view_recompute', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__probe_view_recompute() %}

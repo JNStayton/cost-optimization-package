@@ -4,7 +4,7 @@
   Add a <platform>__log_recommendation with the same arguments to support another platform.
 --#}
 {% macro log_recommendation(title, recommendation, reason, metrics={}, severity='info') %}
-  {{ return(adapter.dispatch('log_recommendation', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('log_recommendation', 'dbt_cost_optimization')(
       title=title,
       recommendation=recommendation,
       reason=reason,

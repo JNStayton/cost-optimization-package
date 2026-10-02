@@ -4,7 +4,7 @@
   Add a <platform>__capture_storage_metrics with the same arguments to support another platform.
 --#}
 {% macro capture_storage_metrics() %}
-  {{ return(adapter.dispatch('capture_storage_metrics', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('capture_storage_metrics', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__capture_storage_metrics() %}

@@ -4,7 +4,7 @@
   Add a <platform>__extract_operator_evidence with the same arguments to support another platform.
 --#}
 {% macro extract_operator_evidence() %}
-  {{ return(adapter.dispatch('extract_operator_evidence', 'dbt_cost_optimization_package')()) }}
+  {{ return(adapter.dispatch('extract_operator_evidence', 'dbt_cost_optimization')()) }}
 {% endmacro %}
 
 {% macro default__extract_operator_evidence() %}

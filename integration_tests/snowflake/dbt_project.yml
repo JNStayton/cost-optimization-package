@@ -2,13 +2,13 @@ name: 'cost_optimization_integration_tests'
 version: '1.0.0'
 config-version: 2
 
-# Integration tests for the Snowflake side of dbt_cost_optimization_package.
+# Integration tests for the Snowflake side of dbt_cost_optimization.
 # Fixture models stand in for SNOWFLAKE.ACCOUNT_USAGE views; vars.yml points the
 # package's snowflake_usage source at them. See TESTING.md at the repo root.
 #
 # Uses the package's own profile name, so the same ~/.dbt/profiles.yml target works
 # for unit tests (repo root) and integration tests (this project).
-profile: 'dbt_cost_optimization_package'
+profile: 'dbt_cost_optimization'
 
 model-paths: ["models"]
 test-paths: ["tests"]
@@ -21,7 +21,7 @@ models:
   # would change the types they see.
   # The var lets another configuration (e.g. Enterprise edition, the smoke test) build
   # into its own schema: --vars '{package_test_schema: integration_enterprise}'.
-  dbt_cost_optimization_package:
+  dbt_cost_optimization:
     +schema: "{{ var('package_test_schema', 'integration') }}"
     snowflake:
       intermediate:

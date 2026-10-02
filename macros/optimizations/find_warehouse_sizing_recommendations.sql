@@ -4,7 +4,7 @@
   Add a <platform>__find_warehouse_sizing_recommendations with the same arguments to support another platform.
 --#}
 {% macro find_warehouse_sizing_recommendations(lookback_days=7, min_query_count=20, dml_threshold=0.35) %}
-  {{ return(adapter.dispatch('find_warehouse_sizing_recommendations', 'dbt_cost_optimization_package')(
+  {{ return(adapter.dispatch('find_warehouse_sizing_recommendations', 'dbt_cost_optimization')(
       lookback_days=lookback_days,
       min_query_count=min_query_count,
       dml_threshold=dml_threshold

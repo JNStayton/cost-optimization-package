@@ -36,7 +36,7 @@
             count(distinct p.table_fqn) as downstream_table_count
         from {{ ref('int_snowflake__view_chain_pairs') }} as p
         where p.upstream_materialized = 'view'
-          and p.upstream_package_name != 'dbt_cost_optimization_package'
+          and p.upstream_package_name != 'dbt_cost_optimization'
           {% if not (monitored_projects | length == 1 and monitored_projects[0] == '*') %}
           and p.upstream_package_name in (
               {%- for proj in monitored_projects -%}'{{ proj }}'{% if not loop.last %}, {% endif %}{%- endfor -%})
