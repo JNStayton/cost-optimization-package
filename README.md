@@ -206,7 +206,7 @@ integration_tests/
   snowflake/           A dbt project that runs the package on fixture ACCOUNT_USAGE data
 ```
 
-[TESTING.md](TESTING.md) explains each kind of test and how to run it.
+[TESTING.md](TESTING.md) explains each kind of test and how to run it. The docs in `docs/` also build into a site with MkDocs Material (`mkdocs.yml`): run `pip install -r docs/requirements.txt` and then `mkdocs serve`.
 
 Macros use `adapter.dispatch`, so each command keeps the same name across platforms and runs the right implementation for your data platform.
 

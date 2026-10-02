@@ -65,3 +65,5 @@ refinements-build-plan.md
 CLAUDE.md
 .mcp.json
 claude-chat.txt
+# Docs site build output (mkdocs build)
+site/
