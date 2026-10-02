@@ -321,6 +321,24 @@ models:
   # ===========================================================================
   # int_snowflake__dbt_job_spillage
   # ===========================================================================
+  - name: int_snowflake__clustering_key_summary
+    description: >
+      Suggested clustering keys per table from the latest fct_snowflake__clustering_key_candidates
+      snapshot: columns whose filter evidence is at least 70% of the top column's, in key order,
+      plus the remaining candidates and a ready-to-paste cluster_by config. The one source for
+      clustering keys and configs in int_snowflake__all_recommendations and the gold views.
+    columns:
+      - name: table_fqn
+        data_tests:
+          - unique
+          - not_null
+      - name: suggested_clustering_key
+        description: Recommended clustering columns, e.g. 'ORDERED_DATE, SHOP_ID'. Null when none pass.
+      - name: additional_clustering_candidates
+        description: Columns that passed the candidate gates but are below 70% of the top column's filter evidence.
+      - name: cluster_by_config
+        description: A dbt config block setting cluster_by to the suggested key; null when there's none.
+
   - name: int_snowflake__dbt_job_spillage
     description: >
       Job-level spillage, one row per dbt job over spillage_lookback_days. Jobs come

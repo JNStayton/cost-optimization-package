@@ -26,7 +26,8 @@ with env_counts as (
 ranked as (
     select
         ar.*,
-        coalesce(ec.deployed_relation_count, 1) as deployed_relation_count,
+        -- Null on rows that aren't about a model (e.g. warehouse settings)
+        iff(ar.node_id is null, null, coalesce(ec.deployed_relation_count, 1)) as deployed_relation_count,
         ec.environment_ids,
         row_number() over (
             partition by ar.dedup_key, ar.domain, ar.signal_id

@@ -53,3 +53,27 @@ unit_tests:
         - {job_key: j3,              signal_id: spillage_job_scale_up, backlog_status: monitor,    warehouse_shared: true,  next_warehouse_size: LARGE}
         - {job_key: j4,              signal_id: null,                  backlog_status: null,       warehouse_shared: true,  next_warehouse_size: LARGE}
         - {job_key: 'invocation:inv1', signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: false, next_warehouse_size: MEDIUM}
+
+  - name: clustering_key_summary_recommends_columns_within_70_pct_of_the_top
+    description: >
+      int_snowflake__clustering_key_summary recommends every column whose filter evidence is
+      at least 70% of the top column's, in key order, lists the rest as additional
+      candidates, and builds the cluster_by config. Only the latest candidate snapshot counts.
+
+      Cases:
+        - DB.S.T1: col_a (100) and col_b (80, 80%) are recommended; col_c (50) is an
+          additional candidate; col_z from an older snapshot is ignored.
+        - DB.S.T5: one column → recommended alone, no additional candidates.
+    model: int_snowflake__clustering_key_summary
+    given:
+      - input: ref('fct_snowflake__clustering_key_candidates')
+        rows:
+          - {table_fqn: DB.S.T1, column_name: col_a, recommended_key_position: 1, filter_query_count: 100,  snapshot_date: 2026-09-02}
+          - {table_fqn: DB.S.T1, column_name: col_b, recommended_key_position: 2, filter_query_count: 80,   snapshot_date: 2026-09-02}
+          - {table_fqn: DB.S.T1, column_name: col_c, recommended_key_position: 3, filter_query_count: 50,   snapshot_date: 2026-09-02}
+          - {table_fqn: DB.S.T1, column_name: col_z, recommended_key_position: 1, filter_query_count: 1000, snapshot_date: 2026-09-01}
+          - {table_fqn: DB.S.T5, column_name: col_d, recommended_key_position: 1, filter_query_count: 10,   snapshot_date: 2026-09-02}
+    expect:
+      rows:
+        - {table_fqn: DB.S.T1, suggested_clustering_key: 'col_a, col_b', additional_clustering_candidates: col_c, cluster_by_config: "{{ '{{' }} config(cluster_by=['col_a', 'col_b']) {{ '}}' }}"}
+        - {table_fqn: DB.S.T5, suggested_clustering_key: col_d,          additional_clustering_candidates: null,  cluster_by_config: "{{ '{{' }} config(cluster_by=['col_d']) {{ '}}' }}"}

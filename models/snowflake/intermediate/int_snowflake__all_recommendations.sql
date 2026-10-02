@@ -196,7 +196,12 @@ all_recommendations as (
         ws.warehouse_name,
         ws.recommendation,
         ws.recommendation_reason,
-        'config_change' as effort_category,
+        -- Consolidation is workload planning, not a setting (no DDL)
+        case
+            when ws.recommendation_key in ('idle_consolidate_standard', 'idle_consolidate_underloaded')
+                then 'architecture'
+            else 'config_change'
+        end as effort_category,
         ws.total_credits_30d as score,
         ws.total_credits_30d * 12 * {{ credit_rate_usd }} as estimated_annual_cost_usd,
         case
@@ -680,11 +685,8 @@ all_recommendations as (
         null as snowflake_ddl,
         tc.snapshot_date,
         case when ck_top.table_fqn is not null then 'actionable' else 'monitor' end as backlog_status,
-        case
-            when tc.clustering_key is not null
-                then '{% raw %}{{ config(cluster_by=[{% endraw %}' || '''' || replace(tc.clustering_key, ', ', ''', ''') || '''' || '{% raw %}]) }}{% endraw %}'
-            else null
-        end as dbt_model_config,
+        -- The suggested key, not tc.clustering_key (the table's existing key, if any)
+        cks.cluster_by_config as dbt_model_config,
         null as identified_unique_key,
         case
             when tc.recommendation_tier = 'Strong' then 'add_clustering_key_strong'
@@ -706,6 +708,7 @@ all_recommendations as (
         where ck.recommended_key_position = 1
           and ck.snapshot_date = (select max(snapshot_date) from {{ ref('fct_snowflake__clustering_key_candidates') }})
     ) as ck_top on ck_top.table_fqn = tc.table_fqn
+    left join {{ ref('int_snowflake__clustering_key_summary') }} as cks on cks.table_fqn = tc.table_fqn
     where tc.is_candidate = true
         and tc.recommendation_status in ('evaluate_clustering', 'evaluate_key_alignment', 'insufficient_evidence')
         -- The fact table keeps one snapshot per run; only the latest is current.

@@ -44,6 +44,8 @@ models:
         # Feed only the gold layer, so `tag:gold` (no +) refreshes them with the views
         int_snowflake__all_recommendations:
           +tags: ['gold']
+        int_snowflake__clustering_key_summary:
+          +tags: ['gold']
         int_snowflake__dbt_job_spillage:
           +tags: ['gold']
         int_snowflake__table_upstream_views:

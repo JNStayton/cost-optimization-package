@@ -10,8 +10,8 @@ How this package is tested, how to run the tests, and what the results should lo
 
 | Test type | Count | What it proves | Needs real account data? | Where it lives |
 |---|---|---|---|---|
-| **Data tests** | 56 on Snowflake marts, plus 3 on shared models and 1 savings check on the recommendation backlog (warns) | The **real output** has no null keys, and category columns only contain expected values | **Yes.** Run after building the models in a real project. | `data_tests:` blocks in `models/snowflake/marts/**/_*.yml` and `models/shared/_shared.yml` |
-| **Unit tests** | 21 | The **transformation logic** is correct: for given input rows, a model returns exactly the expected output rows | **No.** Inputs are supplied in the test. A warehouse connection is still required. Off by default; see §3. | `models/snowflake/marts/gold/_gold__unit_tests.yml`, `models/snowflake/marts/warehouse/_warehouse__unit_tests.yml`, `models/snowflake/intermediate/_snowflake_intermediate__unit_tests.yml` |
+| **Data tests** | 56 on Snowflake marts, 2 on `int_snowflake__clustering_key_summary`, plus 3 on shared models and 1 savings check on the recommendation backlog (warns) | The **real output** has no null keys, and category columns only contain expected values | **Yes.** Run after building the models in a real project. | `data_tests:` blocks in `models/snowflake/marts/**/_*.yml`, `models/snowflake/intermediate/_snowflake_intermediate.yml` and `models/shared/_shared.yml` |
+| **Unit tests** | 22 | The **transformation logic** is correct: for given input rows, a model returns exactly the expected output rows | **No.** Inputs are supplied in the test. A warehouse connection is still required. Off by default; see §3. | `models/snowflake/marts/gold/_gold__unit_tests.yml`, `models/snowflake/marts/warehouse/_warehouse__unit_tests.yml`, `models/snowflake/intermediate/_snowflake_intermediate__unit_tests.yml` |
 | **Macro tests** | 5 | Macros that return values (scores, arrays, generated config text, the scaling-efficiency curve) return exactly what's expected | **No.** A warehouse connection is still required. Off by default; see §3. | `tests/snowflake/macros/` |
 | **Integration tests (Snowflake)** | 19 assertions, on Standard and Enterprise edition | The **whole pipeline**, hooks included, turns known account activity into exactly the expected recommendations, savings, and gold-view rows | **No.** Fixture tables stand in for `ACCOUNT_USAGE`. Some fixtures run real queries in your account (see §3). | `integration_tests/snowflake/` |
 | **Smoke test (Snowflake)** | every package model and data test, both editions | Every model compiles and runs against the **real** `ACCOUNT_USAGE` views' columns and types, on a full refresh and an incremental run | Reads the real views' structure only (`--empty`) | Commands in §3 |
@@ -169,12 +169,12 @@ Run it again without `--full-refresh` for the incremental path, then repeat both
 
 | Command | Expected summary |
 |---|---|
-| Unit tests | `21 total \| 21 success` |
+| Unit tests | `22 total \| 22 success` |
 | Macro tests | `5 total \| 5 success` |
-| Integration tests, Standard edition (each run) | `140 total \| 140 success` (models, data tests and assertions) |
-| Integration tests, Enterprise edition (each run) | `146 total \| 146 success` |
+| Integration tests, Standard edition (each run) | `143 total \| 143 success` (models, data tests and assertions) |
+| Integration tests, Enterprise edition (each run) | `149 total \| 149 success` |
 | Smoke test (each step) | all success, no errors |
-| Data tests, in an installing project on Snowflake | all pass: 56 Snowflake mart tests, plus 3 on shared models. The savings check (`assert_snowflake__savings_do_not_exceed_cost`) passes, or warns if a cost formula is off |
+| Data tests, in an installing project on Snowflake | all pass: 56 Snowflake mart tests, 2 on an intermediate model, plus 3 on shared models. The savings check (`assert_snowflake__savings_do_not_exceed_cost`) passes, or warns if a cost formula is off |
 
 The counts grow as tests are added, so treat the run summary as the source of truth.
 

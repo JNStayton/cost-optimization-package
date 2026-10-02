@@ -195,7 +195,8 @@ unit_tests:
     description: >
       vw_snowflake__optimization_backlog keeps actionable and monitor signals, collapses
       the same signal seen in several environments to one row (highest savings), counts
-      the model's environments from int_snowflake__dbt_relation_history (defaulting to 1),
+      the model's relations from int_snowflake__dbt_relation_history (defaulting to 1; null
+      on rows with no model),
       and classifies each row's action_type: snowflake_ddl when DDL exists (even if a dbt
       config also exists), dbt_config when only a config exists, otherwise investigation.
 
@@ -203,7 +204,7 @@ unit_tests:
         - k1 (n1): the same signal in two environments → one row with the higher savings
           (100); n1 has two distinct table_fqns in relation history → deployed_relation_count 2.
         - k2 (n2): dbt config only → dbt_config; no relation history → deployed_relation_count 1.
-        - k3: no DDL or config → investigation.
+        - k3: no DDL or config → investigation; no model → deployed_relation_count null.
         - k5: both DDL and config → snowflake_ddl (DDL takes precedence).
         - k4 ('stable') is excluded.
     model: vw_snowflake__optimization_backlog
@@ -226,7 +227,7 @@ unit_tests:
       rows:
         - {signal_id: add_clustering_key_strong, estimated_annual_savings_usd: 100, action_type: snowflake_ddl, deployed_relation_count: 2}
         - {signal_id: materialize_as_table,      estimated_annual_savings_usd: 30,  action_type: dbt_config,    deployed_relation_count: 1}
-        - {signal_id: expensive_query_monitor,   estimated_annual_savings_usd: 20,  action_type: investigation, deployed_relation_count: 1}
+        - {signal_id: expensive_query_monitor,   estimated_annual_savings_usd: 20,  action_type: investigation, deployed_relation_count: null}
         - {signal_id: convert_to_incremental,    estimated_annual_savings_usd: 10,  action_type: snowflake_ddl, deployed_relation_count: 1}
 
   - name: warehouse_optimizations_combines_config_and_model_signals
@@ -383,18 +384,16 @@ unit_tests:
         - {model_name: m1, model_source: project,           total_gb_spilled: 3, last_spilling_run_id: r_new, last_spilling_job_id: j1,   last_spill_gb: 1.0,  priority_tier: 4,    signal_id: spillage_scale_up}
         - {model_name: m2, model_source: installed_package, total_gb_spilled: 1, last_spilling_run_id: null,  last_spilling_job_id: null, last_spill_gb: null, priority_tier: null, signal_id: null}
 
-  - name: dbt_model_optimizations_builds_clustering_configs_and_incremental_context
+  - name: dbt_model_optimizations_attaches_clustering_keys_and_incremental_context
     description: >
       vw_snowflake__dbt_model_optimizations lists actionable materialization and clustering
-      recommendations per model. For clustering, it recommends every column whose filter
-      usage is at least 70% of the top column's (from the latest candidate snapshot only),
-      lists the rest as additional candidates, builds a cluster_by config, and drops
-      clustering recommendations with no recommended key. Incremental confidence is
-      attached only to incremental recommendations.
+      recommendations per model. Clustering rows get their suggested keys from
+      int_snowflake__clustering_key_summary, and clustering recommendations with no
+      suggested key are dropped. Incremental confidence is attached only to incremental
+      recommendations.
 
       Cases:
-        - DB.S.T1 (clustering): col_a (100) and col_b (80 ≥ 70%) are recommended in key
-          order; col_c (50) is an additional candidate; an older snapshot's col_z is ignored.
+        - DB.S.T1 (clustering): keys 'col_a, col_b', additional candidate col_c.
         - DB.S.T1 also has spillage_route_models (kept: a config change on the model). Its
           row has no clustering keys: each row shows only its own fix's fields.
         - DB.S.T2 (clustering): no candidate columns → dropped.
@@ -416,12 +415,9 @@ unit_tests:
           - {dedup_key: d5, domain: clustering,      signal_id: add_clustering_key_good,   table_fqn: DB.S.T1, node_id: n5, backlog_status: monitor,    priority_tier: 3, estimated_annual_savings_usd: 999, score: 1}
           - {dedup_key: d1, domain: warehouse,       signal_id: spillage_route_models,     table_fqn: DB.S.T1, node_id: n1, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: null, score: 1}
           - {dedup_key: d6, domain: warehouse,       signal_id: oversized_scale_down,      table_fqn: null,    node_id: null, backlog_status: actionable, priority_tier: 4, estimated_annual_savings_usd: 999, score: 1}
-      - input: ref('fct_snowflake__clustering_key_candidates')
+      - input: ref('int_snowflake__clustering_key_summary')
         rows:
-          - {table_fqn: DB.S.T1, column_name: col_a, recommended_key_position: 1, filter_query_count: 100,  snapshot_date: 2026-09-02}
-          - {table_fqn: DB.S.T1, column_name: col_b, recommended_key_position: 2, filter_query_count: 80,   snapshot_date: 2026-09-02}
-          - {table_fqn: DB.S.T1, column_name: col_c, recommended_key_position: 3, filter_query_count: 50,   snapshot_date: 2026-09-02}
-          - {table_fqn: DB.S.T1, column_name: col_z, recommended_key_position: 1, filter_query_count: 1000, snapshot_date: 2026-09-01}
+          - {table_fqn: DB.S.T1, suggested_clustering_key: 'col_a, col_b', additional_clustering_candidates: col_c}
       - input: ref('fct_snowflake__incremental_config_recommendations')
         rows:
           - {table_fqn: DB.S.T3, confidence_score: 85, recommendation_status: actionable_review}

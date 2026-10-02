@@ -31,6 +31,8 @@
       (38 s + 3 x 0.5 s + 350 x 1 s, / 3600), 0.1682 in total, attribution true.
     - cross_domain_insights: demo_orders and demo_logs (expensive query + incremental).
     - top_spillage_models and ai_optimizations: empty (Standard edition path; no AI usage).
+    - The clustering recommendation's config uses the suggested key (EVENT_DATE, REGION),
+      not the table's existing clustering key; warehouse rows have no deployed_relation_count.
 -#}
 {#- FIXTURE_WH_BUSY's config signal depends on the edition (multi-cluster is Enterprise). -#}
 {%- set is_enterprise = var('snowflake_enterprise_edition', true) %}
@@ -116,6 +118,15 @@ with checks as (
     union all
     select 'ai_optimizations rows',
            (select count(*) from {{ ref('vw_snowflake__ai_optimizations') }})::varchar, '0'
+    union all
+    select 'clustering config from the suggested key',
+           (select listagg(dbt_model_config, ',') from {{ ref('int_snowflake__all_recommendations') }}
+            where domain = 'clustering'),
+           '{{ "{{" }} config(cluster_by=[''EVENT_DATE'', ''REGION'']) {{ "}}" }}'
+    union all
+    select 'backlog rows with no model have no deployed_relation_count',
+           (select count(*) from {{ ref('vw_snowflake__optimization_backlog') }}
+            where node_id is null and deployed_relation_count is not null)::varchar, '0'
 )
 
 select * from checks where produced is distinct from expected
