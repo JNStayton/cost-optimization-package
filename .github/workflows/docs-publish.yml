@@ -1,0 +1,78 @@
+name: Publish docs
+
+# Builds the MkDocs site and publishes it to GitHub Pages with mike (gh-pages branch),
+# versioned like the dbt-project-evaluator docs:
+#   - push to main         → the "main" version (unreleased docs)
+#   - release published    → an "X.Y" version from the tag, with an alias for its dbt line:
+#       releases from main            → "latest" (the dbt v2 line; the site's default)
+#       releases from DBT_V1_BRANCH   → "dbt-v1" (the dbt v1 line)
+# Only runs once the repo is public, so nothing is published before the public release.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "TESTING.md"
+      - "CHANGELOG.md"
+      - "CONTRIBUTING.md"
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-publish
+  cancel-in-progress: false
+
+env:
+  DBT_V1_BRANCH: dbt-v1
+
+jobs:
+  publish:
+    if: github.event.repository.visibility == 'public'
+    runs-on: depot-ubuntu-24.04
+    permissions:
+      contents: write  # mike pushes the built site to the gh-pages branch
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # actions/checkout@v6
+        with:
+          fetch-depth: 0  # mike needs the gh-pages history
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install docs tooling (pinned)
+        run: pip install -r docs/requirements.txt
+
+      - name: Build (fails on broken links)
+        run: mkdocs build --strict
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy the main version
+        if: github.event_name == 'push'
+        run: mike deploy --push --message "Deploy docs for main (${GITHUB_SHA::7})" main
+
+      - name: Deploy a release version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          TARGET: ${{ github.event.release.target_commitish }}
+        run: |
+          VERSION="${TAG#v}"
+          MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1-2)"
+          if [ "$TARGET" = "$DBT_V1_BRANCH" ]; then
+            mike deploy --push --update-aliases --message "Deploy docs for release $TAG" "$MAJOR_MINOR" dbt-v1
+          else
+            mike deploy --push --update-aliases --message "Deploy docs for release $TAG" "$MAJOR_MINOR" latest
+            mike set-default --push latest
+          fi

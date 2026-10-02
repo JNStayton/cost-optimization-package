@@ -1,11 +1,14 @@
-# Docs site for this package, built with MkDocs Material (versioned with mike), like
-# dbt-project-evaluator. Build locally:
+# Docs site for this package: Material for MkDocs, versioned with mike, styled to match
+# the dbt-project-evaluator docs. Published to GitHub Pages by
+# .github/workflows/docs-publish.yml (once the repo is public).
+#
+# Build locally:
 #   pip install -r docs/requirements.txt
 #   mkdocs serve          # preview at http://127.0.0.1:8000
-#   mkdocs build --strict # fails on broken links
-# Publishing (e.g. GitHub Pages with `mike deploy`) isn't set up yet.
+#   mkdocs build --strict # fails on broken links, as the publish workflow does
 site_name: dbt Cost Optimization Package
 site_description: Find cost optimization opportunities in your dbt project on Snowflake, Databricks, BigQuery and Redshift.
+site_url: https://dbt-labs.github.io/dbt-cost-optimization-package/
 repo_url: https://github.com/dbt-labs/dbt-cost-optimization-package
 repo_name: dbt-labs/dbt-cost-optimization-package
 edit_uri: edit/main/docs/
@@ -13,23 +16,38 @@ docs_dir: docs
 
 theme:
   name: material
-  features:
-    - navigation.sections
-    - navigation.top
-    - navigation.indexes
-    - content.code.copy
-    - search.highlight
+  logo: assets/dbt-logo.svg
   palette:
+    # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
+    # Palette toggle for dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+  features:
+    - navigation.footer
+    - navigation.instant
+    - navigation.tracking
+    - content.action.edit
+    - content.code.copy
+    - toc.integrate
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  version:
+    provider: mike
 
 plugins:
   - search
@@ -42,18 +60,21 @@ plugins:
 hooks:
   - docs/hooks/repo_links.py
 
-extra:
-  version:
-    provider: mike
-
 markdown_extensions:
-  - admonition
   - attr_list
+  - md_in_html
+  - admonition
   - tables
   - toc:
-      permalink: true
-  - pymdownx.highlight
+      toc_depth: 3
+      permalink: "#"
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
   - pymdownx.superfences
+  - pymdownx.details
 
 # dbt docs blocks and site tooling, not pages
 exclude_docs: |
@@ -65,17 +86,18 @@ nav:
   - Home: index.md
   - Snowflake:
       - Setup and configuration: snowflake/index.md
-      - Quick-use commands (macros): snowflake/macros.md
-      - Reference:
-          - Gold layer design: snowflake/reference/gold_design.md
-          - Optimization priorities: snowflake/reference/optimization_priorities_mapping.md
-          - Warehouse recommendations: snowflake/reference/warehouse_recommendations.md
-          - Warehouse recommendation mapping: snowflake/reference/warehouse_recommendations_mapping.md
-          - Materialization recommendations: snowflake/reference/materialization_recommendations.md
-          - Incremental config recommendations: snowflake/reference/incremental_config_recommendations.md
-          - Incremental recommendation mapping: snowflake/reference/incremental_recommendations_mapping.md
-          - Table clustering candidates: snowflake/reference/table_clustering_candidates.md
+      - Quick-use commands: snowflake/macros.md
+      - Recommendations:
+          - Gold layer: snowflake/reference/gold_design.md
+          - Warehouses: snowflake/reference/warehouse_recommendations.md
+          - Table materialization: snowflake/reference/materialization_recommendations.md
+          - Incremental config: snowflake/reference/incremental_config_recommendations.md
+          - Table clustering: snowflake/reference/table_clustering_candidates.md
           - AI and Cortex spend: snowflake/reference/ai_cortex_spend_optimization.md
+      - Reference:
+          - Optimization priorities: snowflake/reference/optimization_priorities_mapping.md
+          - Warehouse recommendation mapping: snowflake/reference/warehouse_recommendations_mapping.md
+          - Incremental recommendation mapping: snowflake/reference/incremental_recommendations_mapping.md
           - Future optimizations: snowflake/reference/future_optimizations.md
   - Databricks (beta):
       - Incremental model candidates: databricks/incremental_model_candidates.md
@@ -86,7 +108,9 @@ nav:
       - Clustering key candidates: bigquery/clustering_key_candidates.md
   - Redshift (beta):
       - Materialization recommendations: redshift/materialization_recommendations.md
-      - Materialization strategy: redshift/materialization-strategy.md
       - Incremental config recommendations: redshift/incremental_config_recommendations.md
+      - Reference:
+          - Materialization strategy: redshift/materialization-strategy.md
   - Testing: testing.md
+  - Contributing: contributing.md
   - Changelog: changelog.md
