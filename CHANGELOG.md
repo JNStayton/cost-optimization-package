@@ -16,7 +16,7 @@ First public release: one package with a shared design across Snowflake, Databri
 - Platform-first layout: each platform's models live in `models/<platform>/` (staging, intermediate, marts), and cross-platform models live in `models/shared/`.
 - Opt-in by default: package models only build when `dbt_cost_optimization_enabled: true`, and only the models for your data platform are enabled.
 - Macros behind `adapter.dispatch`: each command and utility keeps one public name and runs the right implementation for your data platform, or raises a clear "not yet implemented" error where one doesn't exist yet. Implementations live in `macros/platforms/<platform>/`, and `macros/_macros.yml` documents every macro's arguments and which platforms implement it.
-- Domain tags on marts for scheduled jobs (`+tag:clustering`, `+tag:materialization`, `+tag:warehouse`, `+tag:ai_spend`, `+tag:gold`), plus `dbt_cost_optimization` on every mart.
+- Domain tags on marts for scheduled jobs (`+tag:clustering`, `+tag:materialization`, `+tag:warehouse`, `+tag:ai_spend`, `+tag:gold`), plus `dbt_cost_optimization` on every mart. On Snowflake, the intermediate models that feed only the gold views are tagged `gold` too, so `tag:gold` (no `+`) refreshes the dashboards from the last domain builds.
 - Package vars grouped into package-wide, shared, and per-platform sections in `dbt_project.yml`. Override them in a `vars.yml` file in your project root or with `--vars`.
 - Shared dbt graph models: `int_dbt__relations` (models) and `int_dbt__snapshots` (snapshots).
 

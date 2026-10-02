@@ -41,6 +41,13 @@ models:
           +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
         int_snowflake__direct_object_access:
           +enabled: "{{ target.type == 'snowflake' and var('dbt_cost_optimization_enabled', false) and var('snowflake_enterprise_edition', true) }}"
+        # Feed only the gold layer, so `tag:gold` (no +) refreshes them with the views
+        int_snowflake__all_recommendations:
+          +tags: ['gold']
+        int_snowflake__dbt_job_spillage:
+          +tags: ['gold']
+        int_snowflake__table_upstream_views:
+          +tags: ['gold']
       marts:
         clustering:
           +tags: ['clustering', 'dbt_cost_optimization']

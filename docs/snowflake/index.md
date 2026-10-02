@@ -243,7 +243,13 @@ The `+` prefix ensures upstream staging/intermediate dependencies are included.
 | `+tag:materialization` | `probe_unique_key_candidates`, and `probe_view_recompute` (the view probe, up to `table_materialization_view_probe_limit` views per run) | A view is re-probed after `table_materialization_view_probe_refresh_days` (7), so a monthly run re-probes up to the limit each time |
 | `+tag:clustering` | `extract_operator_evidence`, `refresh_column_cardinality` | Operator stats are kept for 14 days, so each run's clustering key evidence comes from the last 14 days of queries |
 
-Cross-domain results (the gold views, job-level spillage, view chain evidence) are computed when the gold layer builds. `+tag:gold` builds everything upstream of it, including every domain above, so on its own it's a full run of the package.
+Cross-domain results (the gold views, job-level spillage, view chain evidence) are computed when the gold layer builds. The gold tag also covers the three intermediate models that feed only the gold views, so run it without the `+` after each domain job to refresh the dashboards from what the domain jobs last built:
+
+```bash
+dbt build --vars '{dbt_cost_optimization_enabled: true}' --select tag:gold
+```
+
+`+tag:gold` builds everything upstream of it, including every domain above, so on its own it's a full run of the package. Use it for the first build.
 
 ---
 

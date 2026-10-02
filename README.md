@@ -145,7 +145,7 @@ Either way, this avoids unexpectedly querying large platform system tables (such
 | AI / Cortex spend | `+tag:ai_spend` | Snowflake | Weekly |
 | Materialization (view→table, table→incremental) | `+tag:materialization` | Snowflake, Databricks, Redshift | Monthly |
 | Clustering candidates | `+tag:clustering` | All | Monthly |
-| Dashboard views | `+tag:gold` | Snowflake, Databricks | Builds everything upstream, including the domains above |
+| Dashboard views | `tag:gold` | Snowflake, Databricks | After each domain job. Without the `+`, it refreshes only the dashboards from what the domain jobs last built; `+tag:gold` builds the whole package |
 
 Every package mart also has the `dbt_cost_optimization` tag. Some Snowflake models measure your account with post-hooks (operator stats, the view probe, SHOW WAREHOUSES); see the [Snowflake setup guide](docs/snowflake/index.md) for how cadence affects them.
 
