@@ -235,6 +235,16 @@ dbt build --vars '{dbt_cost_optimization_enabled: true}' --select +tag:clusterin
 
 The `+` prefix ensures upstream staging/intermediate dependencies are included.
 
+**What each job also runs.** Some models measure your account with post-hooks, so the cadence affects how much they see:
+
+| Job | Post-hooks it runs | Timing to know about |
+|-----|-------------------|----------------------|
+| `+tag:warehouse` | `refresh_warehouse_config` (SHOW WAREHOUSES), and on Enterprise `extract_spill_evidence` (operator stats on spilling queries) | Operator stats are kept for 14 days. A weekly run samples each spilling table's recent queries; less often than every 14 days, measured SQL-refactor savings can be missing |
+| `+tag:materialization` | `probe_unique_key_candidates`, and `probe_view_recompute` (the view probe, up to `table_materialization_view_probe_limit` views per run) | A view is re-probed after `table_materialization_view_probe_refresh_days` (7), so a monthly run re-probes up to the limit each time |
+| `+tag:clustering` | `extract_operator_evidence`, `refresh_column_cardinality` | Operator stats are kept for 14 days, so each run's clustering key evidence comes from the last 14 days of queries |
+
+Cross-domain results (the gold views, job-level spillage, view chain evidence) are computed when the gold layer builds. `+tag:gold` builds everything upstream of it, including every domain above, so on its own it's a full run of the package.
+
 ---
 
 ## Quick Start

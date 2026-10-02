@@ -354,9 +354,18 @@ select
     coalesce(tuv.upstream_view_count, 0)                            as upstream_view_count,
     tuv.upstream_view_chain
 from scaled as scored
+-- Read from the view chain pairs, not int_snowflake__table_upstream_views: that model
+-- depends on the materialization fact (for the recommended view), and this model is
+-- scheduled with +tag:warehouse, separately from +tag:materialization. Same chain format
+-- as int_snowflake__table_upstream_views (nearest first).
 left join (
-    select table_dbt_model, upstream_view_count, upstream_view_chain
-    from {{ ref('int_snowflake__table_upstream_views') }}
+    select
+        table_dbt_model,
+        count(distinct upstream_fqn) as upstream_view_count,
+        listagg(upstream_model_name || ' (' || upstream_materialized || ')', ', ')
+            within group (order by path_length, upstream_model_name) as upstream_view_chain
+    from {{ ref('int_snowflake__view_chain_pairs') }}
+    group by table_dbt_model
 ) as tuv
     on tuv.table_dbt_model = scored.dbt_model
 order by

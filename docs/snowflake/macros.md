@@ -139,4 +139,4 @@ dbt run-operation find_warehouse_sizing_recommendations --args '{lookback_days: 
 - Macros respect `snowflake_enterprise_edition` var — Standard edition uses query_text matching instead of ACCESS_HISTORY where applicable.
 - **Project scoping**: By default, macros only surface models from the installing project (`include_package_models=false`). Set `include_package_models: true` to also evaluate models from installed dbt packages.
 - `suppress_staging_materialization_recs` var is respected by `find_table_materialization_candidates`.
-- For full analysis with strategy recommendations, confidence scores, and template code, run the model pipeline instead (`dbt run -s tag:dbt_cost_optimization`).
+- For full analysis with strategy recommendations, confidence scores, and template code, run the model pipeline instead (`dbt build --vars '{dbt_cost_optimization_enabled: true}' --select package:dbt_cost_optimization`).
