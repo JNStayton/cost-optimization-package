@@ -200,7 +200,13 @@ docs/
   databricks/          Model docs
   bigquery/            Model docs
   redshift/            Model docs and platform notes
+
+tests/snowflake/       Macro tests (unit tests sit next to their models)
+integration_tests/
+  snowflake/           A dbt project that runs the package on fixture ACCOUNT_USAGE data
 ```
+
+[TESTING.md](TESTING.md) explains each kind of test and how to run it.
 
 Macros use `adapter.dispatch`, so each command keeps the same name across platforms and runs the right implementation for your data platform.
 

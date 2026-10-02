@@ -34,6 +34,7 @@ First public release: one package with a shared design across Snowflake, Databri
 - Support for Enterprise and Standard editions (`snowflake_enterprise_edition`).
 - Cost and savings estimates at Snowflake's published credits-per-hour rate for each model's own warehouse (X-Small when unknown), annualized over each domain's lookback window. User cost attribution uses `ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY` credits where available, with elapsed time × list rate as the fallback, and flags which (`credits_from_attribution`).
 - A [dbt-charts](https://github.com/dbt-labs/dbt-charts) dashboard over the gold views, in `integrations/dbt_charts/`.
+- A Snowflake integration test project (`integration_tests/snowflake/`): fixture tables stand in for `ACCOUNT_USAGE`, and 19 assertions check the whole pipeline, hooks included, on Standard and Enterprise edition. A smoke test builds every model against the real `ACCOUNT_USAGE` views. See TESTING.md.
 - A data test that warns when any recommendation's estimated savings exceed its estimated cost, as a check on the cost formulas against your real data.
 - `dbt_excluded_schemas` and `dbt_excluded_targets` leave dev deployments out of recommendations. Nothing is excluded by default.
 - Clustering key evidence counts a column's filters only from queries that scan the table itself, matching column names whole, so filter shares (and savings) can't exceed their totals and short column names don't pick up longer ones' filters.
