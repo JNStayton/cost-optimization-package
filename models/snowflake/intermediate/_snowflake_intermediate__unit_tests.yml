@@ -11,14 +11,13 @@ unit_tests:
 
       Cases:
         - j1 (WH_A): 1 of 5 models spills and takes 90% → route, actionable. WH_A also
-          runs j3 and j4, so it's shared. Candidates one size up (Large): WH_L1, WH_L2.
+          runs j3 and j4, so it's shared. Next size up: LARGE.
         - j2 (WH_B, alone): 2 of 2 spill, 100% → size up, actionable, not shared.
         - j3 (WH_A): 1 of 2 spills (50%), 50% of time → size up, monitor.
         - j4 (WH_A): 1 of 4 spills, 3% of time → no signal.
         - A run outside the dbt platform with invocation_id in its query comment (WH_C,
           Small) is its own job, 'invocation:inv1': 1 of 4 (25%) → route, 91% →
-          actionable. Candidates one size up (Medium), dbt-building warehouses first:
-          WH_A (11 builds), WH_B (2), WH_M (none).
+          actionable. Next size up: MEDIUM.
         - A build with neither job id nor invocation id is left out.
     model: int_snowflake__dbt_job_spillage
     given:
@@ -47,13 +46,10 @@ unit_tests:
           - {warehouse_name: WH_A,  current_size: MEDIUM}
           - {warehouse_name: WH_B,  current_size: Medium}
           - {warehouse_name: WH_C,  current_size: Small}
-          - {warehouse_name: WH_M,  current_size: MEDIUM}
-          - {warehouse_name: WH_L1, current_size: LARGE}
-          - {warehouse_name: WH_L2, current_size: Large}
     expect:
       rows:
-        - {job_key: j1,              signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: true,  candidate_warehouses: 'WH_L1, WH_L2'}
-        - {job_key: j2,              signal_id: spillage_job_scale_up, backlog_status: actionable, warehouse_shared: false, candidate_warehouses: 'WH_L1, WH_L2'}
-        - {job_key: j3,              signal_id: spillage_job_scale_up, backlog_status: monitor,    warehouse_shared: true,  candidate_warehouses: 'WH_L1, WH_L2'}
-        - {job_key: j4,              signal_id: null,                  backlog_status: null,       warehouse_shared: true,  candidate_warehouses: 'WH_L1, WH_L2'}
-        - {job_key: 'invocation:inv1', signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: false, candidate_warehouses: 'WH_A, WH_B, WH_M'}
+        - {job_key: j1,              signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: true,  next_warehouse_size: LARGE}
+        - {job_key: j2,              signal_id: spillage_job_scale_up, backlog_status: actionable, warehouse_shared: false, next_warehouse_size: LARGE}
+        - {job_key: j3,              signal_id: spillage_job_scale_up, backlog_status: monitor,    warehouse_shared: true,  next_warehouse_size: LARGE}
+        - {job_key: j4,              signal_id: null,                  backlog_status: null,       warehouse_shared: true,  next_warehouse_size: LARGE}
+        - {job_key: 'invocation:inv1', signal_id: spillage_route_models, backlog_status: actionable, warehouse_shared: false, next_warehouse_size: MEDIUM}

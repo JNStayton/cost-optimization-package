@@ -31,7 +31,6 @@ select
     recommendation_reason,
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
-    score,
     snowflake_ddl,
     snapshot_date
 from ranked

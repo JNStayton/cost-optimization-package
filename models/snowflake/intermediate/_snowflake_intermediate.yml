@@ -329,7 +329,7 @@ models:
       models built and spilling (spilling_model_share_pct), build time and the spilling
       models' share of it (spilling_time_share_pct), spill GB, the warehouse (and
       whether other jobs share it), the spilling models with their build seconds, and
-      candidate warehouses one size up (dbt-building ones first, at most five). The rule
+      the next warehouse size up. The rule
       (spillage_job_* vars): spilling_time_share_pct below the minimum → no signal;
       model share at or below the routing maximum → spillage_route_models, above →
       spillage_job_scale_up; time share at or above the actionable threshold →

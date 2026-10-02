@@ -110,37 +110,6 @@ shares as (
     from jobs as j
     left join job_warehouse as jw on jw.job_key = j.job_key
     left join {{ ref('int_snowflake__warehouse_config') }} as wc on wc.warehouse_name = jw.warehouse_name
-),
-
--- Warehouses one size up from each job's warehouse (twice the credit rate), for routing:
--- ones already running dbt builds first, at most five.
-candidates as (
-    select
-        job_key,
-        listagg(warehouse_name, ', ') within group (order by candidate_rank) as candidate_warehouses
-    from (
-        select
-            s.job_key,
-            c.warehouse_name,
-            row_number() over (partition by s.job_key order by c.dbt_build_count desc, c.warehouse_name)
-                as candidate_rank
-        from shares as s
-        inner join (
-            select
-                wc.warehouse_name,
-                {{ warehouse_credits_per_hour('wc.current_size') }} as credits_per_hour,
-                coalesce(b.dbt_build_count, 0) as dbt_build_count
-            from {{ ref('int_snowflake__warehouse_config') }} as wc
-            left join (
-                select warehouse_name, count(*) as dbt_build_count
-                from build_queries
-                group by warehouse_name
-            ) as b on b.warehouse_name = wc.warehouse_name
-        ) as c
-            on c.credits_per_hour = 2 * {{ warehouse_credits_per_hour('s.warehouse_current_size') }}
-    )
-    where candidate_rank <= 5
-    group by job_key
 )
 
 select
@@ -158,7 +127,6 @@ select
     s.spilling_time_share_pct,
     s.total_gb_spilled,
     s.spilling_models,
-    ct.candidate_warehouses,
     {{ next_warehouse_size('s.warehouse_current_size', 'up') }}     as next_warehouse_size,
     {{ warehouse_scale_up_efficiency('s.warehouse_current_size') }} as scale_up_efficiency,
     case
@@ -177,4 +145,3 @@ select
         || ' (' || s.run_count || ' run(s) in ' || {{ lookback_days }} || ' days).' as evidence,
     current_date()                                                  as snapshot_date
 from shares as s
-left join candidates as ct on ct.job_key = s.job_key

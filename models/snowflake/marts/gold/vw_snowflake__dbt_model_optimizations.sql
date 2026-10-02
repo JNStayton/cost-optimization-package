@@ -7,7 +7,8 @@
 {#--
   dbt model-level optimizations: materialization, clustering, and incremental config.
   These are actions taken IN dbt code (model configs, SQL changes).
-  Excludes warehouse-level and AI-level recommendations.
+  Excludes warehouse-level and AI-level recommendations, except spillage_route_models
+  (a snowflake_warehouse config on the model).
 
   Shows ALL signals per model with priority_tier for ordering.
   Enriched with clustering key detail from fct_snowflake__clustering_key_candidates.
@@ -81,7 +82,10 @@ ranked as (
         ) as env_rank
     from {{ ref('int_snowflake__all_recommendations') }} as ar
     left join env_counts as ec on ec.node_id = ar.node_id
-    left join clustering_keys as ck on ck.table_fqn = ar.table_fqn
+    -- Clustering keys only on clustering rows: each row shows the fields of its own fix
+    left join clustering_keys as ck
+        on ck.table_fqn = ar.table_fqn
+        and ar.domain = 'clustering'
     left join {{ ref('fct_snowflake__incremental_config_recommendations') }} as icr
         on icr.table_fqn = ar.table_fqn
         and (ar.signal_id like 'apply_incremental%' or ar.signal_id = 'convert_to_incremental')
@@ -107,7 +111,6 @@ select
     recommendation_reason,
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
-    score,
     snowflake_ddl,
     suggested_clustering_key,
     additional_clustering_candidates,

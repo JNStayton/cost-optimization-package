@@ -51,7 +51,6 @@ select
     recommendation_reason,
     estimated_annual_cost_usd,
     estimated_annual_savings_usd,
-    score,
     snowflake_ddl,
     dbt_model_config,
     identified_unique_key,

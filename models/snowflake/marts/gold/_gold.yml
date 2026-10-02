@@ -110,15 +110,18 @@ models:
 
   - name: vw_snowflake__dbt_model_optimizations
     description: >
-      dbt model-level optimizations: materialization, clustering, and incremental config.
-      Only shows ACTIONABLE items (excludes investigate and do_not_recommend statuses).
-      Excludes warehouse and AI domain recommendations. Enriched with suggested clustering keys.
+      dbt model-level optimizations: materialization, clustering, and incremental config,
+      plus spillage_route_models (routing a model to a larger warehouse with
+      snowflake_warehouse). Only shows ACTIONABLE items. Other warehouse and AI
+      recommendations are in their own views. Each row shows the fields of its own fix:
+      clustering keys on clustering rows, incremental fields on incremental rows, chain
+      fields on materialize_as_table rows.
       Ordered by model_name then priority_tier (1 = do first for this model).
     columns:
       - name: priority_tier
         description: Per-entity relative priority (1 = highest priority for this model based on hierarchy)
       - name: suggested_clustering_key
-        description: Recommended clustering columns from clustering_key_candidates (e.g., 'order_date, customer_id')
+        description: Clustering rows only. Recommended clustering columns from clustering_key_candidates (e.g., 'order_date, customer_id')
       - name: dbt_model_config
         description: Full dbt config block for incremental conversion (when applicable)
       - name: identified_unique_key

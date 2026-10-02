@@ -369,7 +369,7 @@ At `eff`, the runtime falls to `T / (2 × eff)` at twice the rate. Our own calib
 | either | 25–75% | the same signal, by model share | monitor | 5 | same |
 | any | < 25% | none | | | |
 
-The thresholds are the `spillage_job_*` vars. Routing and sizing up are alternatives for the same job, so a job gets one or the other. Routing names candidate warehouses one size up (existing warehouses at twice the credit rate, ones already running dbt builds first). A job size-up includes DDL unless other jobs share the warehouse; then it recommends a dedicated warehouse instead of resizing the shared one. Both are priced like scale-ups: cost from build time (the routed model's, or the whole job's), savings null, and hours saved and cost change from the efficiency curve.
+The thresholds are the `spillage_job_*` vars. Routing and sizing up are alternatives for the same job, so a job gets one or the other. Routing names the size one up, not a warehouse: the package can't tell who owns a warehouse or whether your role can use it, so the config is `snowflake_warehouse='<larger warehouse>'` for you to fill in. A job size-up includes DDL unless other jobs share the warehouse; then it recommends a dedicated warehouse instead of resizing the shared one. Both are priced like scale-ups: cost from build time (the routed model's, or the whole job's), savings null, and hours saved and cost change from the efficiency curve.
 
 Null savings aren't demoted by `min_annual_savings_usd`, so scale-ups stay actionable. Earlier versions estimated cost from spilled GB (0.5 s per local GB, 5 s per remote GB, 70% savings); those constants were invented and are gone.
 

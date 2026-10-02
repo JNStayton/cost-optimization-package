@@ -2,8 +2,8 @@
   Phase S3: job-level spillage (both editions). Four dbt platform jobs in the fixture
   query history, 2 runs each:
     - 7001 (BUSY, Medium): 2 of 10 models spill and take 91% of build time → route those
-      two models (actionable), each to a candidate warehouse one size up (Large; the
-      fixture's FIXTURE_WH_OVERSIZED first, since it runs dbt builds).
+      two models (actionable) to a warehouse one size up (Large). The config is a
+      placeholder ('<larger warehouse>'): the package doesn't pick a warehouse.
     - 7002 (JOBS, Medium, no other job): 4 of 8 spill (50%), 91% → size up the job
       (actionable), with DDL to Large. 1,760 build s: 2.49 hours a year saved, +$7.75.
     - 7003 (BUSY): 2 of 10 spill, 45% → route (monitor).
@@ -14,7 +14,7 @@
 -#}
 with jobs as (
     select job_key, signal_id, backlog_status, spilling_model_share_pct, spilling_time_share_pct,
-           warehouse_shared, candidate_warehouses, evidence
+           warehouse_shared, next_warehouse_size, evidence
     from {{ ref('int_snowflake__dbt_job_spillage') }}
 ),
 
@@ -41,9 +41,9 @@ checks as (
     union all select 'shared warehouse',
         (select listagg(job_key || ':' || warehouse_shared, ',') within group (order by job_key) from jobs),
         '7001:true,7002:false,7003:true,7004:true'
-    union all select 'candidate warehouses start with one running dbt builds',
-        (select split_part(candidate_warehouses, ', ', 1) from jobs where job_key = '7001'),
-        'FIXTURE_WH_OVERSIZED'
+    union all select 'next size up for routing',
+        (select next_warehouse_size from jobs where job_key = '7001'),
+        'LARGE'
     union all select 'one signal per job (routing or size-up, never both)',
         (select count(*) from (
             select coalesce(js.job_key, 'none') as job_key, count(distinct r.signal_id) as n
@@ -56,8 +56,8 @@ checks as (
     union all select 'routed models in the dbt model view, with the config',
         (select listagg(model_name || ':' || dbt_model_config, ',') within group (order by model_name)
          from {{ ref('vw_snowflake__dbt_model_optimizations') }} where signal_id = 'spillage_route_models'),
-        'job7001_m0:{{ "{{" }} config(snowflake_warehouse=''FIXTURE_WH_OVERSIZED'') {{ "}}" }},'
-            || 'job7001_m1:{{ "{{" }} config(snowflake_warehouse=''FIXTURE_WH_OVERSIZED'') {{ "}}" }}'
+        'job7001_m0:{{ "{{" }} config(snowflake_warehouse=''<larger warehouse>'') {{ "}}" }},'
+            || 'job7001_m1:{{ "{{" }} config(snowflake_warehouse=''<larger warehouse>'') {{ "}}" }}'
     union all select 'job size-up in the warehouse view, with DDL',
         (select listagg(warehouse_name || ':' || recommendation || ':' || snowflake_ddl, ',')
          from {{ ref('vw_snowflake__warehouse_optimizations') }} where signal_id = 'spillage_job_scale_up'),

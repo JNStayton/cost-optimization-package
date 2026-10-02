@@ -395,6 +395,8 @@ unit_tests:
       Cases:
         - DB.S.T1 (clustering): col_a (100) and col_b (80 ≥ 70%) are recommended in key
           order; col_c (50) is an additional candidate; an older snapshot's col_z is ignored.
+        - DB.S.T1 also has spillage_route_models (kept: a config change on the model). Its
+          row has no clustering keys: each row shows only its own fix's fields.
         - DB.S.T2 (clustering): no candidate columns → dropped.
         - DB.S.T3 (convert_to_incremental): seen in two environments → the higher-savings
           row (300); incremental confidence 85 attached; deployed_relation_count 2.
@@ -412,6 +414,7 @@ unit_tests:
           - {dedup_key: d3, domain: materialization, signal_id: convert_to_incremental,    table_fqn: DB.S.T3, node_id: n3, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: 300, score: 1}
           - {dedup_key: d4, domain: materialization, signal_id: materialize_as_table,      table_fqn: DB.S.T4, node_id: n4, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: 20,  score: 1}
           - {dedup_key: d5, domain: clustering,      signal_id: add_clustering_key_good,   table_fqn: DB.S.T1, node_id: n5, backlog_status: monitor,    priority_tier: 3, estimated_annual_savings_usd: 999, score: 1}
+          - {dedup_key: d1, domain: warehouse,       signal_id: spillage_route_models,     table_fqn: DB.S.T1, node_id: n1, backlog_status: actionable, priority_tier: 2, estimated_annual_savings_usd: null, score: 1}
           - {dedup_key: d6, domain: warehouse,       signal_id: oversized_scale_down,      table_fqn: null,    node_id: null, backlog_status: actionable, priority_tier: 4, estimated_annual_savings_usd: 999, score: 1}
       - input: ref('fct_snowflake__clustering_key_candidates')
         rows:
@@ -434,6 +437,7 @@ unit_tests:
     expect:
       rows:
         - {table_fqn: DB.S.T1, signal_id: add_clustering_key_strong, suggested_clustering_key: 'col_a, col_b', additional_clustering_candidates: col_c, estimated_annual_savings_usd: 50,  incremental_confidence_score: null, deployed_relation_count: 1, chain_role: null,        recompute_cost_source: null}
+        - {table_fqn: DB.S.T1, signal_id: spillage_route_models,     suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: null, incremental_confidence_score: null, deployed_relation_count: 1, chain_role: null,        recompute_cost_source: null}
         - {table_fqn: DB.S.T3, signal_id: convert_to_incremental,    suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 300, incremental_confidence_score: 85,   deployed_relation_count: 2, chain_role: null,        recompute_cost_source: null}
         - {table_fqn: DB.S.T4, signal_id: materialize_as_table,      suggested_clustering_key: null,           additional_clustering_candidates: null,  estimated_annual_savings_usd: 20,  incremental_confidence_score: null, deployed_relation_count: 1, chain_role: recommended, recompute_cost_source: probe}
 

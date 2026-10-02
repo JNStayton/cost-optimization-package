@@ -402,9 +402,7 @@ all_recommendations as (
         jrm.evidence
             || ' Route the spilling models to a warehouse one size up ('
             || coalesce(jrm.next_warehouse_size, 'larger') || ') with snowflake_warehouse, instead of resizing '
-            || 'the whole job''s warehouse. Candidate warehouses: '
-            || coalesce(jrm.candidate_warehouses, 'none found')
-            || '; or create or choose a warehouse your role can use.' as recommendation_reason,
+            || 'the whole job''s warehouse. Use a warehouse your role can use, or create one.' as recommendation_reason,
         'config_change' as effort_category,
         jrm.model_gb_spilled as score,
         jrm.model_build_s
@@ -415,7 +413,7 @@ all_recommendations as (
         jrm.snapshot_date,
         jrm.backlog_status,
         '{% raw %}{{ config(snowflake_warehouse=''{% endraw %}'
-            || coalesce(split_part(jrm.candidate_warehouses, ', ', 1), '<larger warehouse>')
+            || '<larger warehouse>'
             || '{% raw %}'') }}{% endraw %}' as dbt_model_config,
         null as identified_unique_key,
         'spillage_route_models' as signal_id
