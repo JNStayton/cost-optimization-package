@@ -70,6 +70,8 @@ See each platform's docs for model details and configuration.
 
 ## Installation
 
+Requires dbt v2 (the dbt Fusion engine). dbt v1 support is planned; on dbt v1, `dbt deps` installs the package but the next command stops with a version error.
+
 Add to your `packages.yml`:
 
 ```yaml

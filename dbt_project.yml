@@ -12,7 +12,7 @@ clean-targets:
   - "dbt_packages"
   - "logs"
 
-require-dbt-version: [">=1.0.0"]
+require-dbt-version: [">=2.0.0"]
 
 # Model configurations
 models:
